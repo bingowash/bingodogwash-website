@@ -507,8 +507,20 @@ async function oauthCallback(request, env, url) {
     const now = new Date().toISOString();
     await env.GIFT_CARD_DB.prepare(`CREATE TABLE IF NOT EXISTS marketing_connections (id TEXT PRIMARY KEY, page_access_token TEXT, page_token_expires_at TEXT, instagram_access_token TEXT, instagram_token_expires_at TEXT, updated_at TEXT)`).run();
     const expiresAt = userLongExpires ? new Date(Date.now() + userLongExpires * 1000).toISOString() : "";
-    await env.GIFT_CARD_DB.prepare(`INSERT OR REPLACE INTO marketing_connections (id, page_access_token, page_token_expires_at, updated_at) VALUES ('primary', ?, ?, ?)`)
-      .bind(pageToken, expiresAt, now).run();
+    await env.GIFT_CARD_DB.prepare(`
+INSERT OR REPLACE INTO marketing_connections 
+(id, page_access_token, page_token_expires_at, instagram_access_token, instagram_token_expires_at, updated_at)
+VALUES ('primary', ?, ?, ?, ?, ?)
+`)
+.bind(
+  pageToken,
+  expiresAt,
+  null,
+  null,
+  null,
+  now
+)
+.run();
 
     logMarketingSettings("marketing_admin_request", { action: "oauth_callback", method: request.method, path: url.pathname });
     return adminRedirect("oauth=success");
