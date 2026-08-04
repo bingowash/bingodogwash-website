@@ -1,0 +1,743 @@
+const ADMIN_PATH = "/api/admin/marketing";
+const TRACK_PATH = "/api/marketing/track";
+const GRAPH_VERSION = "v25.0";
+const INSTAGRAM_GRAPH_ORIGIN = "https://graph.instagram.com/v26.0";
+const FACEBOOK_GRAPH_ORIGIN = "https://graph.facebook.com";
+const INSTAGRAM_PUBLISH_PERMISSION = "instagram_content_publish";
+const INSTAGRAM_PERMISSION_UNCONFIRMED = "Instagram identity verified, but publishing permission cannot be confirmed without a controlled test post.";
+const FACEBOOK_REQUIRED_SCOPES = ["pages_manage_posts", "pages_read_engagement", "pages_show_list"];
+const FACEBOOK_TOKEN_EXPIRED = "Facebook connection expired. Reconnect Meta account.";
+const MAX_RETRIES = 3;
+const MIN_META_TOKEN_LENGTH = 40;
+const META_ERROR = {
+  missing: "Meta access token is not configured.",
+  invalid: "Meta connection has expired or is invalid. Reconnect Meta in server settings.",
+  incomplete: "Meta account connection is incomplete.",
+  permission: "Meta connection does not have permission to publish.",
+  network: "Meta service is temporarily unavailable.",
+};
+
+export function isMarketingPath(pathname) {
+  return pathname === ADMIN_PATH || pathname.startsWith(`${ADMIN_PATH}/`) || pathname === TRACK_PATH;
+}
+
+export async function handleMarketingRequest(request, env, url = new URL(request.url)) {
+  if (url.pathname === TRACK_PATH) return trackCampaignEvent(request, env, url);
+  if (!(await isAdmin(request, env))) return json({ ok: false, error: "Admin authorisation required." }, 401);
+  if (!env.GIFT_CARD_DB) return json({ ok: false, error: "Marketing database unavailable." }, 503);
+
+  // Allow admin dashboard (GET) and OAuth callback (GET). Other admin endpoints use POST.
+  if (request.method === "GET" && url.pathname === ADMIN_PATH) return dashboard(env);
+  if (request.method === "GET" && url.pathname === `${ADMIN_PATH}/oauth/callback`) return oauthCallback(request, env, url);
+  if (request.method !== "POST") return json({ ok: false, error: "Method not allowed." }, 405);
+
+  if (url.pathname === `${ADMIN_PATH}/test`) return publishingDisabled(env) ? publishingDisabledResponse() : json(await runMarketingAutomation(env, { trigger: "test" }));
+  if (url.pathname === `${ADMIN_PATH}/oauth/start`) return oauthStart(request, env, url);
+  if (url.pathname === `${ADMIN_PATH}/preflight`) return preflight(env);
+  if (url.pathname === `${ADMIN_PATH}/diagnostics`) return json(await metaDiagnostics(env));
+  if (url.pathname === `${ADMIN_PATH}/pause`) {
+    logMarketingSettings("marketing_admin_request", { action: "pause", method: request.method, path: url.pathname });
+    return updateSettings(env, { enabled: 0 });
+  }
+  if (url.pathname === `${ADMIN_PATH}/resume`) {
+    logMarketingSettings("marketing_admin_request", { action: "resume", method: request.method, path: url.pathname });
+    return publishingDisabled(env) ? publishingDisabledResponse() : updateSettings(env, { enabled: 1 });
+  }
+  if (url.pathname === `${ADMIN_PATH}/schedule`) {
+    const input = await readJson(request);
+    const hour = Number(input?.hourUtc);
+    const minute = Number(input?.minuteUtc);
+    if (!Number.isInteger(hour) || hour < 0 || hour > 23 || !Number.isInteger(minute) || minute < 0 || minute > 59 || minute % 15 !== 0) {
+      return json({ ok: false, error: "Choose a valid UTC hour and a 15-minute interval." }, 400);
+    }
+    return updateSettings(env, { schedule_hour_utc: hour, schedule_minute_utc: minute });
+  }
+  return json({ ok: false, error: "Marketing endpoint not found." }, 404);
+}
+
+export async function runMarketingSchedule(event, env) {
+  if (publishingDisabled(env)) return { ok: true, skipped: "publishing-disabled" };
+  if (!env.GIFT_CARD_DB) return { ok: false, skipped: "database-unavailable" };
+  const settings = await getSettings(env);
+  if (!settings || !settings.enabled) return { ok: true, skipped: "paused" };
+  const now = new Date(event?.scheduledTime || Date.now());
+  const date = now.toISOString().slice(0, 10);
+  if (settings.last_run_date === date) return { ok: true, skipped: "already-posted-today" };
+  if (now.getUTCHours() !== settings.schedule_hour_utc || now.getUTCMinutes() < settings.schedule_minute_utc || now.getUTCMinutes() >= settings.schedule_minute_utc + 15) {
+    return { ok: true, skipped: "outside-schedule" };
+  }
+  return runMarketingAutomation(env, { trigger: "scheduled" });
+}
+
+export async function runMarketingAutomation(env, options = {}) {
+  if (publishingDisabled(env)) return { ok: false, status: "disabled", skipped: "publishing-disabled", error: "Publishing is disabled in this environment." };
+  const db = env.GIFT_CARD_DB;
+  const settings = await getSettings(env);
+
+  if (!settings?.enabled) {
+    return { ok: true, status: "paused", skipped: "paused" };
+  }
+  const product = await selectNextProduct(db);
+  if (!product) return { ok: false, error: "No published, in-stock products with an image and URL are available." };
+
+  const campaignCode = `bdw-${new Date().toISOString().slice(0, 10).replaceAll("-", "")}-${crypto.randomUUID().slice(0, 8)}`;
+  const trackedUrl = campaignUrl(product.url, campaignCode);
+  const caption = await generateCaption(env, product, trackedUrl, campaignCode);
+  const postId = crypto.randomUUID();
+  const now = new Date().toISOString();
+  await db.prepare(`INSERT INTO marketing_posts
+    (id, product_source, product_id, product_name, product_url, product_image, caption, campaign_code, status, trigger_type, attempt_count, scheduled_at, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'processing', ?, 0, ?, ?, ?)`)
+    .bind(postId, product.source, product.id, product.name, trackedUrl, product.image, caption, campaignCode, options.trigger || "manual", now, now, now).run();
+
+  const platforms = [];
+  if (configured(env.META_PAGE_ID)) platforms.push("facebook");
+  if (configured(env.META_INSTAGRAM_USER_ID)) platforms.push("instagram");
+  if (!platforms.length) {
+    await finishPost(db, postId, "failed", "Meta credentials are not configured.", {});
+    return { ok: false, postId, product: product.name, caption, error: "Meta credentials are not configured." };
+  }
+
+  const results = {};
+  for (const platform of platforms) {
+    const tokenCheck = metaAccessToken(platform === "facebook" ? env.META_PAGE_ACCESS_TOKEN : env.INSTAGRAM_ACCESS_TOKEN);
+    if (!tokenCheck.ok) {
+      await savePlatformResult(db, postId, platform, "failed", "", 0, tokenCheck.error);
+      results[platform] = { ok: false, error: tokenCheck.error, attempts: 0 };
+      continue;
+    }
+    results[platform] = await publishWithRetry(env, db, postId, platform, product, caption, trackedUrl, tokenCheck.token);
+  }
+  const succeeded = Object.values(results).filter((result) => result.ok).length;
+  const status = succeeded === platforms.length ? "success" : succeeded ? "partial" : "failed";
+  const error = Object.values(results).filter((result) => !result.ok).map((result) => result.error).join(" | ");
+  await finishPost(db, postId, status, error, results);
+  if (status !== "failed" && options.trigger === "scheduled") {
+    await db.prepare("UPDATE marketing_settings SET last_run_date = ?, next_run_at = ?, updated_at = ? WHERE id = 'primary'")
+      .bind(now.slice(0, 10), nextRunAt(await getSettings(env), new Date(now)), now).run();
+  }
+  return { ok: status !== "failed", status, postId, product: product.name, caption, platforms: results };
+}
+
+async function selectNextProduct(db) {
+  const result = await db.prepare(`SELECT
+      'etsy' AS source, id, COALESCE(NULLIF(display_title, ''), title) AS name,
+      COALESCE(NULLIF(display_description, ''), description, '') AS description,
+      price, currency, category, quantity AS stock, listing_url AS url, primary_image AS image
+    FROM etsy_products
+    WHERE public_visibility = 1 AND admin_status = 'published'
+      AND COALESCE(quantity, 1) > 0 AND COALESCE(listing_url, '') <> '' AND COALESCE(primary_image, '') <> ''
+    ORDER BY CASE WHEN EXISTS (
+      SELECT 1 FROM marketing_posts mp WHERE mp.product_source = 'etsy' AND mp.product_id = etsy_products.id AND mp.status IN ('success', 'partial')
+    ) THEN 1 ELSE 0 END,
+    COALESCE((SELECT MAX(mp.created_at) FROM marketing_posts mp WHERE mp.product_source = 'etsy' AND mp.product_id = etsy_products.id AND mp.status IN ('success', 'partial')), ''),
+    updated_at DESC LIMIT 1`).first();
+  return result || null;
+}
+
+async function generateCaption(env, product, url, campaignCode) {
+  if (env.AI?.run) {
+    try {
+      const response = await env.AI.run(env.MARKETING_AI_MODEL || "@cf/meta/llama-3.1-8b-instruct-fp8-fast", {
+        messages: [
+          { role: "system", content: "Write one friendly UK social caption for Bingo Dog Wash. Include the exact product name, a truthful benefit, dog wording, suitable emojis, a call to action, the exact URL, and 3-5 hashtags. Never invent claims or discounts. Return only the caption." },
+          { role: "user", content: JSON.stringify({ name: product.name, description: product.description, category: product.category, price: priceLabel(product), url }) }
+        ],
+        max_tokens: 260,
+        temperature: 0.9
+      });
+      const text = clean(response?.response || response?.result?.response, 2200);
+      if (text.includes(product.name) && text.includes(url)) return text;
+    } catch (error) {
+      console.error(JSON.stringify({ level: "warn", message: "Marketing AI caption fallback", error: clean(error?.message, 300) }));
+    }
+  }
+  const variants = [
+    [`🐶 Product of the Day: ${product.name}!`, `Give your four-legged friend ${benefit(product)}.`, "Treat your dog today:"],
+    [`🐾 Today's tail-wagging pick is ${product.name}.`, `${benefit(product)} — chosen with happy dogs and their humans in mind.`, "Take a closer look:"],
+    [`Fresh pick for dog lovers! 🦴 ${product.name}`, `A handy choice for ${benefit(product)}.`, "Shop the product:"],
+    [`Make tails wag with ${product.name} ✨`, `${benefit(product)}, from the Bingo Dog Wash shop.`, "Fetch yours here:"]
+  ];
+  const index = hash(`${campaignCode}:${product.id}`) % variants.length;
+  return `${variants[index].join("\n\n")}\n${url}\n\n#BingoDogWash #DogLovers #PetCare #DogsOfInstagram`;
+}
+
+async function publishWithRetry(env, db, postId, platform, product, caption, url, token) {
+  let lastError = "Unknown publishing error.";
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt += 1) {
+    try {
+      const externalPostId = platform === "facebook"
+        ? await publishFacebook(env, product.image, caption, url, token)
+        : await publishInstagram(env, product.image, caption, token);
+      await savePlatformResult(db, postId, platform, "success", externalPostId, attempt, "");
+      return { ok: true, id: externalPostId, attempts: attempt };
+    } catch (error) {
+      lastError = clean(error?.message || error, 500);
+      const retryable = error?.retryable !== false;
+      await savePlatformResult(db, postId, platform, !retryable || attempt === MAX_RETRIES ? "failed" : "retrying", "", attempt, lastError);
+      if (!retryable) return { ok: false, error: lastError, attempts: attempt };
+    }
+  }
+  return { ok: false, error: lastError, attempts: MAX_RETRIES };
+}
+
+async function publishFacebook(env, image, caption, link, token) {
+  const body = new URLSearchParams({ url: absoluteImage(image), caption: `${caption}\n\n${link}`, access_token: token });
+  return graphPost(FACEBOOK_GRAPH_ORIGIN, `${GRAPH_VERSION}/${env.META_PAGE_ID}/photos`, body, "facebook_photo_upload");
+}
+
+async function publishInstagram(env, image, caption, token) {
+  const create = await graphPost(INSTAGRAM_GRAPH_ORIGIN, `${env.META_INSTAGRAM_USER_ID}/media`, new URLSearchParams({ image_url: absoluteImage(image), caption, access_token: token }), "media_create");
+  return graphPost(INSTAGRAM_GRAPH_ORIGIN, `${env.META_INSTAGRAM_USER_ID}/media_publish`, new URLSearchParams({ creation_id: create, access_token: token }), "media_publish");
+}
+
+async function graphPost(origin, path, body, operation = "") {
+  const endpoint = `${origin}/${path}`;
+  let response;
+  try {
+    response = await fetch(endpoint, { method: "POST", headers: { Authorization: `Bearer ${body.get("access_token") || ""}` }, body });
+  } catch (error) {
+    logMetaDiagnostic(operation, null, null, networkCategory(error), endpoint);
+    throw publishingError(META_ERROR.network, true);
+  }
+  let data = null;
+  let nonJson = false;
+  try { data = await response.json(); } catch { nonJson = true; }
+  if (!response.ok || !data?.id) {
+    logMetaDiagnostic(operation, response.status, data, nonJson ? "non_json" : response.ok ? "malformed_response" : "provider_error", endpoint);
+    throw publishingError(metaApiError(data, response.status), response.status === 429 || response.status >= 500);
+  }
+  return data.id;
+}
+
+async function preflight(env) {
+  const settings = await getSettings(env);
+  if (settings?.enabled) return json({ ok: false, error: "Pause automation before running preflight.", paused: false }, 409);
+  const instagram = await instagramPreflight(env);
+  const facebook = await facebookPreflight(env);
+  return json({ ok: instagram.ok && facebook.ok, paused: true, publishingAttempted: false, instagram, facebook }, instagram.ok && facebook.ok ? 200 : 422);
+}
+
+async function instagramPreflight(env) {
+  const tokenCheck = metaAccessToken(env.INSTAGRAM_ACCESS_TOKEN);
+  if (!tokenCheck.ok) {
+    logMetaValidation("instagram_token_check", {
+      missingConfig: !configured(env.INSTAGRAM_ACCESS_TOKEN) ? "INSTAGRAM_ACCESS_TOKEN" : (!configured(env.META_INSTAGRAM_USER_ID) ? "META_INSTAGRAM_USER_ID" : !configured(env.META_INSTAGRAM_USERNAME) ? "META_INSTAGRAM_USERNAME" : null),
+      validationError: tokenCheck.error,
+    });
+    return { ok: false, error: tokenCheck.error, api: "Instagram Login" };
+  }
+  if (!configured(env.META_INSTAGRAM_USER_ID) || !configured(env.META_INSTAGRAM_USERNAME)) {
+    logMetaValidation("instagram_token_check", {
+      missingConfig: !configured(env.META_INSTAGRAM_USER_ID) ? "META_INSTAGRAM_USER_ID" : "META_INSTAGRAM_USERNAME",
+      validationError: META_ERROR.incomplete,
+    });
+    return { ok: false, error: META_ERROR.incomplete, api: "Instagram Login" };
+  }
+  let profile;
+  try {
+    profile = await graphGet(INSTAGRAM_GRAPH_ORIGIN, "me", { fields: "id,username,account_type" }, tokenCheck.token, "identity");
+  } catch (error) {
+    return { ok: false, authenticationOk: false, error: safeMetaError(error), api: "Instagram Login", failedCheck: "profile-authentication" };
+  }
+  if (String(profile.id) !== String(env.META_INSTAGRAM_USER_ID) || String(profile.username).toLowerCase() !== String(env.META_INSTAGRAM_USERNAME).toLowerCase()) {
+    return { ok: false, authenticationOk: true, identityOk: false, error: META_ERROR.incomplete, api: "Instagram Login" };
+  }
+  const accountType = String(profile.account_type || "").toUpperCase();
+  if (!["BUSINESS", "CREATOR", "MEDIA_CREATOR"].includes(accountType)) {
+    return { ok: false, authenticationOk: true, identityOk: false, error: META_ERROR.incomplete, api: "Instagram Login" };
+  }
+      return {
+    ok: true,
+    authenticationOk: true,
+    identityOk: true,
+    api: "Instagram Login",
+    id: String(profile.id),
+    username: profile.username,
+    accountType: profile.account_type,
+    publishingPermission: "assumed"
+  };
+}
+
+async function validateFacebookToken(env, token) {
+  const tokenCheck = metaAccessToken(token);
+  const pageId = String(env.META_PAGE_ID || "");
+  if (!tokenCheck.ok) {
+    logMetaValidation("facebook_token_check", {
+      missingConfig: !configured(env.META_PAGE_ACCESS_TOKEN) ? "META_PAGE_ACCESS_TOKEN" : (!configured(env.META_PAGE_ID) ? "META_PAGE_ID" : null),
+      validationError: tokenCheck.error,
+    });
+    return {
+      ok: false,
+      pageId,
+      permissions: [],
+      tokenStatus: { valid: false },
+      error: tokenCheck.error === META_ERROR.invalid ? FACEBOOK_TOKEN_EXPIRED : tokenCheck.error,
+      api: "Facebook Pages"
+    };
+  }
+  if (!configured(env.META_PAGE_ID)) {
+    logMetaValidation("facebook_token_check", {
+      missingConfig: "META_PAGE_ID",
+      validationError: META_ERROR.incomplete,
+    });
+    return { ok: false, pageId, permissions: [], tokenStatus: { valid: false }, error: META_ERROR.incomplete, api: "Facebook Pages" };
+  }
+
+  let debug;
+  try {
+    debug = await graphGet(FACEBOOK_GRAPH_ORIGIN, `${GRAPH_VERSION}/debug_token`, { input_token: tokenCheck.token }, tokenCheck.token, "token_debug");
+  } catch (error) {
+    const message = safeMetaError(error);
+    logMetaValidation("facebook_token_debug", {
+      validationError: message,
+      apiErrorCode: Number(error?.message && error.message.match(/\d+/)?.[0]) || null,
+      apiErrorMessage: message,
+    });
+    return { ok: false, pageId, permissions: [], tokenStatus: { valid: false }, error: message === META_ERROR.invalid ? FACEBOOK_TOKEN_EXPIRED : message, api: "Facebook Pages" };
+  }
+
+  const debugData = debug?.data || {};
+  const permissions = Array.isArray(debugData.scopes) ? debugData.scopes : [];
+  const tokenStatus = {
+    valid: debugData.is_valid === true,
+    appId: clean(debugData.app_id, 80),
+    application: clean(debugData.application, 120),
+    type: clean(debugData.type, 40),
+    expiresAt: Number.isFinite(debugData.expires_at) ? new Date(debugData.expires_at * 1000).toISOString() : "",
+  };
+  if (!tokenStatus.valid) {
+    return { ok: false, pageId, permissions, tokenStatus, error: FACEBOOK_TOKEN_EXPIRED, api: "Facebook Pages" };
+  }
+  if (configured(env.META_APP_ID) && String(env.META_APP_ID) !== String(debugData.app_id)) {
+    return {
+      ok: false,
+      pageId,
+      permissions,
+      tokenStatus,
+      error: "Facebook token belongs to an unexpected app. Reconnect Meta account.",
+      api: "Facebook Pages"
+    };
+  }
+  return { ok: true, pageId, permissions, tokenStatus, token: tokenCheck.token };
+}
+
+async function facebookPreflight(env) {
+  const validation = await validateFacebookToken(env, env.META_PAGE_ACCESS_TOKEN);
+  const pageId = String(env.META_PAGE_ID || "");
+  if (!validation.ok) {
+    return { ...validation, pageId };
+  }
+  const { tokenStatus, permissions, token } = validation;
+  const missingPermissions = FACEBOOK_REQUIRED_SCOPES.filter((scope) => !permissions.includes(scope));
+  if (missingPermissions.length > 0) {
+    return {
+      ok: false,
+      pageId,
+      permissions,
+      tokenStatus,
+      missingPermissions,
+      error: "Facebook connection does not have required page permissions.",
+      api: "Facebook Pages"
+    };
+  }
+  try {
+    const page = await graphGet(FACEBOOK_GRAPH_ORIGIN, `${GRAPH_VERSION}/${pageId}`, { fields: "id,name" }, token);
+    if (String(page.id) !== pageId) {
+      return { ok: false, pageId, permissions, tokenStatus, error: META_ERROR.incomplete, api: "Facebook Pages" };
+    }
+    return { ok: true, pageId, permissions, tokenStatus, api: "Facebook Pages", id: String(page.id), name: clean(page.name, 120) };
+  } catch (error) {
+    // Some valid page tokens may fail initial page lookup; preserve the token result and expose the diagnostic error.
+    return { ok: false, pageId, permissions, tokenStatus, error: safeMetaError(error), api: "Facebook Pages" };
+  }
+}
+
+async function metaDiagnostics(env) {
+  // Prefer explicit secrets, fall back to stored D1 tokens if present.
+  let facebookToken = metaAccessToken(env.META_PAGE_ACCESS_TOKEN);
+  const instagramToken = metaAccessToken(env.INSTAGRAM_ACCESS_TOKEN);
+  if (!facebookToken.ok && env.GIFT_CARD_DB) {
+    try {
+      const row = await env.GIFT_CARD_DB.prepare("SELECT page_access_token, page_token_expires_at FROM marketing_connections WHERE id = 'primary'").first();
+      if (row && row.page_access_token) facebookToken = metaAccessToken(row.page_access_token);
+    } catch {}
+  }
+
+  const diagnostics = {
+    facebook: {
+      secretConfigured: typeof env.META_PAGE_ACCESS_TOKEN === "string" && env.META_PAGE_ACCESS_TOKEN.trim().length > 0,
+      pageIdConfigured: configured(env.META_PAGE_ID),
+      tokenValidated: facebookToken.ok,
+      validationError: facebookToken.ok ? "" : facebookToken.error,
+    },
+    instagram: {
+      secretConfigured: typeof env.INSTAGRAM_ACCESS_TOKEN === "string" && env.INSTAGRAM_ACCESS_TOKEN.trim().length > 0,
+      userIdConfigured: configured(env.META_INSTAGRAM_USER_ID),
+      tokenValidated: instagramToken.ok,
+      validationError: instagramToken.ok ? "" : instagramToken.error,
+    }
+  };
+
+  if (facebookToken.ok && diagnostics.facebook.pageIdConfigured) {
+    try {
+      const debug = await graphGet(FACEBOOK_GRAPH_ORIGIN, `${GRAPH_VERSION}/debug_token`, { input_token: facebookToken.token }, facebookToken.token, "facebook_debug");
+      diagnostics.facebook.debug = {
+        tokenStatus: { valid: debug?.data?.is_valid === true },
+        appId: clean(debug?.data?.app_id, 80),
+        type: clean(debug?.data?.type, 40),
+        expiresAt: Number.isFinite(debug?.data?.expires_at) ? new Date(debug.data.expires_at * 1000).toISOString() : "",
+      };
+    } catch (error) {
+      diagnostics.facebook.debug = { error: safeMetaError(error) };
+    }
+  }
+
+  if (instagramToken.ok && diagnostics.instagram.userIdConfigured) {
+    try {
+      const profile = await graphGet(INSTAGRAM_GRAPH_ORIGIN, "me", { fields: "id,username,account_type" }, instagramToken.token, "instagram_identity");
+      diagnostics.instagram.profile = {
+        id: String(profile.id || ""),
+        username: String(profile.username || ""),
+        accountType: String(profile.account_type || ""),
+      };
+    } catch (error) {
+      diagnostics.instagram.profile = { error: safeMetaError(error) };
+    }
+  }
+
+  return diagnostics;
+}
+
+// Start OAuth: generate state and return Facebook OAuth URL
+async function oauthStart(request, env, url) {
+  const redirectUri = env.META_REDIRECT_URI || "https://admin.bingodogwash.com/api/admin/marketing/oauth/callback";
+  const appId = env.META_APP_ID;
+  if (!appId) return json({ ok: false, error: "META_APP_ID not configured." }, 400);
+  const state = crypto.randomUUID();
+  const now = new Date().toISOString();
+  try {
+    await env.GIFT_CARD_DB.prepare("INSERT OR REPLACE INTO marketing_one_time_guards (action_key, created_at) VALUES (?, ?)")
+      .bind(`oauth_state:${state}`, now).run();
+  } catch (e) {
+    logMetaValidation("oauth_start", { validationError: clean(e?.message || String(e), 300) });
+    return json({ ok: false, error: "Failed to initialise OAuth state." }, 500);
+  }
+  const authUrl = new URL(`https://www.facebook.com/${GRAPH_VERSION}/dialog/oauth`);
+  authUrl.searchParams.set("client_id", String(appId));
+  authUrl.searchParams.set("redirect_uri", redirectUri);
+  authUrl.searchParams.set("state", state);
+  authUrl.searchParams.set("response_type", "code");
+  authUrl.searchParams.set("scope", [...FACEBOOK_REQUIRED_SCOPES, INSTAGRAM_PUBLISH_PERMISSION].join(","));
+  return json({ ok: true, url: authUrl.toString(), state });
+}
+
+// OAuth callback: exchange code, get long-lived token and Page token, store in D1
+async function oauthCallback(request, env, url) {
+  const params = url.searchParams;
+  const code = params.get("code");
+  const state = params.get("state");
+  const error = params.get("error");
+  const origin = new URL(request.url).origin;
+  const adminRedirect = (q) => Response.redirect(new URL(`/admin/marketing.html${q ? `?${q}` : ""}`, origin).toString(), 302);
+  if (error) {
+    logMetaValidation("oauth_callback", { validationError: clean(error, 200) });
+    return adminRedirect("oauth=error");
+  }
+  if (!state) return adminRedirect("oauth=invalid_state");
+  // validate and consume state
+  try {
+    const guard = await env.GIFT_CARD_DB.prepare("SELECT created_at FROM marketing_one_time_guards WHERE action_key = ?").bind(`oauth_state:${state}`).first();
+    if (!guard) return adminRedirect("oauth=invalid_state");
+    await env.GIFT_CARD_DB.prepare("DELETE FROM marketing_one_time_guards WHERE action_key = ?").bind(`oauth_state:${state}`).run();
+  } catch (e) {
+    logMetaValidation("oauth_callback", { validationError: clean(e?.message || String(e), 300) });
+    return adminRedirect("oauth=error");
+  }
+  if (!code) return adminRedirect("oauth=missing_code");
+
+  // Exchange code for a short-lived user token
+  const redirectUri = env.META_REDIRECT_URI || "https://admin.bingodogwash.com/api/admin/marketing/oauth/callback";
+  const appId = env.META_APP_ID;
+  const appSecret = env.META_APP_SECRET;
+  if (!appId || !appSecret) {
+    logMetaValidation("oauth_callback", { validationError: "META_APP_ID or META_APP_SECRET not configured" });
+    return adminRedirect("oauth=server_error");
+  }
+  try {
+    const tokenUrl = `${FACEBOOK_GRAPH_ORIGIN}/${GRAPH_VERSION}/oauth/access_token?client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(redirectUri)}&client_secret=${encodeURIComponent(appSecret)}&code=${encodeURIComponent(code)}`;
+    let resp = await fetch(tokenUrl);
+    let data;
+    try { data = await resp.json(); } catch (e) { logMetaValidation("oauth_callback", { validationError: "non_json_response" }); return adminRedirect("oauth=error"); }
+    if (!resp.ok || data?.error) {
+      logMetaValidation("oauth_callback", { validationError: clean(data?.error?.message || JSON.stringify(data), 500), apiErrorCode: Number(data?.error?.code) || null });
+      return adminRedirect("oauth=error");
+    }
+    const shortToken = data.access_token;
+
+    // Exchange for long-lived user token
+    const longUrl = `${FACEBOOK_GRAPH_ORIGIN}/${GRAPH_VERSION}/oauth/access_token?grant_type=fb_exchange_token&client_id=${encodeURIComponent(appId)}&client_secret=${encodeURIComponent(appSecret)}&fb_exchange_token=${encodeURIComponent(shortToken)}`;
+    resp = await fetch(longUrl);
+    try { data = await resp.json(); } catch (e) { logMetaValidation("oauth_callback", { validationError: "non_json_response" }); return adminRedirect("oauth=error"); }
+    if (!resp.ok || data?.error) {
+      logMetaValidation("oauth_callback", { validationError: clean(data?.error?.message || JSON.stringify(data), 500), apiErrorCode: Number(data?.error?.code) || null });
+      return adminRedirect("oauth=error");
+    }
+    const userLongToken = data.access_token;
+    const userLongExpires = Number(data.expires_in) || 0;
+
+    // Get Page access token for configured page id
+    const accountsUrl = `${FACEBOOK_GRAPH_ORIGIN}/${GRAPH_VERSION}/me/accounts?access_token=${encodeURIComponent(userLongToken)}`;
+    resp = await fetch(accountsUrl);
+    try { data = await resp.json();console.log("Facebook /me/accounts response:", data); } catch (e) { logMetaValidation("oauth_callback", { validationError: "non_json_response" }); return adminRedirect("oauth=error"); }
+    if (!resp.ok || data?.error) {
+      logMetaValidation("oauth_callback", { validationError: clean(data?.error?.message || JSON.stringify(data), 500), apiErrorCode: Number(data?.error?.code) || null });
+      return adminRedirect("oauth=error");
+    }
+    const pages = Array.isArray(data?.data) ? data.data : [];
+    const pageId = String(env.META_PAGE_ID || "");
+    let pageToken = null;
+    for (const p of pages) {
+      if (String(p.id) === pageId) { pageToken = p.access_token; break; }
+    }
+    if (!pageToken && pages.length > 0) pageToken = pages[0].access_token;
+    if (!pageToken) { logMetaValidation("oauth_callback", { validationError: "no_page_token_found" }); return adminRedirect("oauth=no_page_token"); }
+
+    // Persist token into D1 (create table if needed)
+    const now = new Date().toISOString();
+    await env.GIFT_CARD_DB.prepare(`CREATE TABLE IF NOT EXISTS marketing_connections (id TEXT PRIMARY KEY, page_access_token TEXT, page_token_expires_at TEXT, instagram_access_token TEXT, instagram_token_expires_at TEXT, updated_at TEXT)`).run();
+    const expiresAt = userLongExpires ? new Date(Date.now() + userLongExpires * 1000).toISOString() : "";
+    await env.GIFT_CARD_DB.prepare(`INSERT OR REPLACE INTO marketing_connections (id, page_access_token, page_token_expires_at, updated_at) VALUES ('primary', ?, ?, ?)`)
+      .bind(pageToken, expiresAt, now).run();
+
+    logMarketingSettings("marketing_admin_request", { action: "oauth_callback", method: request.method, path: url.pathname });
+    return adminRedirect("oauth=success");
+  } catch (error) {
+    logMetaValidation("oauth_callback", { validationError: clean(error?.message || String(error), 500) });
+    return adminRedirect("oauth=error");
+  }
+}
+async function graphGet(origin, path, params, token, operation = "") {
+  const url = new URL(`${origin}/${path}`);
+  Object.entries(params).forEach(([name, value]) => url.searchParams.set(name, value));
+  if (token) url.searchParams.set("access_token", token);
+  const endpoint = url.toString();
+  let response;
+  try {
+    response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  } catch (error) {
+    logMetaDiagnostic(operation, null, null, networkCategory(error), endpoint);
+    throw publishingError(META_ERROR.network, false);
+  }
+  let data = null;
+  let nonJson = false;
+  try { data = await response.json(); } catch { nonJson = true; }
+  if (nonJson) logMetaDiagnostic(operation, response.status, null, "non_json", endpoint);
+  if (!response.ok) {
+    if (!nonJson) logMetaDiagnostic(operation, response.status, data, "provider_error", endpoint);
+    throw publishingError(metaApiError(data, response.status), false);
+  }
+  if (operation === "identity" && !nonJson && (!data || typeof data.id !== "string" || !data.id)) {
+    logMetaDiagnostic(operation, response.status, data, "malformed_response", endpoint);
+  }
+  return data || {};
+}
+
+function networkCategory(error) {
+  return error?.name === "AbortError" || error?.name === "TimeoutError" ? "timeout" : "network";
+}
+
+function numericMetaField(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isInteger(number) ? number : null;
+}
+
+function logMetaDiagnostic(operation, status, data, category, endpoint) {
+  if (!operation) return;
+  console.error(JSON.stringify({
+    event: "meta_api_failure",
+    operation,
+    providerHttpStatus: Number.isInteger(status) ? status : null,
+    providerErrorCode: numericMetaField(data?.error?.code),
+    providerErrorSubcode: numericMetaField(data?.error?.error_subcode),
+    category,
+  }));
+}
+
+function logMetaValidation(method, details = {}) {
+  console.error(JSON.stringify({
+    event: "meta_validation",
+    method,
+    missingConfig: details.missingConfig || null,
+    validationError: details.validationError || null,
+    apiErrorCode: Number.isInteger(details.apiErrorCode) ? details.apiErrorCode : null,
+    apiErrorMessage: details.apiErrorMessage ? clean(details.apiErrorMessage, 500) : null,
+    endpoint: details.endpoint || null,
+  }));
+}
+
+function metaApiError(data, status) {
+  const code = Number(data?.error?.code || 0);
+  const type = typeof data?.error?.type === "string" ? data.error.type.toLowerCase() : "";
+  if (code === 190 || type === "oauthexception") return META_ERROR.invalid;
+  if (code === 10 || code === 200) return META_ERROR.permission;
+  if (status === 429 || status >= 500) return META_ERROR.network;
+  return META_ERROR.incomplete;
+}
+
+function safeMetaError(error) {
+  if (!error || typeof error.message !== "string") return META_ERROR.network;
+  const message = clean(error.message, 500);
+  return message || META_ERROR.network;
+}
+
+function safeStoredMetaError(value) {
+  const message = String(value || "");
+  if (!message || Object.values(META_ERROR).includes(message)) return message;
+  const normalized = message.toLowerCase();
+  if (/oauth|access token|expired|cannot parse/.test(normalized)) return META_ERROR.invalid;
+  if (/permission|authori[sz]/.test(normalized)) return META_ERROR.permission;
+  if (/missing|not configured/.test(normalized)) return META_ERROR.missing;
+  if (/account|page id|user id|identity/.test(normalized)) return META_ERROR.incomplete;
+  return META_ERROR.network;
+}
+
+function metaAccessToken(value) {
+  if (typeof value !== "string" || !value.trim()) return { ok: false, error: META_ERROR.missing };
+  let token = value.trim();
+  const quotedMatch = token.match(/^(['"])(.+)\1$/);
+  if (quotedMatch) token = quotedMatch[2].trim();
+  const bearerMatch = token.match(/^Bearer\s+(.+)$/i);
+  if (bearerMatch) token = bearerMatch[1].trim();
+  if (token.length < MIN_META_TOKEN_LENGTH || /[\s]/.test(token)) {
+    return { ok: false, error: META_ERROR.invalid };
+  }
+  return { ok: true, token };
+}
+
+function publishingError(message, retryable) { const error = new Error(message); error.retryable = retryable; return error; }
+
+async function dashboard(env) {
+  const db = env.GIFT_CARD_DB;
+  const [settings, posts, totals, best] = await Promise.all([
+    getSettings(env),
+    db.prepare("SELECT * FROM marketing_posts ORDER BY created_at DESC LIMIT 50").all(),
+    db.prepare(`SELECT
+      COUNT(DISTINCT CASE WHEN status IN ('success','partial') THEN product_source || ':' || product_id END) AS products_promoted,
+      COALESCE(SUM(CASE WHEN event_type = 'click' THEN value ELSE 0 END), 0) AS clicks,
+      COALESCE(SUM(CASE WHEN event_type = 'engagement' THEN value ELSE 0 END), 0) AS engagement,
+      COALESCE(SUM(CASE WHEN event_type = 'sale' THEN value ELSE 0 END), 0) AS sales
+      FROM marketing_posts LEFT JOIN marketing_events ON marketing_events.post_id = marketing_posts.id`).first(),
+    db.prepare(`SELECT product_name, COUNT(DISTINCT marketing_posts.id) AS posts,
+      COALESCE(SUM(CASE WHEN event_type = 'click' THEN value ELSE 0 END), 0) AS clicks,
+      COALESCE(SUM(CASE WHEN event_type = 'engagement' THEN value ELSE 0 END), 0) AS engagement,
+      COALESCE(SUM(CASE WHEN event_type = 'sale' THEN value ELSE 0 END), 0) AS sales
+      FROM marketing_posts LEFT JOIN marketing_events ON marketing_events.post_id = marketing_posts.id
+      GROUP BY product_source, product_id, product_name ORDER BY sales DESC, clicks DESC, engagement DESC LIMIT 8`).all()
+  ]);
+  const instagramStatus = await instagramPreflight(env);
+  const facebookStatus = await facebookPreflight(env);
+  const history = (posts.results || []).map((post) => ({
+    ...post,
+    error_message: safeStoredMetaError(post.error_message),
+  }));
+  return json({
+    ok: true,
+    settings: shapeSettings(settings),
+    connectedPlatforms: {
+      facebook: facebookStatus.ok === true,
+      instagram: instagramStatus.ok === true
+    },
+    platformStatus: { facebook: facebookStatus, instagram: instagramStatus },
+    lastPost: history[0] || null,
+    history,
+    analytics: { ...totals, bestProducts: best.results || [] }
+  });
+}
+
+async function trackCampaignEvent(request, env, url) {
+  if (request.method !== "GET" && request.method !== "POST") return json({ ok: false, error: "Method not allowed." }, 405);
+  if (!env.GIFT_CARD_DB) return json({ ok: false, error: "Tracking unavailable." }, 503);
+  const campaign = clean(url.searchParams.get("campaign"), 80);
+  const type = clean(url.searchParams.get("event") || "click", 20);
+  if (!campaign || !["click", "engagement", "sale"].includes(type)) return json({ ok: false, error: "Invalid tracking event." }, 400);
+  if (type !== "click" && !(await hasTrackingSecret(request, env))) return json({ ok: false, error: "Tracking authorisation required." }, 401);
+  const post = await env.GIFT_CARD_DB.prepare("SELECT id, product_url FROM marketing_posts WHERE campaign_code = ? LIMIT 1").bind(campaign).first();
+  if (!post) return json({ ok: false, error: "Campaign not found." }, 404);
+  await env.GIFT_CARD_DB.prepare("INSERT INTO marketing_events (id, post_id, campaign_code, event_type, platform, value, metadata, created_at) VALUES (?, ?, ?, ?, ?, 1, '', ?)")
+    .bind(crypto.randomUUID(), post.id, campaign, type, clean(url.searchParams.get("platform"), 30), new Date().toISOString()).run();
+  return request.method === "GET" ? Response.redirect(trackedDestination(post.product_url), 302) : json({ ok: true });
+}
+
+async function getSettings(env) {
+  const db = env.GIFT_CARD_DB;
+  let settings = await db.prepare("SELECT * FROM marketing_settings WHERE id = 'primary'").first();
+  if (!settings) {
+    const now = new Date().toISOString();
+    const next = nextRunAt({ schedule_hour_utc: 9, schedule_minute_utc: 0 }, new Date(now));
+    const insert = db.prepare(`INSERT INTO marketing_settings (id, enabled, schedule_hour_utc, schedule_minute_utc, last_run_date, next_run_at, updated_at)
+      VALUES ('primary', 0, 9, 0, '', ?, ?)`);
+    const boundInsert = typeof insert.bind === "function" ? insert.bind(next, now) : insert;
+    if (typeof boundInsert.run === "function") await boundInsert.run();
+    else if (typeof boundInsert.first === "function") await boundInsert.first();
+    else if (typeof boundInsert.all === "function") await boundInsert.all();
+    settings = { id: 'primary', enabled: 0, schedule_hour_utc: 9, schedule_minute_utc: 0, last_run_date: '', next_run_at: next, updated_at: now };
+  }
+
+  const now = new Date();
+  const nextRun = new Date(settings.next_run_at);
+  if (!settings.next_run_at || Number.isNaN(nextRun.getTime()) || nextRun <= now) {
+    const recalculated = nextRunAt(settings, now);
+    if (settings.next_run_at) {
+      const update = db.prepare("UPDATE marketing_settings SET next_run_at = ?, updated_at = ? WHERE id = 'primary'");
+      const boundUpdate = typeof update.bind === "function" ? update.bind(recalculated, now.toISOString()) : update;
+      if (typeof boundUpdate.run === "function") await boundUpdate.run();
+      else if (typeof boundUpdate.first === "function") await boundUpdate.first();
+      else if (typeof boundUpdate.all === "function") await boundUpdate.all();
+    }
+    settings.next_run_at = recalculated;
+    settings.updated_at = now.toISOString();
+  }
+
+  return settings;
+}
+
+async function updateSettings(env, values) {
+  const current = await getSettings(env);
+  const enabled = values.enabled ?? current.enabled;
+  const hour = values.schedule_hour_utc ?? current.schedule_hour_utc;
+  const minute = values.schedule_minute_utc ?? current.schedule_minute_utc;
+  const now = new Date();
+  const next = nextRunAt({ schedule_hour_utc: hour, schedule_minute_utc: minute }, now);
+  const stmt = env.GIFT_CARD_DB.prepare("UPDATE marketing_settings SET enabled = ?, schedule_hour_utc = ?, schedule_minute_utc = ?, next_run_at = ?, updated_at = ? WHERE id = 'primary'");
+  const boundStmt = typeof stmt.bind === "function" ? stmt.bind(enabled, hour, minute, next, now.toISOString()) : stmt;
+  if (typeof boundStmt.run === "function") await boundStmt.run();
+  else if (typeof boundStmt.first === "function") await boundStmt.first();
+  else if (typeof boundStmt.all === "function") await boundStmt.all();
+  return json({ ok: true, settings: shapeSettings(await getSettings(env)) });
+}
+
+function nextRunAt(settings, from) { const next = new Date(from); next.setUTCSeconds(0, 0); next.setUTCHours(settings.schedule_hour_utc, settings.schedule_minute_utc, 0, 0); if (next <= from) next.setUTCDate(next.getUTCDate() + 1); return next.toISOString(); }
+function shapeSettings(row) { return { enabled: Boolean(row?.enabled), hourUtc: row?.schedule_hour_utc ?? 9, minuteUtc: row?.schedule_minute_utc ?? 0, lastRunDate: row?.last_run_date || "", nextRunAt: row?.next_run_at || "" }; }
+function logMarketingSettings(event, details = {}) {
+  console.error(JSON.stringify({ event, ...details }));
+}
+async function finishPost(db, id, status, error, results) { const now = new Date().toISOString(); await db.prepare("UPDATE marketing_posts SET status = ?, error_message = ?, attempt_count = ?, facebook_post_id = ?, instagram_post_id = ?, posted_at = ?, updated_at = ? WHERE id = ?").bind(status, clean(error, 1000), Math.max(...Object.values(results).map((r) => r.attempts || 0), 0), results.facebook?.id || "", results.instagram?.id || "", status === "failed" ? "" : now, now, id).run(); }
+async function savePlatformResult(db, postId, platform, status, externalId, attempts, error) { const now = new Date().toISOString(); await db.prepare(`INSERT INTO marketing_platform_results (id, post_id, platform, status, external_post_id, attempt_count, error_message, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)` ).bind(crypto.randomUUID(), postId, platform, status, externalId, attempts, error, now, now).run(); }
+async function isAdmin(request, env) { const expected = String(env.ADMIN_API_TOKEN || ""); const auth = request.headers.get("Authorization") || ""; const received = auth.startsWith("Bearer ") ? auth.slice(7) : request.headers.get("X-Admin-Token") || ""; if (!expected || received.length !== expected.length) return false; const [a, b] = await Promise.all([crypto.subtle.digest("SHA-256", new TextEncoder().encode(received)), crypto.subtle.digest("SHA-256", new TextEncoder().encode(expected))]); const aa = new Uint8Array(a), bb = new Uint8Array(b); let diff = 0; for (let i = 0; i < aa.length; i += 1) diff |= aa[i] ^ bb[i]; return diff === 0; }
+async function hasTrackingSecret(request, env) { const expected = String(env.MARKETING_TRACKING_SECRET || ""); const received = request.headers.get("X-Marketing-Tracking-Secret") || ""; if (!expected || received.length !== expected.length) return false; const [a, b] = await Promise.all([crypto.subtle.digest("SHA-256", new TextEncoder().encode(received)), crypto.subtle.digest("SHA-256", new TextEncoder().encode(expected))]); const aa = new Uint8Array(a), bb = new Uint8Array(b); let diff = 0; for (let i = 0; i < aa.length; i += 1) diff |= aa[i] ^ bb[i]; return diff === 0; }
+function campaignUrl(productUrl, campaign) { const destination = new URL(productUrl, "https://bingodogwash.com"); destination.searchParams.set("utm_source", "social"); destination.searchParams.set("utm_medium", "organic"); destination.searchParams.set("utm_campaign", campaign); const tracker = new URL(TRACK_PATH, "https://bingodogwash.com"); tracker.searchParams.set("campaign", campaign); tracker.searchParams.set("event", "click"); tracker.searchParams.set("destination", destination.toString()); return tracker.toString(); }
+function trackedDestination(value) { try { const tracker = new URL(value, "https://bingodogwash.com"); const destination = new URL(tracker.searchParams.get("destination") || "/shop", "https://bingodogwash.com"); if (!/^https?:$/.test(destination.protocol)) return "https://bingodogwash.com/shop"; return destination.toString(); } catch { return "https://bingodogwash.com/shop"; } }
+function absoluteImage(value) { return new URL(value, "https://bingodogwash.com/").toString(); }
+function priceLabel(product) { return Number.isFinite(product.price) ? new Intl.NumberFormat("en-GB", { style: "currency", currency: product.currency || "GBP" }).format(product.price / 100) : "See product page"; }
+function benefit(product) { const text = clean(product.description, 180).replace(/[.!?]+$/, ""); return text ? text.charAt(0).toLowerCase() + text.slice(1) : `everyday ${clean(product.category || "dog care", 60).toLowerCase()}`; }
+function hash(value) { let output = 2166136261; for (const char of String(value)) { output ^= char.charCodeAt(0); output = Math.imul(output, 16777619); } return output >>> 0; }
+function configured(value) { return typeof value === "string" && value.trim().length > 0; }
+function publishingDisabled(env) { return String(env?.MARKETING_PUBLISHING_DISABLED || "").trim().toLowerCase() === "true"; }
+function publishingDisabledResponse() { return json({ ok: false, skipped: "publishing-disabled", error: "Publishing is disabled in this environment." }, 423); }
+function clean(value, max = 500) { return String(value || "").replace(/\s+/g, " ").trim().slice(0, max); }
+async function readJson(request) { try { return await request.json(); } catch { return null; } }
+function json(body, status = 200) { return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" } }); }
+
+export const marketingTestHelpers = { campaignUrl, trackedDestination, nextRunAt, hash, benefit, metaAccessToken, publishWithRetry, publishFacebook, publishInstagram, instagramPreflight, facebookPreflight, publishingDisabled };

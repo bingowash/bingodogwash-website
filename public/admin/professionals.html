@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Professional Network Admin | Bingo Dog Wash</title>
+  <meta name="description" content="Private administration workspace for professional applications, members and enquiries.">
+  <meta name="robots" content="noindex,nofollow">
+<link rel="icon" href="/favicon.ico" sizes="any"><link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <nav class="nav">
+      <a class="brand" href="index.html"><img class="brand-logo" src="/images/bingo-dog-wash-logo.optimized.png" alt="Bingo Self-Service Dog Wash" width="132" height="132" decoding="async"></a>
+      <button class="menu-toggle" type="button">Menu</button>
+      <div class="nav-links">
+<a href="https://bingodogwash.com/">Public Site</a><a href="/admin/">Admin dashboard</a><a class="active" href="/admin/professionals.html">Professional Network</a><a href="/admin/gift-cards.html">Gift Cards</a><a href="/shop">Shop</a>
+      </div>
+    </nav>
+  </header>
+  <main class="container">
+    <section class="page-title"><span class="eyebrow">Admin</span><h1>Professional Network</h1><p>Review Dog Walker Directory applications, members, rewards, referrals and customer enquiries.</p></section>
+    <section class="admin-toolbar">
+      <div><span class="eyebrow">Authentication</span><h2>Admin access</h2><p class="small-note">Use the existing Cloudflare <strong>ADMIN_API_TOKEN</strong>.</p></div>
+      <form class="form admin-token-form" data-admin-professional-token-form>
+        <label>Admin token<input name="token" type="password" autocomplete="off" required></label>
+        <button class="btn btn-primary" type="submit">Unlock</button>
+      </form>
+    </section>
+    <section data-admin-professional-panel hidden>
+      <div class="source-pills">
+        <button class="chip" type="button" data-admin-professional-tab="applications">Applications</button>
+        <button class="chip" type="button" data-admin-professional-tab="members">Members</button>
+        <button class="chip" type="button" data-admin-professional-tab="enquiries">Enquiries</button>
+      </div>
+      <section class="grid grid-4 admin-stat-grid" data-admin-professional-stats></section>
+      <section class="card" data-admin-professional-section="applications">
+        <div class="section-head"><div><span class="eyebrow">Applications</span><h2>Review applications</h2><p>Approve, reject, request more information and view consent records.</p></div></div>
+        <form class="admin-filter-bar" data-admin-professional-filter>
+          <label>Search<input name="q" type="search" placeholder="Name, email, business or postcode"></label>
+          <label>Status<select name="status"><option value="">All</option><option>Pending</option><option>Under review</option><option>More information required</option><option>Approved</option><option>Rejected</option><option>Suspended</option></select></label>
+          <button class="btn btn-secondary" type="submit">Search</button>
+        </form>
+        <div class="dashboard-list" data-admin-professional-applications></div>
+      </section>
+      <section class="card" data-admin-professional-section="members">
+        <div class="section-head"><div><span class="eyebrow">Members</span><h2>Approved members</h2><p>View referral codes, founding status, credits and member status.</p></div></div>
+        <div class="dashboard-list" data-admin-professional-members></div>
+      </section>
+      <section class="card" data-admin-professional-section="enquiries">
+        <div class="section-head"><div><span class="eyebrow">Enquiries</span><h2>Customer enquiries</h2><p>Customer details are only shown to authorised admins.</p></div></div>
+        <div class="dashboard-list" data-admin-professional-enquiries></div>
+      </section>
+    </section>
+  </main>
+<script src="/site.js?v=20260716-admin-pages" defer></script>
+</body>
+</html>

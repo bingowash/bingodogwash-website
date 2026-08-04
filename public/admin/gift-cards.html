@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin Gift Cards | Bingo Dog Wash</title>
+  <meta name="description" content="Private administration workspace for Bingo Dog Wash gift card records and controls.">
+  <meta name="robots" content="noindex,nofollow">
+<link rel="icon" href="/favicon.ico" sizes="any"><link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <nav class="nav">
+<a class="brand" href="/admin/" aria-label="Admin home"><img class="brand-logo" src="/images/bingo-dog-wash-logo.optimized.png" alt="Bingo Self-Service Dog Wash" width="132" height="132" decoding="async"></a>
+      <button class="menu-toggle" type="button">Menu</button>
+      <div class="nav-links">
+<a href="https://bingodogwash.com/">Public Site</a><a href="/admin/">Admin dashboard</a><a href="/admin/professionals.html">Professional Network</a><a class="active" href="/admin/gift-cards.html">Gift Cards</a><a href="/shop">Shop</a>
+      </div>
+    </nav>
+  </header>
+  <main class="container">
+    <section class="page-title">
+      <span class="eyebrow">Admin</span>
+      <h1>Gift Cards</h1>
+      <p>View, search, redeem, cancel, reactivate and resend Bingo Dog Wash digital gift cards.</p>
+    </section>
+
+    <section class="card">
+      <div class="section-head">
+        <div>
+          <span class="eyebrow">Customer artwork</span>
+          <h2>Gift card previews</h2>
+          <p>These previews use the same shared gift card artwork shown on the public Gift Cards page.</p>
+        </div>
+      </div>
+      <div class="admin-gift-card-designs" data-admin-gift-card-designs></div>
+    </section>
+
+    <section class="admin-toolbar">
+      <div>
+        <span class="eyebrow">Authentication</span>
+        <h2>Admin access</h2>
+        <p class="small-note">Enter the admin API token configured in Cloudflare as <strong>ADMIN_API_TOKEN</strong>.</p>
+      </div>
+      <form class="form admin-token-form" data-admin-gift-card-token-form>
+        <label>Admin token<input name="token" type="password" autocomplete="off" required></label>
+        <button class="btn btn-primary" type="submit">Unlock</button>
+      </form>
+    </section>
+
+    <section class="card" data-admin-gift-card-panel hidden>
+      <div class="section-head">
+        <div>
+          <span class="eyebrow">Shared ledger</span>
+          <h2>Gift card records</h2>
+          <p>These records come from the same database used by public balance checks and Stripe webhook creation.</p>
+        </div>
+      </div>
+      <form class="admin-filter-bar" data-admin-gift-card-filter>
+        <label>Search<input name="q" type="search" placeholder="Code, buyer email or recipient email"></label>
+        <label>Status
+          <select name="status">
+            <option value="">All statuses</option>
+            <option>Active</option>
+            <option>Partially Used</option>
+            <option>Redeemed</option>
+            <option>Cancelled</option>
+            <option>Expired</option>
+          </select>
+        </label>
+        <button class="btn btn-secondary" type="submit">Search</button>
+      </form>
+      <div class="dashboard-list admin-gift-card-list" data-admin-gift-cards></div>
+    </section>
+  </main>
+<script src="/site.js?v=20260729-gift-card-images" defer></script>
+</body>
+</html>

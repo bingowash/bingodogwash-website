@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Check Gift Card Balance | Bingo Dog Wash</title>
+  <meta name="description" content="Check the balance of a Bingo Dog Wash digital gift card.">
+  <link rel="canonical" href="https://bingodogwash.com/gift-card-balance.html">
+  <link rel="icon" href="/favicon.ico" sizes="any"><link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="site-header"><nav class="nav"><a class="brand" href="index.html"><img class="brand-logo" src="/images/bingo-dog-wash-logo.optimized.png" alt="Bingo Self-Service Dog Wash" width="132" height="132" decoding="async"></a><button class="menu-toggle" type="button">Menu</button><div class="nav-links"><a href="index.html">Home</a><a href="wash.html">Wash</a><a href="shop.html">Shop</a><a href="dog-walker-club.html">Dog Walker Club</a><a href="find-a-professional.html">Find a Professional</a><a href="gift-cards.html">Gift Cards</a><a href="about.html">About</a><a href="contact.html">Contact</a><a href="faq.html">FAQ</a><a href="account.html">Account</a><a class="basket" href="cart.html">Cart <span data-basket-count>0</span></a></div></nav></header>
+  <main class="container">
+    <section class="page-title">
+      <span class="eyebrow">Gift card balance</span>
+      <h1>Check Gift Card Balance</h1>
+      <p>Enter the gift card code and recipient email address to check the public balance details.</p>
+    </section>
+    <section class="grid grid-2" style="padding-top:0">
+      <article class="card">
+        <form class="form" method="post" data-gift-card-balance-form>
+          <label>Gift card code<input name="code" autocomplete="off" placeholder="BDW-XXXX-XXXX-XXXX" required></label>
+          <label>Recipient email<input name="recipientEmail" type="email" autocomplete="email" required></label>
+          <button class="btn btn-primary" type="submit">Check Balance</button>
+        </form>
+      </article>
+      <article class="card gift-card-balance-result" data-gift-card-balance-result>
+        <h2>Balance result</h2>
+        <p>Balance details will appear here after a valid lookup.</p>
+      </article>
+    </section>
+  </main>
+  <footer class="site-footer"><div class="container footer-grid"><div><h3>Bingo Dog Wash</h3><p>Need help with a gift card?</p></div><a href="gift-cards.html">Buy Gift Card</a><a href="contact.html">Contact</a></div></footer>
+  <script src="site.js" defer></script>
+</body>
+</html>

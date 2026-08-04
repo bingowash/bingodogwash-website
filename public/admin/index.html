@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin Dashboard | Bingo Dog Wash</title>
+  <meta name="description" content="Private Bingo Dog Wash administration dashboard for site, commerce and community operations.">
+  <meta name="robots" content="noindex,nofollow">
+<link rel="icon" href="/favicon.ico" sizes="any"><link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <nav class="nav">
+      <a class="brand" href="https://bingodogwash.com/"><img class="brand-logo" src="/images/bingo-dog-wash-logo.optimized.png" alt="Bingo Self-Service Dog Wash" width="132" height="132" decoding="async"></a>
+      <button class="menu-toggle" type="button">Menu</button>
+      <div class="nav-links">
+        <a href="https://bingodogwash.com/">Public Home</a>
+        <a href="https://bingodogwash.com/wash">Public Wash</a>
+        <a href="https://bingodogwash.com/shop">Public Shop</a>
+        <a href="https://bingodogwash.com/contact">Contact</a>
+        <a class="active" href="/admin">Admin</a>
+      </div>
+    </nav>
+  </header>
+
+  <main class="container">
+    <section class="page-title">
+      <span class="eyebrow">Admin</span>
+      <h1>Website control centre</h1>
+      <p>Manage the Bingo Dog Wash homepage, public pages, products, payments and community tools from one place.</p>
+    </section>
+
+    <section class="admin-public-panel">
+      <div>
+        <span class="eyebrow">Live site shortcuts</span>
+        <h2>Public preview</h2>
+        <p>Open the public pages connected to the product records and supplier checkout flows.</p>
+      </div>
+      <div class="admin-public-links">
+        <a class="btn btn-light" href="https://bingodogwash.com/">Home</a>
+        <a class="btn btn-light" href="https://bingodogwash.com/wash">Wash</a>
+        <a class="btn btn-light" href="https://bingodogwash.com/shop">Shop</a>
+        <a class="btn btn-secondary" href="/shop">Admin shop view</a>
+      </div>
+    </section>
+
+    <section class="admin-homepage-panel" aria-labelledby="admin-homepage-title">
+      <div class="admin-homepage-copy">
+        <span class="eyebrow">Homepage</span>
+        <h2 id="admin-homepage-title">Homepage launch centre</h2>
+        <p>Review the redesigned public homepage and jump directly to its key customer sections.</p>
+        <div class="admin-homepage-status">
+          <span aria-hidden="true"></span>
+          <div><strong>New homepage ready</strong><small>Hero, journey, featured products, videos and community sign-up are included.</small></div>
+        </div>
+        <div class="admin-public-links">
+          <a class="btn btn-secondary" href="https://bingodogwash.com/" target="_blank" rel="noopener">Open live homepage</a>
+          <a class="btn btn-light" href="https://bingodogwash.com/#journey" target="_blank" rel="noopener">Our Journey</a>
+          <a class="btn btn-light" href="https://bingodogwash.com/#community" target="_blank" rel="noopener">Community sign-up</a>
+          <a class="btn btn-light" href="https://bingodogwash.com/shop" target="_blank" rel="noopener">Featured products</a>
+        </div>
+        <div class="admin-homepage-checklist" aria-label="Homepage feature checklist">
+          <span>✓ Mobile responsive</span><span>✓ SEO metadata</span><span>✓ Shop links connected</span><span>✓ Social channels connected</span>
+        </div>
+      </div>
+      <a class="admin-homepage-preview" href="https://bingodogwash.com/" target="_blank" rel="noopener" aria-label="Open the live Bingo Dog Wash homepage">
+        <img src="/assets/home-page-pic.webp" alt="Preview of the Bingo Dog Wash homepage hero" width="1536" height="1024" loading="lazy" decoding="async">
+        <span>View public homepage <b aria-hidden="true">↗</b></span>
+      </a>
+    </section>
+
+    <section class="admin-toolbar">
+      <div>
+        <span class="eyebrow">Secure admin token</span>
+        <h2>Etsy and page controls</h2>
+        <p class="small-note">Use the existing admin API token. Etsy remains hidden unless the server feature flag is enabled.</p>
+      </div>
+      <form class="admin-token-form form" data-admin-core-token-form>
+        <label>Admin token<input type="password" name="token" autocomplete="current-password" placeholder="Enter admin token"></label>
+        <button class="btn btn-secondary" type="submit">Unlock Controls</button>
+        <p class="small-note" data-admin-core-token-message></p>
+      </form>
+    </section>
+
+    <section class="card" data-admin-etsy-panel>
+      <div class="section-head">
+        <div>
+          <span class="eyebrow">Etsy Shop</span>
+          <h2>Public Etsy marketplace feed</h2>
+          <p>Sync the live marketplace into admin, then publish, hide or restore products shown in the public shop.</p>
+        </div>
+      </div>
+      <div class="dashboard-list" data-admin-etsy-summary></div>
+      <div class="button-row">
+        <button class="btn btn-light" type="button" data-admin-etsy-action="test">Test connection</button>
+        <button class="btn btn-secondary" type="button" data-admin-etsy-action="sync">Sync now</button>
+      </div>
+      <div class="dashboard-list" data-admin-etsy-products></div>
+      <div class="button-row">
+        <button class="btn btn-light" type="button" data-admin-etsy-product-action="approve">Approve selected</button>
+        <button class="btn btn-secondary" type="button" data-admin-etsy-product-action="publish">Publish selected</button>
+        <button class="btn btn-light" type="button" data-admin-etsy-product-action="hide">Hide selected</button>
+        <button class="btn btn-light" type="button" data-admin-etsy-product-action="unpublish">Unpublish selected</button>
+        <button class="btn btn-light" type="button" data-admin-etsy-action="retry">Retry failed imports</button>
+      </div>
+      <div class="dashboard-list" data-admin-etsy-logs></div>
+    </section>
+
+    <section class="card" data-admin-pages-panel>
+      <div class="section-head">
+        <div>
+          <span class="eyebrow">Page status</span>
+          <h2>Page management</h2>
+          <p>Pause or restore non-protected pages without deleting their source files.</p>
+        </div>
+      </div>
+      <div class="dashboard-list" data-admin-pages></div>
+    </section>
+
+    <section class="admin-toolbar">
+      <div>
+        <span class="eyebrow">Publishing controls</span>
+        <h2>Admin tools</h2>
+        <p class="small-note">Review products, test supplier fulfilment and make quick display edits before uploading the next live version.</p>
+      </div>
+      <div class="admin-row-actions">
+        <button class="btn btn-light" type="button" data-admin-edit-toggle>Edit Mode</button>
+        <button class="btn btn-secondary admin-save" type="button" data-admin-save>Save Display Edits</button>
+        <button class="btn btn-light admin-save" type="button" data-admin-cancel>Cancel</button>
+        <a class="btn btn-light" href="/admin/professionals.html">Dog Walker Applications</a>
+        <a class="btn btn-light" href="/admin/gift-cards.html">Gift Cards</a>
+        <a class="btn btn-light" href="/admin/marketing.html">Marketing Automation</a>
+        <a class="btn btn-secondary" href="/admin/competition.html">🏆 Competition</a>
+        <a class="btn btn-light" href="/giveaway" target="_blank" rel="noopener">View Giveaway Page</a>
+        <a class="btn btn-light" href="#giveaway-entries">Giveaway Entries</a>
+      </div>
+    </section>
+
+    <section class="admin-edit-panel card">
+      <div>
+        <span class="eyebrow">Display edit status</span>
+        <h2 data-admin-status>View mode</h2>
+        <p>Edits update the current browser view for checking wording before the next uploaded version.</p>
+      </div>
+    </section>
+
+    <section class="grid grid-4 admin-source-grid" data-admin-source-summary></section>
+
+    <section class="card">
+      <div class="section-head">
+        <div>
+          <span class="eyebrow">Product feed</span>
+          <h2>Product controls</h2>
+          <p>Review current direct checkout, affiliate and supplier products before pushing changes into the public shop.</p>
+        </div>
+      </div>
+      <div class="dashboard-list" data-admin-product-feed></div>
+    </section>
+
+    <section class="card">
+      <div class="section-head">
+        <div>
+          <span class="eyebrow">Wash payments</span>
+          <h2>Booking monitor</h2>
+          <p>Recent self-service dog wash booking attempts and Stripe booking status.</p>
+        </div>
+      </div>
+      <div class="dashboard-list" data-admin-bookings></div>
+    </section>
+
+    <section class="card" id="giveaway-entries">
+      <div class="section-head">
+        <div>
+          <span class="eyebrow">Giveaway Entries</span>
+          <h2>Paid giveaway entries</h2>
+          <p>Verified £2 Stripe payments recorded from the public giveaway page.</p>
+        </div>
+        <div class="button-row">
+          <button class="btn btn-light" type="button" data-giveaway-refresh>Refresh</button>
+          <button class="btn btn-secondary" type="button" data-giveaway-export>Export CSV</button>
+        </div>
+      </div>
+      <form class="admin-filter-bar" data-giveaway-filter>
+        <label>Search<input name="q" placeholder="Name, email or phone"></label>
+        <label>Sort<select name="sort"><option value="date">Date</option><option value="entryNumber">Entry Number</option><option value="name">Name</option><option value="email">Email</option><option value="amount">Amount</option><option value="status">Payment Status</option></select></label>
+        <label>Direction<select name="direction"><option value="desc">Newest / Z–A</option><option value="asc">Oldest / A–Z</option></select></label>
+        <button class="btn btn-light" type="submit">Apply</button>
+      </form>
+      <div class="admin-giveaway-table-wrap" data-giveaway-entries></div>
+      <div class="admin-giveaway-pagination" data-giveaway-pagination></div>
+    </section>
+
+    <section class="card" id="newsletter-subscribers">
+      <div class="section-head">
+        <div>
+          <span class="eyebrow">Community</span>
+          <h2>Newsletter subscribers</h2>
+          <p>People who joined through the homepage community sign-up form. Total: <strong data-admin-newsletter-count>0</strong></p>
+        </div>
+        <div class="button-row">
+          <button class="btn btn-light" type="button" data-admin-newsletter-refresh>Refresh</button>
+          <button class="btn btn-secondary" type="button" data-admin-newsletter-export>Export CSV</button>
+        </div>
+      </div>
+      <div class="admin-giveaway-table-wrap" data-admin-newsletter>
+        <div class="mini-row"><strong>Locked</strong><span>Enter the admin token to view subscribers.</span></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/site.js?v=20260729-view-public-fix" defer></script>
+</body>
+</html>

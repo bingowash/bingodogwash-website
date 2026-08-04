@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en-GB">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Contact Bingo Dog Wash</title><meta name="description" content="Contact Bingo Dog Wash for self service dog wash locations, dog grooming products and customer support."><link rel="canonical" href="https://bingodogwash.com/contact.html"><link rel="icon" href="/favicon.ico" sizes="any"><link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="stylesheet" href="styles.css"></head>
+<body>
+  <header class="site-header"><nav class="nav"><a class="brand" href="index.html"><img class="brand-logo" src="/images/bingo-dog-wash-logo.optimized.png" alt="Bingo Self-Service Dog Wash" width="132" height="132" decoding="async"></a><button class="menu-toggle" type="button">Menu</button><div class="nav-links"><a href="index.html">Home</a><a href="wash.html">Wash</a><a href="shop.html">Shop</a><a href="dog-walker-club.html">Dog Walker Club</a><a href="find-a-professional.html">Find a Professional</a><a href="gift-cards.html">Gift Cards</a><a href="about.html">About</a><a href="contact.html">Contact</a><a href="faq.html">FAQ</a><a href="account.html">Account</a><a class="basket" href="cart.html">Cart <span data-basket-count>0</span></a></div></nav></header>
+  <main class="container">
+    <div class="page-title"><h1>Contact</h1><p>Questions about locations, bookings, products, affiliate partners or dropshipping suppliers.</p></div>
+    <section class="grid grid-2" style="padding-top:0">
+      <div class="card">
+        <form class="form" name="contact" method="POST" action="/api/contact">
+          <p class="hidden-field" aria-hidden="true"><label>Website<input name="website" tabindex="-1" autocomplete="off"></label></p>
+          <label>Department<select name="department" required>
+            <option value="">Choose a department</option>
+            <option value="general">General enquiry</option>
+            <option value="sales">Sales</option>
+            <option value="support">Customer support</option>
+            <option value="bookings">Bookings</option>
+            <option value="partners">Affiliate &amp; Partnerships</option>
+          </select></label>
+          <label>Name<input name="name" autocomplete="name" placeholder="Your name" required></label>
+          <label>Email<input name="email" type="email" autocomplete="email" placeholder="you@example.co.uk" required></label>
+          <label>Telephone<input name="telephone" type="tel" autocomplete="tel" placeholder="07123 456789"></label>
+          <label>Message<textarea name="message" placeholder="How can we help?" required></textarea></label>
+          <button class="btn btn-primary" type="submit">Send Message</button>
+        </form>
+      </div>
+      <div class="grid">
+        <div class="card">
+          <h3>Contact details</h3>
+          <p><strong>Phone:</strong> <a href="tel:07743316855">07743 316855</a></p>
+          <p><strong>Email:</strong> <a href="mailto:info@bingodogwash.com">info@bingodogwash.com</a></p>
+        </div>
+        <div class="map-placeholder"><div><p class="tag">Bingo Dog Wash locations</p><h3>Launch location</h3><p>Use Google Maps to find the current Bingo Dog Wash location. More UK locations can be added here as the brand grows.</p><a class="btn btn-secondary" href="https://maps.app.goo.gl/x9AnYrEyPPvhTBfJ9" target="_blank" rel="noopener">Open in Google Maps</a></div></div>
+        <div class="card"><h3>Social media</h3><p><a href="https://www.instagram.com/bingo_dogwash/" target="_blank" rel="noopener noreferrer">Instagram</a> | <a href="https://www.facebook.com/profile.php?id=61590905394658" target="_blank" rel="noopener noreferrer">Facebook</a> | <a href="https://www.youtube.com/@BingoDogwash" target="_blank" rel="noopener noreferrer">YouTube</a> | <a href="https://www.tiktok.com/@bingo_dogwash" target="_blank" rel="noopener noreferrer">TikTok</a></p></div>
+      </div>
+    </section>
+  </main>
+  <script src="site-shell.js" defer></script>
+</body>
+</html>
+

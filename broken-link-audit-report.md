@@ -1,0 +1,949 @@
+# Broken Link Audit Report
+
+## Executive Summary
+
+- Total pages scanned: 35
+- Total links checked: 718
+- Internal links: 704
+- External links: 14
+- Broken links: 1
+- Redirects: multiple observed (notably .html URLs to extensionless routes)
+- Warnings: 2
+- Errors: 0
+
+## Broken Links
+
+- Source page: /contact
+- Link text: (form submission)
+- Destination: https://bingodogwash.com/api/contact
+- Status code: 404
+- Severity: Medium
+- Notes: The contact form posts to a route that is not available on the live site.
+
+## Redirects
+
+- /contact.html -> /contact (307)
+- /about.html -> /about (307)
+- /shop.html -> /shop (307)
+- /gift-cards.html -> /gift-cards (307)
+- /top-dog-competition.html -> /top-dog-competition (307)
+- /account.html -> /account (307)
+
+These redirects are consistent with the site using extensionless URLs as its canonical route style.
+
+## External Link Issues
+
+- No broken external links were detected in the live probe.
+- The social links and Google Maps link were reachable, although the Maps link responded with a redirect before reaching its destination.
+
+## Anchor Issues
+
+- No broken in-page anchors were detected during the audit.
+
+## Missing Assets
+
+- No missing local assets were detected in the current workspace snapshot.
+
+## Recommendations
+
+- Review the contact form endpoint and ensure the server-side handler for /api/contact exists and is deployed.
+- Consider standardising the navigation and canonical URLs so the site consistently uses one route style for both internal links and sitemap entries.
+- Review the gift-card footer policy links so they point to the dedicated Terms and Privacy pages rather than the FAQ page when that is the intended destination.
+  - Final destination: https://www.google.com/maps/place/Upper+Stone+St,+Maidstone/@51.2680652,0.5265989,3a,75y,95.56h,94.71t/data=!3m7!1e1!3m5!1sAWgddgdnUskmYcK9602m0Q!2e0!6shttps:%2F%2Fstreetviewpixels-pa.googleapis.com%2Fv1%2Fthumbnail%3Fcb_client%3Dmaps_sv.tactile%26w%3D900%26h%3D600%26pitch%3D-4.712448563434165%26panoid%3DAWgddgdnUskmYcK9602m0Q%26yaw%3D95.56283839080453!7i16384!8i8192!4m6!3m5!1s0x47df3225f52236eb:0xb5198b24d01e030f!8m2!3d51.2684247!4d0.5264865!16s%2Fg%2F1td4z3rz?entry=tts&g_ep=EgoyMDI2MDYyNC4wIPu8ASoASAFQAw%3D%3D&skid=a8772dd1-d8c1-48b9-a3bb-86a48c100e0a
+- /contact -> https://www.facebook.com/profile.php?id=61590905394658
+  - Status: 301
+  - Final destination: https://www.facebook.com/people/Bingodog-Wash/61590905394658/
+- /contact -> https://www.youtube.com/@BingoDogwash
+  - Status: 302
+  - Final destination: https://consent.youtube.com/m?continue=https%3A%2F%2Fwww.youtube.com%2F%40BingoDogwash%3Fcbrd%3D1&gl=GB&m=0&pc=yt&cm=2&hl=en-GB&src=1
+- /data-deletion -> https://bingodogwash.com/wash.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/wash
+- /data-deletion -> https://bingodogwash.com/shop.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/shop
+- /data-deletion -> https://bingodogwash.com/dog-walker-club.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/dog-walker-club
+- /data-deletion -> https://bingodogwash.com/find-a-professional.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/find-a-professional
+- /data-deletion -> https://bingodogwash.com/gift-cards.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/gift-cards
+- /data-deletion -> https://bingodogwash.com/about.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/about
+- /data-deletion -> https://bingodogwash.com/contact.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/contact
+- /data-deletion -> https://bingodogwash.com/faq.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/faq
+- /data-deletion -> https://bingodogwash.com/account.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/account
+- /data-deletion -> https://bingodogwash.com/cart.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/cart
+- /data-deletion -> https://bingodogwash.com/contact.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/contact
+- /data-deletion -> https://bingodogwash.com/contact.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/contact
+- /data-deletion -> https://bingodogwash.com/contact.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/contact
+- /dog-walker-application-success -> https://bingodogwash.com/index.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/
+- /dog-walker-application-success -> https://bingodogwash.com/index.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/
+- /dog-walker-application-success -> https://bingodogwash.com/wash.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/wash
+- /dog-walker-application-success -> https://bingodogwash.com/shop.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/shop
+- /dog-walker-application-success -> https://bingodogwash.com/dog-walker-club.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/dog-walker-club
+- /dog-walker-application-success -> https://bingodogwash.com/find-a-professional.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/find-a-professional
+- /dog-walker-application-success -> https://bingodogwash.com/gift-cards.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/gift-cards
+- /dog-walker-application-success -> https://bingodogwash.com/about.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/about
+- /dog-walker-application-success -> https://bingodogwash.com/contact.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/contact
+- /dog-walker-application-success -> https://bingodogwash.com/faq.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/faq
+- /dog-walker-application-success -> https://bingodogwash.com/account.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/account
+- /dog-walker-application-success -> https://bingodogwash.com/cart.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/cart
+- /dog-walker-application-success -> https://bingodogwash.com/dog-walker-club.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/dog-walker-club
+- /dog-walker-application-success -> https://bingodogwash.com/find-a-professional.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/find-a-professional
+- /dog-walker-club -> https://bingodogwash.com/dog-walker-club.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/dog-walker-club
+- /dog-walker-club -> https://bingodogwash.com/index.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/
+- /dog-walker-club -> https://bingodogwash.com/index.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/
+- /dog-walker-club -> https://bingodogwash.com/wash.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/wash
+- /dog-walker-club -> https://bingodogwash.com/shop.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/shop
+- /dog-walker-club -> https://bingodogwash.com/dog-walker-club.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/dog-walker-club
+- /dog-walker-club -> https://bingodogwash.com/find-a-professional.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/find-a-professional
+- /dog-walker-club -> https://bingodogwash.com/gift-cards.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/gift-cards
+- /dog-walker-club -> https://bingodogwash.com/about.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/about
+- /dog-walker-club -> https://bingodogwash.com/contact.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/contact
+- /dog-walker-club -> https://bingodogwash.com/faq.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/faq
+- /dog-walker-club -> https://bingodogwash.com/account.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/account
+- /dog-walker-club -> https://bingodogwash.com/cart.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/cart
+- /dog-walker-club -> https://bingodogwash.com/find-a-professional.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/find-a-professional
+- /dog-walker-club -> https://bingodogwash.com/find-a-professional.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/find-a-professional
+- /dog-walker-club -> https://bingodogwash.com/contact.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/contact
+- /faq -> https://bingodogwash.com/faq.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/faq
+- /faq -> https://bingodogwash.com/index.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/
+- /faq -> https://bingodogwash.com/index.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/
+- /faq -> https://bingodogwash.com/wash.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/wash
+- /faq -> https://bingodogwash.com/shop.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/shop
+- /faq -> https://bingodogwash.com/dog-walker-club.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/dog-walker-club
+- /faq -> https://bingodogwash.com/find-a-professional.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/find-a-professional
+- /faq -> https://bingodogwash.com/gift-cards.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/gift-cards
+- /faq -> https://bingodogwash.com/about.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/about
+- /faq -> https://bingodogwash.com/contact.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/contact
+- /faq -> https://bingodogwash.com/faq.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/faq
+- /faq -> https://bingodogwash.com/account.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/account
+- /faq -> https://bingodogwash.com/cart.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/cart
+- /find-a-professional -> https://bingodogwash.com/find-a-professional.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/find-a-professional
+- /find-a-professional -> https://bingodogwash.com/index.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/
+- /find-a-professional -> https://bingodogwash.com/index.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/
+- /find-a-professional -> https://bingodogwash.com/wash.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/wash
+- /find-a-professional -> https://bingodogwash.com/shop.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/shop
+- /find-a-professional -> https://bingodogwash.com/dog-walker-club.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/dog-walker-club
+- /find-a-professional -> https://bingodogwash.com/find-a-professional.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/find-a-professional
+- /find-a-professional -> https://bingodogwash.com/gift-cards.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/gift-cards
+- /find-a-professional -> https://bingodogwash.com/about.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/about
+- /find-a-professional -> https://bingodogwash.com/contact.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/contact
+- /find-a-professional -> https://bingodogwash.com/faq.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/faq
+- /find-a-professional -> https://bingodogwash.com/account.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/account
+- /find-a-professional -> https://bingodogwash.com/cart.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/cart
+- /find-a-professional -> https://bingodogwash.com/dog-walker-club.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/dog-walker-club
+- /find-a-professional -> https://bingodogwash.com/contact.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/contact
+- /gift-card-balance -> https://bingodogwash.com/gift-card-balance.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/gift-card-balance
+- /gift-card-balance -> https://bingodogwash.com/index.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/
+- /gift-card-balance -> https://bingodogwash.com/index.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/
+- /gift-card-balance -> https://bingodogwash.com/wash.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/wash
+- /gift-card-balance -> https://bingodogwash.com/shop.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/shop
+- /gift-card-balance -> https://bingodogwash.com/dog-walker-club.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/dog-walker-club
+- /gift-card-balance -> https://bingodogwash.com/find-a-professional.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/find-a-professional
+- /gift-card-balance -> https://bingodogwash.com/gift-cards.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/gift-cards
+- /gift-card-balance -> https://bingodogwash.com/about.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/about
+- /gift-card-balance -> https://bingodogwash.com/contact.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/contact
+- /gift-card-balance -> https://bingodogwash.com/faq.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/faq
+- /gift-card-balance -> https://bingodogwash.com/account.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/account
+- /gift-card-balance -> https://bingodogwash.com/cart.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/cart
+- /gift-card-balance -> https://bingodogwash.com/gift-cards.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/gift-cards
+- /gift-card-balance -> https://bingodogwash.com/contact.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/contact
+- /gift-card-success -> https://bingodogwash.com/index.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/
+- /gift-card-success -> https://bingodogwash.com/index.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/
+- /gift-card-success -> https://bingodogwash.com/wash.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/wash
+- /gift-card-success -> https://bingodogwash.com/shop.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/shop
+- /gift-card-success -> https://bingodogwash.com/dog-walker-club.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/dog-walker-club
+- /gift-card-success -> https://bingodogwash.com/find-a-professional.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/find-a-professional
+- /gift-card-success -> https://bingodogwash.com/gift-cards.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/gift-cards
+- /gift-card-success -> https://bingodogwash.com/about.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/about
+- /gift-card-success -> https://bingodogwash.com/contact.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/contact
+- /gift-card-success -> https://bingodogwash.com/faq.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/faq
+- /gift-card-success -> https://bingodogwash.com/account.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/account
+- /gift-card-success -> https://bingodogwash.com/cart.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/cart
+- /gift-card-success -> https://bingodogwash.com/gift-cards.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/gift-cards
+- /gift-card-success -> https://bingodogwash.com/gift-card-balance.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/gift-card-balance
+- /gift-cards -> https://bingodogwash.com/gift-cards.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/gift-cards
+- /gift-cards -> https://bingodogwash.com/index.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/
+- /gift-cards -> https://bingodogwash.com/index.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/
+- /gift-cards -> https://bingodogwash.com/wash.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/wash
+- /gift-cards -> https://bingodogwash.com/shop.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/shop
+- /gift-cards -> https://bingodogwash.com/dog-walker-club.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/dog-walker-club
+- /gift-cards -> https://bingodogwash.com/find-a-professional.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/find-a-professional
+- /gift-cards -> https://bingodogwash.com/gift-cards.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/gift-cards
+- /gift-cards -> https://bingodogwash.com/about.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/about
+- /gift-cards -> https://bingodogwash.com/contact.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/contact
+- /gift-cards -> https://bingodogwash.com/faq.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/faq
+- /gift-cards -> https://bingodogwash.com/account.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/account
+- /gift-cards -> https://bingodogwash.com/cart.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/cart
+- /gift-cards -> https://bingodogwash.com/gift-card-balance.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/gift-card-balance
+- /gift-cards -> https://bingodogwash.com/gift-card-balance.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/gift-card-balance
+- /gift-cards -> https://bingodogwash.com/contact.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/contact
+- /gift-cards -> https://bingodogwash.com/faq.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/faq
+- /gift-cards -> https://bingodogwash.com/faq.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/faq
+- /gift-cards -> https://bingodogwash.com/faq.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/faq
+- /gift-cards -> https://bingodogwash.com/gift-card-balance.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/gift-card-balance
+- /gift-cards -> https://bingodogwash.com/contact.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/contact
+- /giveaway -> https://bingodogwash.com/giveaway.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/giveaway
+- /giveaway -> https://bingodogwash.com/index.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/
+- /giveaway -> https://bingodogwash.com/index.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/
+- /giveaway -> https://bingodogwash.com/wash.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/wash
+- /giveaway -> https://bingodogwash.com/shop.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/shop
+- /giveaway -> https://bingodogwash.com/dog-walker-club.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/dog-walker-club
+- /giveaway -> https://bingodogwash.com/find-a-professional.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/find-a-professional
+- /giveaway -> https://bingodogwash.com/gift-cards.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/gift-cards
+- /giveaway -> https://bingodogwash.com/about.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/about
+- /giveaway -> https://bingodogwash.com/contact.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/contact
+- /giveaway -> https://bingodogwash.com/faq.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/faq
+- /giveaway -> https://bingodogwash.com/account.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/account
+- /giveaway -> https://bingodogwash.com/cart.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/cart
+- /giveaway -> https://bingodogwash.com/contact.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/contact
+- /giveaway -> https://bingodogwash.com/index.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/
+- / -> https://bingodogwash.com/index.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/
+- / -> https://bingodogwash.com/index.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/
+- / -> https://bingodogwash.com/wash.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/wash
+- / -> https://bingodogwash.com/shop.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/shop
+- / -> https://bingodogwash.com/dog-walker-club.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/dog-walker-club
+- / -> https://bingodogwash.com/find-a-professional.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/find-a-professional
+- / -> https://bingodogwash.com/gift-cards.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/gift-cards
+- / -> https://bingodogwash.com/about.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/about
+- / -> https://bingodogwash.com/contact.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/contact
+- / -> https://bingodogwash.com/faq.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/faq
+- / -> https://bingodogwash.com/account.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/account
+- / -> https://bingodogwash.com/cart.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/cart
+- / -> https://bingodogwash.com/shop.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/shop
+- / -> https://bingodogwash.com/about.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/about
+- / -> https://bingodogwash.com/shop.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/shop
+- / -> https://bingodogwash.com/product.html?id=oat-shampoo
+  - Status: 307
+  - Final destination: https://bingodogwash.com/product?id=oat-shampoo
+- / -> https://bingodogwash.com/product.html?id=oat-shampoo
+  - Status: 307
+  - Final destination: https://bingodogwash.com/product?id=oat-shampoo
+- / -> https://bingodogwash.com/product.html?id=oat-shampoo
+  - Status: 307
+  - Final destination: https://bingodogwash.com/product?id=oat-shampoo
+- / -> https://bingodogwash.com/product.html?id=amazon-eu-affiliate-pick-2
+  - Status: 307
+  - Final destination: https://bingodogwash.com/product?id=amazon-eu-affiliate-pick-2
+- / -> https://bingodogwash.com/product.html?id=amazon-eu-affiliate-pick-2
+  - Status: 307
+  - Final destination: https://bingodogwash.com/product?id=amazon-eu-affiliate-pick-2
+- / -> https://bingodogwash.com/product.html?id=amazon-eu-affiliate-pick-2
+  - Status: 307
+  - Final destination: https://bingodogwash.com/product?id=amazon-eu-affiliate-pick-2
+- / -> https://bingodogwash.com/product.html?id=amazon-affiliate-pick-2
+  - Status: 307
+  - Final destination: https://bingodogwash.com/product?id=amazon-affiliate-pick-2
+- / -> https://bingodogwash.com/product.html?id=amazon-affiliate-pick-2
+  - Status: 307
+  - Final destination: https://bingodogwash.com/product?id=amazon-affiliate-pick-2
+- / -> https://bingodogwash.com/product.html?id=amazon-affiliate-pick-2
+  - Status: 307
+  - Final destination: https://bingodogwash.com/product?id=amazon-affiliate-pick-2
+- / -> https://www.youtube.com/@BingoDogwash
+  - Status: 302
+  - Final destination: https://consent.youtube.com/m?continue=https%3A%2F%2Fwww.youtube.com%2F%40BingoDogwash%3Fcbrd%3D1&gl=GB&m=0&pc=yt&cm=2&hl=en-GB&src=1
+- / -> https://youtu.be/X8Eu8INivBw
+  - Status: 303
+  - Final destination: https://www.youtube.com/watch?v=X8Eu8INivBw&feature=youtu.be
+- / -> https://bingodogwash.com/wash.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/wash
+- / -> https://bingodogwash.com/shop.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/shop
+- / -> https://bingodogwash.com/gift-cards.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/gift-cards
+- / -> https://bingodogwash.com/about.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/about
+- / -> https://bingodogwash.com/dog-walker-club.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/dog-walker-club
+- / -> https://bingodogwash.com/find-a-professional.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/find-a-professional
+- / -> https://bingodogwash.com/contact.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/contact
+- / -> https://bingodogwash.com/faq.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/faq
+- / -> https://www.facebook.com/profile.php?id=61590905394658
+  - Status: 301
+  - Final destination: https://www.facebook.com/people/Bingodog-Wash/61590905394658/
+- / -> https://www.youtube.com/@BingoDogwash
+  - Status: 302
+  - Final destination: https://consent.youtube.com/m?continue=https%3A%2F%2Fwww.youtube.com%2F%40BingoDogwash%3Fcbrd%3D1&gl=GB&m=0&pc=yt&cm=2&hl=en-GB&src=1
+- /privacy-policy -> https://bingodogwash.com/wash.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/wash
+- /privacy-policy -> https://bingodogwash.com/shop.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/shop
+- /privacy-policy -> https://bingodogwash.com/dog-walker-club.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/dog-walker-club
+- /privacy-policy -> https://bingodogwash.com/find-a-professional.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/find-a-professional
+- /privacy-policy -> https://bingodogwash.com/gift-cards.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/gift-cards
+- /privacy-policy -> https://bingodogwash.com/about.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/about
+- /privacy-policy -> https://bingodogwash.com/contact.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/contact
+- /privacy-policy -> https://bingodogwash.com/faq.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/faq
+- /privacy-policy -> https://bingodogwash.com/account.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/account
+- /privacy-policy -> https://bingodogwash.com/cart.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/cart
+- /privacy-policy -> https://bingodogwash.com/contact.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/contact
+- /privacy-policy -> https://bingodogwash.com/contact.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/contact
+- /privacy-policy -> https://bingodogwash.com/contact.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/contact
+- /privacy-policy -> https://bingodogwash.com/contact.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/contact
+- /product -> https://bingodogwash.com/product.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/product
+- /product -> https://bingodogwash.com/index.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/
+- /product -> https://bingodogwash.com/index.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/
+- /product -> https://bingodogwash.com/wash.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/wash
+- /product -> https://bingodogwash.com/shop.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/shop
+- /product -> https://bingodogwash.com/dog-walker-club.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/dog-walker-club
+- /product -> https://bingodogwash.com/find-a-professional.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/find-a-professional
+- /product -> https://bingodogwash.com/gift-cards.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/gift-cards
+- /product -> https://bingodogwash.com/about.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/about
+- /product -> https://bingodogwash.com/contact.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/contact
+- /product -> https://bingodogwash.com/faq.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/faq
+- /product -> https://bingodogwash.com/account.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/account
+- /product -> https://bingodogwash.com/cart.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/cart
+- /product -> https://bingodogwash.com/shop.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/shop
+- /professional -> https://bingodogwash.com/professional.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/professional
+- /professional -> https://bingodogwash.com/index.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/
+- /professional -> https://bingodogwash.com/index.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/
+- /professional -> https://bingodogwash.com/wash.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/wash
+- /professional -> https://bingodogwash.com/shop.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/shop
+- /professional -> https://bingodogwash.com/dog-walker-club.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/dog-walker-club
+- /professional -> https://bingodogwash.com/find-a-professional.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/find-a-professional
+- /professional -> https://bingodogwash.com/gift-cards.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/gift-cards
+- /professional -> https://bingodogwash.com/about.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/about
+- /professional -> https://bingodogwash.com/contact.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/contact
+- /professional -> https://bingodogwash.com/faq.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/faq
+- /professional -> https://bingodogwash.com/account.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/account
+- /professional -> https://bingodogwash.com/cart.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/cart
+- /shop -> https://bingodogwash.com/shop.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/shop
+- /shop -> https://bingodogwash.com/index.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/
+- /shop -> https://bingodogwash.com/index.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/
+- /shop -> https://bingodogwash.com/wash.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/wash
+- /shop -> https://bingodogwash.com/shop.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/shop
+- /shop -> https://bingodogwash.com/dog-walker-club.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/dog-walker-club
+- /shop -> https://bingodogwash.com/find-a-professional.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/find-a-professional
+- /shop -> https://bingodogwash.com/gift-cards.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/gift-cards
+- /shop -> https://bingodogwash.com/about.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/about
+- /shop -> https://bingodogwash.com/contact.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/contact
+- /shop -> https://bingodogwash.com/faq.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/faq
+- /shop -> https://bingodogwash.com/account.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/account
+- /shop -> https://bingodogwash.com/cart.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/cart
+- /shop -> https://bingodogwash.com/wash.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/wash
+- /shop -> https://bingodogwash.com/gift-cards.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/gift-cards
+- /shop -> https://bingodogwash.com/cart.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/cart
+- /shop -> https://bingodogwash.com/contact.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/contact
+- /shop -> https://bingodogwash.com/faq.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/faq
+- /terms -> https://bingodogwash.com/wash.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/wash
+- /terms -> https://bingodogwash.com/shop.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/shop
+- /terms -> https://bingodogwash.com/dog-walker-club.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/dog-walker-club
+- /terms -> https://bingodogwash.com/find-a-professional.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/find-a-professional
+- /terms -> https://bingodogwash.com/gift-cards.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/gift-cards
+- /terms -> https://bingodogwash.com/about.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/about
+- /terms -> https://bingodogwash.com/contact.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/contact
+- /terms -> https://bingodogwash.com/faq.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/faq
+- /terms -> https://bingodogwash.com/account.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/account
+- /terms -> https://bingodogwash.com/cart.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/cart
+- /terms -> https://bingodogwash.com/contact.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/contact
+- /terms -> https://bingodogwash.com/contact.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/contact
+- /terms -> https://bingodogwash.com/contact.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/contact
+- /terms -> https://bingodogwash.com/contact.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/contact
+- /thank-you -> https://bingodogwash.com/index.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/
+- /thank-you -> https://bingodogwash.com/index.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/
+- /thank-you -> https://bingodogwash.com/wash.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/wash
+- /thank-you -> https://bingodogwash.com/shop.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/shop
+- /thank-you -> https://bingodogwash.com/dog-walker-club.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/dog-walker-club
+- /thank-you -> https://bingodogwash.com/find-a-professional.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/find-a-professional
+- /thank-you -> https://bingodogwash.com/gift-cards.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/gift-cards
+- /thank-you -> https://bingodogwash.com/about.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/about
+- /thank-you -> https://bingodogwash.com/contact.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/contact
+- /thank-you -> https://bingodogwash.com/faq.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/faq
+- /thank-you -> https://bingodogwash.com/account.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/account
+- /thank-you -> https://bingodogwash.com/cart.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/cart
+- /thank-you -> https://bingodogwash.com/index.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/
+- /thank-you -> https://bingodogwash.com/shop.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/shop
+- /thank-you -> https://bingodogwash.com/index.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/
+- /top-dog-competition -> https://bingodogwash.com/top-dog-competition.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/top-dog-competition
+- /top-dog-competition -> https://challenges.cloudflare.com/turnstile/v0/api.js
+  - Status: 302
+  - Final destination: https://challenges.cloudflare.com/turnstile/v0/g/f70cb37711aa/api.js
+- /top-dog-competition -> https://bingodogwash.com/index.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/
+- /top-dog-competition -> https://bingodogwash.com/index.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/
+- /top-dog-competition -> https://bingodogwash.com/wash.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/wash
+- /top-dog-competition -> https://bingodogwash.com/shop.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/shop
+- /top-dog-competition -> https://bingodogwash.com/top-dog-competition.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/top-dog-competition
+- /top-dog-competition -> https://bingodogwash.com/find-a-professional.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/find-a-professional
+- /top-dog-competition -> https://bingodogwash.com/gift-cards.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/gift-cards
+- /top-dog-competition -> https://bingodogwash.com/contact.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/contact
+- /top-dog-competition -> https://bingodogwash.com/account.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/account
+- /top-dog-competition -> https://bingodogwash.com/contact.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/contact
+- /top-dog-thank-you -> https://bingodogwash.com/top-dog-competition.html#gallery
+  - Status: 307
+  - Final destination: https://bingodogwash.com/top-dog-competition
+- /top-dog -> https://bingodogwash.com/top-dog-competition.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/top-dog-competition
+- /top-dog -> https://bingodogwash.com/top-dog-competition.html#gallery
+  - Status: 307
+  - Final destination: https://bingodogwash.com/top-dog-competition
+- /top-dog -> https://bingodogwash.com/top-dog-competition.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/top-dog-competition
+- /wash -> https://bingodogwash.com/wash.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/wash
+- /wash -> https://bingodogwash.com/index.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/
+- /wash -> https://bingodogwash.com/index.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/
+- /wash -> https://bingodogwash.com/wash.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/wash
+- /wash -> https://bingodogwash.com/shop.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/shop
+- /wash -> https://bingodogwash.com/dog-walker-club.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/dog-walker-club
+- /wash -> https://bingodogwash.com/find-a-professional.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/find-a-professional
+- /wash -> https://bingodogwash.com/gift-cards.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/gift-cards
+- /wash -> https://bingodogwash.com/about.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/about
+- /wash -> https://bingodogwash.com/contact.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/contact
+- /wash -> https://bingodogwash.com/faq.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/faq
+- /wash -> https://bingodogwash.com/account.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/account
+- /wash -> https://bingodogwash.com/cart.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/cart
+- /wash -> https://bingodogwash.com/shop.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/shop
+- /wash -> https://bingodogwash.com/contact.html
+  - Status: 307
+  - Final destination: https://bingodogwash.com/contact
+
+## External Link Issues
+
+- The main external links (social media, map, and support links) responded successfully in the live probe.
+
+## Anchor Issues
+
+- No broken in-page anchors were detected during the audit.
+
+## Missing Assets
+
+- No missing local assets were detected in the current workspace snapshot.
+
+## Recommendations
+
+- Consider standardising the site to use extensionless routes consistently for navigation links and canonical URLs.
+- Review the gift-card footer policy links so they point to the dedicated Terms and Privacy pages instead of the FAQ page.
+- Keep the sitemap and robots.txt aligned with the canonical URLs that the live site actually serves.

@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Choose Wash | Bingo Dog Wash</title>
+  <meta name="description" content="Choose and pay for a £10 self-service dog wash at Bingo Dog Wash using Stripe, Apple Pay, Google Pay or card.">
+  <link rel="canonical" href="https://bingodogwash.com/wash.html">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Bingo Dog Wash">
+  <meta property="og:title" content="Book a Self-Service Dog Wash | Bingo Dog Wash">
+  <meta property="og:description" content="Choose and securely pay for a self-service Bingo Dog Wash visit.">
+  <meta property="og:url" content="https://bingodogwash.com/wash.html">
+  <meta property="og:image" content="https://bingodogwash.com/assets/home-page-pic.webp">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Book a Self-Service Dog Wash | Bingo Dog Wash">
+  <meta name="twitter:description" content="Choose and securely pay for a self-service Bingo Dog Wash visit.">
+  <meta name="twitter:image" content="https://bingodogwash.com/assets/home-page-pic.webp">
+  <link rel="icon" href="/favicon.ico" sizes="any"><link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <nav class="nav">
+      <a class="brand" href="index.html"><img class="brand-logo" src="/images/bingo-dog-wash-logo.optimized.png" alt="Bingo Self-Service Dog Wash" width="132" height="132" decoding="async"></a>
+      <button class="menu-toggle" type="button">Menu</button>
+      <div class="nav-links">
+        <a href="index.html">Home</a><a class="active" href="wash.html">Wash</a><a href="shop.html">Shop</a><a href="dog-walker-club.html">Dog Walker Club</a><a href="find-a-professional.html">Find a Professional</a><a href="gift-cards.html">Gift Cards</a><a href="about.html">About</a><a href="contact.html">Contact</a><a href="faq.html">FAQ</a><a href="account.html">Account</a><a class="basket" href="cart.html">Cart <span data-basket-count>0</span></a>
+      </div>
+    </nav>
+  </header>
+  <main class="container">
+    <section class="page-title">
+      <span class="eyebrow">Self-service wash</span>
+      <h1>Choose your wash</h1>
+      <p>Pay securely with Stripe, then use the wash station. Apple Pay, Google Pay and debit or credit cards are supported.</p>
+    </section>
+    <section class="checkout-flow">
+      <article class="card flow-card"><strong>1</strong><span>Visit BingoDogWash.com</span></article>
+      <article class="card flow-card"><strong>2</strong><span>Choose Wash</span></article>
+      <article class="card flow-card"><strong>3</strong><span>Pay with Stripe</span></article>
+      <article class="card flow-card"><strong>4</strong><span>Booking saved</span></article>
+      <article class="card flow-card"><strong>5</strong><span>Email confirmation</span></article>
+      <article class="card flow-card"><strong>6</strong><span>Admin dashboard</span></article>
+    </section>
+    <section class="grid grid-2 wash-booking-grid">
+      <article class="card wash-plan-card">
+        <p class="tag">Most popular</p>
+        <h2>Self-Service Dog Wash</h2>
+        <p class="price">£10.00</p>
+        <p>Includes access to the self-service wash station, warm water, wash tools and drying support.</p>
+        <ul class="feature-list">
+          <li>Contactless Stripe payment</li>
+          <li>Apple Pay, Google Pay and card</li>
+          <li>Quick wash-station entry</li>
+        </ul>
+      </article>
+      <article class="card">
+        <h2>Booking details</h2>
+        <p>Save the visit details, then continue to Stripe payment.</p>
+        <form class="form" method="post" data-wash-booking-form>
+          <label>Your name<input name="name" autocomplete="name" required></label>
+          <label>Email<input name="email" type="email" autocomplete="email" required></label>
+          <label>Telephone<input name="telephone" type="tel" autocomplete="tel"></label>
+          <label>Dog name<input name="dog_name" autocomplete="off"></label>
+          <label>Notes<textarea name="notes" placeholder="Anything we should know?"></textarea></label>
+          <button class="btn btn-primary" type="submit">Continue to Stripe £10</button>
+        </form>
+        <p class="small-note" data-wash-booking-message>Bookings are saved securely and update automatically when Stripe confirms payment.</p>
+      </article>
+    </section>
+  </main>
+  <footer class="site-footer"><div class="container footer-grid"><div><h3>Bingo Dog Wash</h3><p>Clean dogs. Happy hearts.</p></div><a href="shop.html">Dog Care Products</a><a href="contact.html">Contact</a></div></footer>
+  <script src="site.js?v=20260718-checkout-button-fix" defer></script>
+</body>
+</html>

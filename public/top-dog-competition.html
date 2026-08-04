@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Top Dog Competition | Bingo Dog Wash</title>
+  <meta name="description" content="Enter the Bingo Dog Wash Top Dog Competition. Win £500, browse the dog gallery and follow the live leaderboard.">
+  <link rel="canonical" href="https://bingodogwash.com/top-dog-competition.html">
+  <meta property="og:title" content="Top Dog Competition | Bingo Dog Wash">
+  <meta property="og:description" content="Could your dog be Top Dog? Enter for £5 and win £500.">
+  <meta property="og:image" content="https://bingodogwash.com/images/bingo-dog-wash-logo.optimized.png">
+  <link rel="icon" href="/favicon.ico"><link rel="stylesheet" href="styles.css">
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+</head>
+<body data-competition-page>
+  <header class="site-header"><nav class="nav"><a class="brand" href="index.html"><img class="brand-logo" src="/images/bingo-dog-wash-logo.optimized.png" alt="Bingo Self-Service Dog Wash" width="132" height="132" decoding="async"></a><button class="menu-toggle" type="button">Menu</button><div class="nav-links"><a href="index.html">Home</a><a href="wash.html">Wash</a><a href="shop.html">Shop</a><a class="active" href="top-dog-competition.html">🏆 Top Dog Competition</a><a href="find-a-professional.html">Find a Professional</a><a href="gift-cards.html">Gift Cards</a><a href="contact.html">Contact</a><a href="account.html">Account</a></div></nav></header>
+  <main>
+    <section class="competition-hero">
+      <div class="container competition-hero-grid">
+        <div>
+          <span class="competition-kicker">Bingo Dog Wash presents</span>
+          <h1>Is your best friend<br><em>Top Dog?</em></h1>
+          <p>Share the photo that captures their personality and join our celebration of brilliant British dogs.</p>
+          <div class="button-row"><a class="btn btn-primary" href="#enter">Enter now — £5</a><a class="btn btn-light" href="#gallery">Meet the dogs</a></div>
+        </div>
+        <div class="competition-prize"><span>First prize</span><strong>£500</strong><small>One very deserving Top Dog</small></div>
+      </div>
+    </section>
+
+    <section class="container competition-live" aria-label="Live competition dashboard">
+      <article><span>Dogs entered</span><strong data-comp-total>—</strong></article>
+      <article><span>Money raised</span><strong data-comp-raised>—</strong></article>
+      <article><span>Prize value</span><strong data-comp-prize>£500</strong></article>
+      <article><span>Time remaining</span><strong data-comp-countdown>—</strong></article>
+      <article><span>Status</span><strong class="competition-status" data-comp-status>Loading</strong></article>
+    </section>
+
+    <section class="container competition-entry-section" id="enter">
+      <div class="competition-section-copy">
+        <span class="eyebrow">Your dog's moment</span><h2>Enter Top Dog 2026</h2>
+        <p>Upload up to three favourite photos. Your £5 entry is taken securely by Stripe and the profile goes live after our team checks the photos.</p>
+        <ul class="competition-checks"><li>£500 first prize</li><li>Secure £5 Stripe payment</li><li>Unique profile and share link</li><li>Photos reviewed before publication</li></ul>
+      </div>
+      <form class="card competition-form" data-competition-entry novalidate>
+        <div class="grid grid-2"><label>Owner name<input name="ownerName" autocomplete="name" maxlength="120" required></label><label>Email address<input name="email" type="email" autocomplete="email" maxlength="254" required></label></div>
+        <div class="grid grid-2"><label>Dog name<input name="dogName" maxlength="100" required></label><label>Breed<input name="breed" maxlength="100" required></label></div>
+        <div class="grid grid-2"><label>Town / City<input name="town" autocomplete="address-level2" maxlength="100" required></label><label>Dog age <small>(optional)</small><input name="dogAge" maxlength="30" placeholder="e.g. 4 years"></label></div>
+        <fieldset class="competition-upload"><legend>Dog photos <small>1–3 JPEG, PNG or WebP files</small></legend><input name="photos" type="file" accept="image/jpeg,image/png,image/webp" aria-label="Upload 1 to 3 dog photos" multiple required><div data-photo-preview class="competition-photo-preview"></div></fieldset>
+        <label class="competition-honeypot" aria-hidden="true">Website<input name="website" tabindex="-1" autocomplete="off"></label>
+        <label class="check-row"><input name="rulesAccepted" type="checkbox" value="true" required><span>I accept the <a href="#rules">Competition Rules</a> and Terms &amp; Conditions.</span></label>
+        <div class="competition-turnstile">
+          <div class="cf-turnstile" data-sitekey="0x4AAAAAAECKJwwIZ-OISW8t" data-action="turnstile-spin-v1" data-theme="light"></div>
+          <small>Protected by Cloudflare Turnstile</small>
+        </div>
+        <button class="btn btn-primary" type="submit">Continue to secure payment — £5</button>
+        <p class="small-note" data-entry-message aria-live="polite">Your entry is created only after successful payment.</p>
+      </form>
+    </section>
+
+    <section class="container" id="gallery"><div class="section-head"><div><span class="eyebrow">The contenders</span><h2>Top Dog gallery</h2><p>Approved entries appear here automatically.</p></div></div><div class="competition-gallery" data-competition-gallery><p>Loading the pack…</p></div></section>
+    <section class="container" id="leaderboard"><div class="section-head"><div><span class="eyebrow">Live rankings</span><h2>Top 10 dogs</h2></div></div><div class="competition-leaderboard card" data-competition-leaderboard></div></section>
+    <section class="container grid grid-2 competition-information" id="rules">
+      <article class="card"><span class="eyebrow">Fair and friendly</span><h2>Competition rules</h2><div data-competition-rules><p>Loading rules…</p></div></article>
+      <article class="card"><span class="eyebrow">Questions</span><h2>FAQ</h2><details open><summary>How much does it cost?</summary><p>Entry is £5 per dog, paid securely through Stripe.</p></details><details><summary>When will my dog appear?</summary><p>After payment, our team reviews the photos. Approved profiles then appear in the public gallery.</p></details><details><summary>How many photos can I add?</summary><p>You can upload up to three JPEG, PNG or WebP photos.</p></details><details><summary>How is the winner chosen?</summary><p>The current competition rules explain the selection method. If public voting is switched on, live rankings and vote totals will appear.</p></details></article>
+    </section>
+  </main>
+  <footer class="site-footer"><div class="container footer-grid"><div><h3>Bingo Dog Wash</h3><p>Clean dogs. Happy hearts.</p></div><a href="#rules">Rules</a><a href="contact.html">Contact</a></div></footer>
+  <script src="site.js?v=20260730-top-dog" defer></script><script src="competition.js?v=20260730" defer></script>
+</body>
+</html>

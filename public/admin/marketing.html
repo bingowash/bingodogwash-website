@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Marketing Automation | Bingo Dog Wash Admin</title><meta name="robots" content="noindex,nofollow">
+<link rel="stylesheet" href="/styles.css"><link rel="stylesheet" href="/admin/marketing.css">
+</head>
+<body>
+<header class="site-header"><nav class="nav"><a class="brand" href="/admin/"><img class="brand-logo" src="/images/bingo-dog-wash-logo.optimized.png" alt="Bingo Dog Wash" width="132" height="132"></a><div class="nav-links"><a href="/admin/">Admin dashboard</a><a class="active" href="/admin/marketing.html">Marketing</a><a href="/shop.html">Public shop</a></div></nav></header>
+  <main class="container marketing-admin">
+    <section class="page-title"><span class="eyebrow">Admin extension</span><h1>Marketing Automation</h1><p>Daily product promotion for connected Meta platforms. This system reads published products and runs independently of shop and checkout.</p></section>
+    <section class="admin-toolbar"><form class="form marketing-unlock" data-marketing-unlock><label>Admin token<input type="password" name="token" autocomplete="current-password" required></label><button class="btn btn-secondary">Unlock marketing</button><p data-marketing-message></p></form></section>
+    <div data-marketing-dashboard hidden>
+      <section class="grid grid-4 marketing-stats" data-marketing-stats></section>
+      <section class="card"><div class="section-head"><div><span class="eyebrow">Controls</span><h2>Daily schedule</h2><p data-marketing-status></p></div><div class="button-row"><button class="btn btn-secondary" data-action="preflight">Run Safe Preflight</button><button class="btn btn-secondary" data-action="test">Run Test Post</button><button class="btn btn-light" data-action="pause">Pause Automation</button><button class="btn btn-light" data-action="resume">Resume Automation</button><button class="btn btn-light" data-action="logs">View Logs</button></div></div><form class="form marketing-schedule" data-marketing-schedule><label>UTC hour<input name="hourUtc" type="number" min="0" max="23" required></label><label>UTC minute<input name="minuteUtc" type="number" min="0" max="59" step="15" required></label><button class="btn btn-secondary">Change Schedule</button></form><div class="marketing-platforms" data-marketing-platforms></div><h3>Latest API response</h3><pre class="marketing-response" data-marketing-response hidden aria-live="polite"></pre></section>
+      <section class="card"><div class="section-head"><div><span class="eyebrow">Performance</span><h2>Campaign analytics</h2></div></div><div class="marketing-chart" data-marketing-chart></div></section>
+      <section class="card" id="marketing-logs"><div class="section-head"><div><span class="eyebrow">Activity</span><h2>Posting history, errors and success logs</h2></div></div><div class="admin-giveaway-table-wrap" data-marketing-history></div></section>
+    </div>
+  </main>
+<script src="/admin/marketing.js" defer></script>
+</body></html>

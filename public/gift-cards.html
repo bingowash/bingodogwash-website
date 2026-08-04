@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bingo Dog Wash Gift Cards</title>
+  <meta name="description" content="Buy a digital Bingo Dog Wash gift card for a dog owner. Choose a fixed amount or custom value and pay securely with Stripe.">
+  <link rel="canonical" href="https://bingodogwash.com/gift-cards.html">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Bingo Dog Wash">
+  <meta property="og:title" content="Digital Dog Wash Gift Cards | Bingo Dog Wash">
+  <meta property="og:description" content="Give a digital Bingo Dog Wash gift card to a dog owner and pay securely online.">
+  <meta property="og:url" content="https://bingodogwash.com/gift-cards.html">
+  <meta property="og:image" content="https://bingodogwash.com/images/gift-cards/page/gift-cards-lifestyle-banner.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Digital Dog Wash Gift Cards | Bingo Dog Wash">
+  <meta name="twitter:description" content="Give a digital Bingo Dog Wash gift card to a dog owner and pay securely online.">
+  <meta name="twitter:image" content="https://bingodogwash.com/images/gift-cards/page/gift-cards-lifestyle-banner.png">
+  <link rel="icon" href="/favicon.ico" sizes="any"><link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="stylesheet" href="styles.css">
+</head>
+<body class="gift-cards-page">
+  <header class="site-header">
+    <nav class="nav">
+      <a class="brand" href="index.html"><img class="brand-logo" src="/images/bingo-dog-wash-logo.optimized.png" alt="Bingo Self-Service Dog Wash" width="132" height="132" decoding="async"></a>
+      <button class="menu-toggle" type="button">Menu</button>
+      <div class="nav-links">
+        <a href="index.html">Home</a><a href="wash.html">Wash</a><a href="shop.html">Shop</a><a href="dog-walker-club.html">Dog Walker Club</a><a href="find-a-professional.html">Find a Professional</a><a href="gift-cards.html">Gift Cards</a><a href="about.html">About</a><a href="contact.html">Contact</a><a href="faq.html">FAQ</a><a href="account.html">Account</a><a class="basket" href="cart.html">Cart <span data-basket-count>0</span></a>
+      </div>
+    </nav>
+  </header>
+  <section class="gift-card-hero" aria-labelledby="gift-card-hero-title">
+    <picture class="gift-card-hero-media">
+      <img src="/images/gift-cards/page/gift-cards-lifestyle-banner.png" alt="Bingo dog against a blue and green gift-card background" width="462" height="314" fetchpriority="high">
+    </picture>
+    <div class="gift-card-hero-shade" aria-hidden="true"></div>
+    <div class="container gift-card-hero-content">
+      <span class="eyebrow">Digital gift cards</span>
+      <h1 id="gift-card-hero-title">Give the Gift of Clean Dogs &amp; Happy Hearts</h1>
+      <p>Treat someone special to a Bingo Dog Wash Gift Card. Perfect for birthdays, new puppies, celebrations and every dog lover.</p>
+      <div class="button-row">
+        <a class="btn btn-primary" href="#choose-gift-card">Buy a Gift Card</a>
+        <a class="btn btn-light" href="gift-card-balance.html">Check Balance</a>
+      </div>
+    </div>
+  </section>
+  <main class="container">
+    <section class="gift-card-purchase" id="choose-gift-card" aria-labelledby="choose-gift-card-title">
+      <div class="section-head">
+        <div>
+          <span class="eyebrow">Bingo Dog Wash Gift Cards</span>
+          <h2 id="choose-gift-card-title">Choose Your Gift Card</h2>
+          <p>Select a design and amount, then personalise your gift.</p>
+        </div>
+      </div>
+      <article class="card">
+        <form class="form gift-card-form gift-card-purchase-grid" method="post" data-gift-card-form>
+          <div class="gift-card-design-panel">
+            <div class="gift-card-preview" data-gift-card-preview aria-live="polite"></div>
+            <fieldset class="gift-card-options">
+              <legend>Gift card amount</legend>
+              <label><input type="radio" name="amountPreset" value="10" checked><span>&pound;10</span></label>
+              <label><input type="radio" name="amountPreset" value="20"><span>&pound;20</span></label>
+              <label><input type="radio" name="amountPreset" value="30"><span>&pound;30</span></label>
+              <label><input type="radio" name="amountPreset" value="50"><span>&pound;50</span></label>
+              <label><input type="radio" name="amountPreset" value="custom"><span>Custom</span></label>
+            </fieldset>
+          </div>
+          <div class="gift-card-details-panel">
+            <h3>Personalise your gift</h3>
+            <div class="notice">Gift card checkout is live. You will be sent to Stripe to complete payment securely.</div>
+            <label data-custom-gift-amount hidden>Custom amount
+              <input name="customAmount" type="number" min="5" max="200" step="1" inputmode="decimal" placeholder="5 to 200">
+            </label>
+            <div class="grid grid-2">
+              <label>Recipient name<input name="recipientName" autocomplete="name" required></label>
+              <label>Recipient email<input name="recipientEmail" type="email" autocomplete="email" required></label>
+              <label>Buyer name<input name="buyerName" autocomplete="name" required></label>
+              <label>Buyer email<input name="buyerEmail" type="email" autocomplete="email" required></label>
+            </div>
+            <label>Personal message<textarea name="message" maxlength="500" placeholder="Optional message for the recipient"></textarea></label>
+            <div class="grid grid-2">
+              <label>Delivery date<input name="deliveryDate" type="date"></label>
+              <label>Quantity<input name="quantity" type="number" min="1" max="10" step="1" value="1" required></label>
+            </div>
+            <div class="gift-card-total">
+              <strong>Total</strong>
+              <span data-gift-card-total>&pound;10.00</span>
+            </div>
+            <button class="btn btn-primary" type="submit" data-gift-card-submit>Buy Gift Card</button>
+            <p class="small-note gift-card-message" data-gift-card-message>Payments open securely on Stripe.</p>
+          </div>
+        </form>
+      </article>
+    </section>
+
+    <section class="gift-card-story gift-card-story-blue" data-supporting-image-section>
+      <div class="gift-card-story-media">
+        <img src="/images/gift-cards/page/gift-cards-happy-dogs.png" alt="Close-up portrait of Bingo against a soft blue background" width="408" height="528" loading="lazy" onerror="this.closest('[data-supporting-image-section]').hidden=true" decoding="async">
+      </div>
+      <div><span class="eyebrow">A thoughtful treat</span><h2>A Gift Made for Happy Dogs</h2><p>Give someone a practical treat their dog can enjoy. Bingo Dog Wash gift cards are simple to buy, easy to send and made for dog lovers.</p></div>
+    </section>
+
+    <section class="gift-card-lifestyle" data-supporting-image-section>
+      <img src="/images/gift-cards/page/gift-cards-lifestyle-banner.png" alt="Saint Bernard puppy resting against a pale blue background" width="462" height="314" loading="lazy" onerror="this.closest('[data-supporting-image-section]').hidden=true" decoding="async">
+      <div class="gift-card-lifestyle-copy"><h2>More Than a Dog Wash</h2><p>A thoughtful gift that helps dogs leave cleaner, fresher and happier.</p></div>
+    </section>
+
+    <section class="gift-card-story gift-card-story-reverse" data-supporting-image-section>
+      <div class="gift-card-story-media">
+        <img src="/images/gift-cards/page/gift-cards-puppy.png" alt="Brown and white dog standing in a sunny park" width="344" height="334" loading="lazy" onerror="this.closest('[data-supporting-image-section]').hidden=true" decoding="async">
+      </div>
+      <div><span class="eyebrow">For every stage</span><h2>Perfect for Dogs of Every Size</h2><ul class="gift-card-checks"><li>Puppies</li><li>Adult dogs</li><li>Large breeds</li></ul><p>A useful gift for every stage of a dog’s life.</p></div>
+    </section>
+
+    <section class="gift-card-trust" data-supporting-image-section>
+      <img src="/images/gift-cards/page/gift-cards-trust-portrait.png" alt="Bingo looking up against a blue and green background" width="372" height="544" loading="lazy" onerror="this.closest('[data-supporting-image-section]').hidden=true" decoding="async">
+      <div><span class="gift-card-accent" aria-hidden="true"></span><h2>Clean Dogs. Happy Hearts.</h2><p>A friendly, practical gift for local dog owners.</p></div>
+    </section>
+
+    <section class="gift-card-terms-section" aria-labelledby="gift-card-terms-title">
+      <aside class="card gift-card-terms">
+        <p class="tag">Secure digital delivery</p>
+        <h2 id="gift-card-terms-title">Gift Card Terms</h2>
+        <ul class="feature-list">
+          <li>Gift cards can be used for eligible Bingo Dog Wash services and products.</li>
+          <li>Gift cards cannot be exchanged for cash.</li>
+          <li>Lost or shared codes may not be replaceable.</li>
+          <li>Refunds are subject to Bingo Dog Wash terms and UK consumer law.</li>
+          <li>No expiry date is added unless Bingo Dog Wash explicitly chooses one.</li>
+        </ul>
+        <div class="button-row">
+          <a class="btn btn-light" href="gift-card-balance.html">Check Balance</a>
+          <a class="btn btn-light" href="contact.html">Contact</a>
+        </div>
+        <p class="small-note">For policy questions, contact <a href="mailto:info@bingodogwash.com">info@bingodogwash.com</a>.</p>
+        <p class="small-note"><a href="faq.html">Terms</a> | <a href="faq.html">Privacy Policy</a> | <a href="faq.html">Refund Policy</a></p>
+      </aside>
+    </section>
+
+    <section class="gift-card-final-cta" data-supporting-image-section>
+      <img src="/images/gift-cards/page/gift-cards-trust-portrait.png" alt="Close-up portrait of Bingo" width="372" height="544" loading="lazy" decoding="async">
+      <div><span class="eyebrow">A gift with purpose</span><h2>Give a Gift They’ll Actually Use</h2><p>Choose a Bingo Dog Wash Gift Card and make someone’s next dog-wash visit a little more special.</p><a class="btn btn-primary" href="#choose-gift-card">Choose a Gift Card</a></div>
+    </section>
+  </main>
+  <footer class="site-footer"><div class="container footer-grid"><div><h3>Bingo Dog Wash</h3><p>Digital gift cards for clean dogs and happy owners.</p></div><a href="gift-card-balance.html">Check Gift Card Balance</a><a href="contact.html">Contact</a></div></footer>
+  <script src="site.js?v=20260730-gift-card-page" defer></script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+Stripe cart checkout setup
+
+This version uses the real basket total.
+
+This site now sends cart checkout requests to:
+
+https://bingo-checkout.bingowash.workers.dev/
+
+To make it work on the live site, add this environment secret to that Worker:
+
+STRIPE_SECRET_KEY
+
+Use your Stripe secret key from Stripe Dashboard. It starts with sk_live_ for live payments.
+
+Do not put the Stripe secret key inside the public HTML, CSS, or site.js files.
+
+After payment, Stripe sends the customer back to:
+
+/shop.html?payment=success
+
+If Stripe says the key is not configured, the site has been uploaded but the STRIPE_SECRET_KEY secret has not been added to the hosting environment yet.

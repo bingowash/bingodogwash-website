@@ -1,0 +1,248 @@
+{
+	"name": "public",
+	"main": "_functions_NOT_FOR_STATIC_UPLOAD/api/worker.js",
+	"compatibility_date": "2026-07-12",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"observability": {
+		"enabled": true,
+		"head_sampling_rate": 1
+	},
+	"triggers": {
+		"crons": [
+			"*/15 * * * *"
+		]
+	},
+	"secrets": {
+		"required": [
+			"ADMIN_API_TOKEN",
+			"INSTAGRAM_ACCESS_TOKEN",
+			"MARKETING_TRACKING_SECRET",
+			"META_PAGE_ACCESS_TOKEN"
+		]
+	},
+	"vars": {
+		"ETSY_FEATURE_ENABLED": "true",
+		"ETSY_SYNC_ENABLED": "true",
+		"MARKETING_AI_MODEL": "@cf/meta/llama-3.1-8b-instruct-fp8-fast",
+		"META_INSTAGRAM_USER_ID": "27879594505014566",
+		"META_INSTAGRAM_USERNAME": "bingo_dogwash",
+		"META_PAGE_ID": "1264938680034651",
+		"META_REDIRECT_URI": "https://admin.bingodogwash.com/api/admin/marketing/oauth/callback",
+		"META_APP_ID": "896943866344102"
+	},
+	"ai": {
+		"binding": "AI"
+	},
+	"routes": [
+		{
+			"pattern": "bingodogwash.com/*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "www.bingodogwash.com/*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "admin.bingodogwash.com/*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/competitions*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "www.bingodogwash.com/api/competitions*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "admin.bingodogwash.com/api/competitions*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/admin/competitions*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "admin.bingodogwash.com/api/admin/competitions*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/gift-cards*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/admin/gift-cards*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/ebay-account-deletion*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/ebay/products*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/etsy*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/feed-status*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/professionals*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/admin/professionals*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/admin/pages*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/newsletter",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/admin/newsletter",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "admin.bingodogwash.com/api/admin/newsletter",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/admin/etsy*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/avasam/*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/checkout",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/giveaway/checkout",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/giveaway/admin-feed",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/admin/giveaway-entries",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/bookings/pending",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/bookings/checkout",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/admin/bookings",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/stripe-webhook",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/admin/feed",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/admin/marketing*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "admin.bingodogwash.com/api/admin/marketing*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/marketing/track*",
+			"zone_name": "bingodogwash.com"
+		}
+	],
+	"assets": {
+		"directory": "./public",
+		"binding": "ASSETS",
+		"run_worker_first": true
+	},
+	"d1_databases": [
+		{
+			"binding": "GIFT_CARD_DB",
+			"database_name": "bingo-gift-cards",
+			"database_id": "89a7dff7-4161-4250-b085-10a7f3d69b18",
+			"migrations_dir": "./migrations"
+		}
+	],
+	"r2_buckets": [
+		{
+			"binding": "COMPETITION_PHOTOS",
+			"bucket_name": "bingo-competition-photos"
+		},
+		{
+			"bucket_name": "bingo-competition-photos",
+			"binding": "bingo_competition_photos",
+			"remote": true
+		}
+	],
+	"send_email": [
+		{
+			"name": "EMAIL"
+		}
+	],
+	"env": {
+		"staging": {
+			"name": "public-staging",
+			"observability": {
+				"enabled": true,
+				"head_sampling_rate": 1
+			},
+			"vars": {
+				"ETSY_FEATURE_ENABLED": "false",
+				"ETSY_SYNC_ENABLED": "false"
+			},
+			"routes": [
+				{
+					"pattern": "staging.bingodogwash.com/*",
+					"zone_name": "bingodogwash.com"
+				}
+			],
+			"assets": {
+				"directory": "./public",
+				"binding": "ASSETS",
+				"run_worker_first": true
+			},
+			"d1_databases": [
+				{
+					"binding": "GIFT_CARD_DB",
+					"database_name": "bingo-gift-cards",
+					"database_id": "89a7dff7-4161-4250-b085-10a7f3d69b18",
+					"migrations_dir": "./migrations"
+				}
+			],
+			"r2_buckets": [
+				{
+					"binding": "COMPETITION_PHOTOS",
+					"bucket_name": "bingo-competition-photos-staging"
+				}
+			],
+			"send_email": [
+				{
+					"name": "EMAIL"
+				}
+			]
+		}
+	}
+}

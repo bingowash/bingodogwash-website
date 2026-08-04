@@ -1,0 +1,15 @@
+User-agent: *
+Allow: /
+Disallow: /admin.html
+Disallow: /admin-competition.html
+Disallow: /admin-gift-cards.html
+Disallow: /admin-professionals.html
+Disallow: /account.html
+Disallow: /cart.html
+Disallow: /thank-you.html
+Disallow: /dog-walker-application-success.html
+Disallow: /gift-card-success.html
+Disallow: /top-dog-thank-you.html
+Disallow: /wash-station-qr.html
+
+Sitemap: https://bingodogwash.com/sitemap.xml
