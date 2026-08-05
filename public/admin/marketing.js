@@ -126,5 +126,20 @@ tokenInput.addEventListener("paste", (event) => {
   }
 });
 unlockForm.addEventListener("submit", (event) => { event.preventDefault(); const button = event.currentTarget.querySelector("button"); runOnce("unlock", button, async () => { token = validateToken(new FormData(event.currentTarget).get("token")); const result = await refresh(); qs("[data-marketing-message]").textContent = "Marketing controls unlocked."; showResponse({ ok: result.ok, settings: result.settings, connectedPlatforms: result.connectedPlatforms }); }); });
-document.addEventListener("click", (event) => { const button = event.target.closest("[data-action]"); const action = button?.dataset.action; if (!action) return; if (action === "logs") { qs("#marketing-logs").scrollIntoView({behavior:"smooth"}); return; } runOnce(`action:${action}`, button, async () => { const result = await call(`/${action}`, {method:"POST",body:"{}"}); showResponse(result); await refresh(); qs("[data-marketing-message]").textContent = `${action} completed.`; }); });
+document.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-action]");
+  const action = button?.dataset.action;
+  if (!action) return;
+  if (action === "logs") { qs("#marketing-logs").scrollIntoView({behavior:"smooth"}); return; }
+  if (action === "oauth-start") {
+    runOnce(`action:${action}`, button, async () => {
+      const result = await call("/oauth/start", { method:"POST", body:"{}" });
+      if (!result?.url || !result.url.startsWith("https://www.facebook.com/")) throw safeError("Meta reconnect could not be started.");
+      qs("[data-marketing-message]").textContent = "Opening Facebook to reconnect Metaâ€¦";
+      window.location.assign(result.url);
+    });
+    return;
+  }
+  runOnce(`action:${action}`, button, async () => { const result = await call(`/${action}`, {method:"POST",body:"{}"}); showResponse(result); await refresh(); qs("[data-marketing-message]").textContent = `${action} completed.`; });
+});
 qs("[data-marketing-schedule]").addEventListener("submit", (event) => { event.preventDefault(); const button = event.currentTarget.querySelector("button"); runOnce("schedule", button, async () => { const values=Object.fromEntries(new FormData(event.currentTarget)); const result = await call("/schedule",{method:"POST",body:JSON.stringify({hourUtc:Number(values.hourUtc),minuteUtc:Number(values.minuteUtc)})}); showResponse(result); await refresh(); qs("[data-marketing-message]").textContent="Schedule updated."; }); });

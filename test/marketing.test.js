@@ -24,6 +24,39 @@ test("marketing routes remain isolated under their own API prefixes", () => {
   assert.equal(isMarketingPath("/api/admin/gift-cards"), false);
 });
 
+test("Marketing Admin always exposes the existing Meta reconnect flow", () => {
+  const html = readFileSync(new URL("../public/admin/marketing.html", import.meta.url), "utf8");
+  const frontend = readFileSync(new URL("../public/admin/marketing.js", import.meta.url), "utf8");
+  assert.match(html, /data-action="oauth-start"/);
+  assert.match(html, /Reconnect Facebook \/ Meta/);
+  assert.match(frontend, /call\("\/oauth\/start"/);
+  assert.match(frontend, /window\.location\.assign\(result\.url\)/);
+});
+
+test("OAuth start reuses the protected route and returns a Facebook authorization URL", async () => {
+  let storedState = "";
+  const db = { prepare: () => ({ bind: (key) => ({ run: async () => { storedState = key; return { success: true }; } }) }) };
+  const response = await handleMarketingRequest(new Request("https://admin.bingodogwash.com/api/admin/marketing/oauth/start", {
+    method: "POST",
+    headers: { Authorization: "Bearer admin-token" },
+  }), { ADMIN_API_TOKEN: "admin-token", GIFT_CARD_DB: db, META_APP_ID: "app-id" });
+  const body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(body.ok, true);
+  assert.equal(new URL(body.url).hostname, "www.facebook.com");
+  assert.match(storedState, /^oauth_state:/);
+});
+
+test("OAuth callback uses its one-time state guard instead of a missing browser bearer header", async () => {
+  const db = { prepare: () => ({ bind: () => ({ first: async () => null }) }) };
+  const response = await handleMarketingRequest(
+    new Request("https://admin.bingodogwash.com/api/admin/marketing/oauth/callback?state=unknown&code=test"),
+    { ADMIN_API_TOKEN: "admin-token", GIFT_CARD_DB: db },
+  );
+  assert.equal(response.status, 302);
+  assert.equal(new URL(response.headers.get("Location")).searchParams.get("oauth"), "invalid_state");
+});
+
 test("campaign links record a click before preserving product destination and UTM tags", () => {
   const url = marketingTestHelpers.campaignUrl("https://example.com/dog-shampoo?size=large", "campaign-123");
   const tracker = new URL(url);

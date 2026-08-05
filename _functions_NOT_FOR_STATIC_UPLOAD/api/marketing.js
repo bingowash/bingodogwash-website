@@ -23,12 +23,17 @@ export function isMarketingPath(pathname) {
 
 export async function handleMarketingRequest(request, env, url = new URL(request.url)) {
   if (url.pathname === TRACK_PATH) return trackCampaignEvent(request, env, url);
+  // Meta returns through a browser navigation without the admin bearer header.
+  // The callback authenticates itself with the one-time, consumed OAuth state stored in D1.
+  if (request.method === "GET" && url.pathname === `${ADMIN_PATH}/oauth/callback`) {
+    if (!env.GIFT_CARD_DB) return json({ ok: false, error: "Marketing database unavailable." }, 503);
+    return oauthCallback(request, env, url);
+  }
   if (!(await isAdmin(request, env))) return json({ ok: false, error: "Admin authorisation required." }, 401);
   if (!env.GIFT_CARD_DB) return json({ ok: false, error: "Marketing database unavailable." }, 503);
 
-  // Allow admin dashboard (GET) and OAuth callback (GET). Other admin endpoints use POST.
+  // Allow the admin dashboard (GET). Other authenticated admin endpoints use POST.
   if (request.method === "GET" && url.pathname === ADMIN_PATH) return dashboard(env);
-  if (request.method === "GET" && url.pathname === `${ADMIN_PATH}/oauth/callback`) return oauthCallback(request, env, url);
   if (request.method !== "POST") return json({ ok: false, error: "Method not allowed." }, 405);
 
   if (url.pathname === `${ADMIN_PATH}/test`) return publishingDisabled(env) ? publishingDisabledResponse() : json(await runMarketingAutomation(env, { trigger: "test" }));
