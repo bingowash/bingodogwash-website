@@ -647,7 +647,7 @@ async function oauthStart(request, env, url) {
   return json({ ok: true, url: authUrl.toString(), state });
 }
 
-// OAuth callback: exchange code, get long-lived token and Page token, store in D1
+// OAuth callback: exchange code, store the long-lived user token, then inspect managed Pages.
 async function oauthCallback(request, env, url) {
   const params = url.searchParams;
   const code = params.get("code");
@@ -701,24 +701,8 @@ async function oauthCallback(request, env, url) {
     const userLongToken = data.access_token;
     const userLongExpires = Number(data.expires_in) || 0;
 
-    // Get Page access token for configured page id
-    const accountsUrl = `${FACEBOOK_GRAPH_ORIGIN}/${GRAPH_VERSION}/me/accounts?access_token=${encodeURIComponent(userLongToken)}`;
-    resp = await fetch(accountsUrl);
-    try { data = await resp.json(); } catch (e) { logMetaValidation("oauth_callback", { validationError: "non_json_response" }); return adminRedirect("oauth=error"); }
-    if (!resp.ok || data?.error) {
-      logMetaValidation("oauth_callback", { validationError: clean(data?.error?.message || JSON.stringify(data), 500), apiErrorCode: Number(data?.error?.code) || null });
-      return adminRedirect("oauth=error");
-    }
-    const pages = Array.isArray(data?.data) ? data.data : [];
-    const pageId = configuredFacebookPageIds(env)[0] || "";
-    let pageToken = null;
-    for (const p of pages) {
-      if (String(p.id) === pageId) { pageToken = p.access_token; break; }
-    }
-    if (!pageToken && pages.length > 0) pageToken = pages[0].access_token;
-    if (!pageToken) { logMetaValidation("oauth_callback", { validationError: "no_page_token_found" }); return adminRedirect("oauth=no_page_token"); }
-
-    // Persist the long-lived user token so publishing can resolve a distinct access token for every configured Page.
+    // Persist first. Page discovery must never prevent a valid OAuth user credential
+    // from being saved, because preflight uses that credential to diagnose Page access.
     const now = new Date().toISOString();
     await env.GIFT_CARD_DB.prepare(`CREATE TABLE IF NOT EXISTS marketing_connections (id TEXT PRIMARY KEY, page_access_token TEXT, page_token_expires_at TEXT, instagram_access_token TEXT, instagram_token_expires_at TEXT, updated_at TEXT)`).run();
     const expiresAt = userLongExpires ? new Date(Date.now() + userLongExpires * 1000).toISOString() : "";
@@ -741,8 +725,19 @@ ON CONFLICT(id) DO UPDATE SET
 )
 .run();
 
-    logMarketingSettings("marketing_admin_request", { action: "oauth_callback", method: request.method, path: url.pathname });
-    return adminRedirect("oauth=success");
+    let returnedPageCount = 0;
+    let discovery = "success";
+    try {
+      const accounts = await graphGet(FACEBOOK_GRAPH_ORIGIN, `${GRAPH_VERSION}/me/accounts`, { fields: "id,name,access_token", limit: "100" }, userLongToken, "oauth_facebook_accounts", { tokenSource: "d1" });
+      returnedPageCount = Array.isArray(accounts?.data) ? accounts.data.length : 0;
+      if (!returnedPageCount) discovery = "no_pages";
+    } catch (error) {
+      discovery = "failed";
+      logMetaValidation("oauth_callback_page_discovery", { validationError: safeMetaError(error), diagnostic: error?.diagnostic || null });
+    }
+
+    logMarketingSettings("marketing_admin_request", { action: "oauth_callback", method: request.method, path: url.pathname, credentialStored: true, discovery, returnedPageCount });
+    return adminRedirect(`oauth=success&discovery=${discovery}&pages=${returnedPageCount}`);
   } catch (error) {
     logMetaValidation("oauth_callback", { validationError: clean(error?.message || String(error), 500) });
     return adminRedirect("oauth=error");

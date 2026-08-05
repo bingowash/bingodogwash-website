@@ -69,6 +69,25 @@ function showResponse(value, isError = false) {
   const panel = qs("[data-marketing-response]"); panel.hidden = false; panel.classList.toggle("is-error", isError); panel.textContent = JSON.stringify(value, null, 2);
 }
 
+function showOAuthCallbackStatus() {
+  const params = new URLSearchParams(window.location.search);
+  const oauth = params.get("oauth");
+  if (!oauth) return;
+  const messages = {
+    success: params.get("discovery") === "success"
+      ? `Meta reconnected. Facebook returned ${Number(params.get("pages") || 0)} managed Page(s). Run Safe Preflight.`
+      : "Meta credential stored, but managed Page discovery needs attention. Run Safe Preflight for details.",
+    error: "Meta reconnect failed. Please try again or inspect the Worker callback logs.",
+    invalid_state: "Meta reconnect state was invalid or already used. Start reconnect again from this page.",
+    missing_code: "Facebook did not return an authorization code. Start reconnect again.",
+    server_error: "Meta reconnect is not fully configured on the server.",
+  };
+  const message = messages[oauth] || "Meta reconnect did not complete.";
+  qs("[data-marketing-message]").textContent = message;
+  showResponse({ ok: oauth === "success", oauth, discovery: params.get("discovery") || "", returnedPageCount: Number(params.get("pages") || 0), message }, oauth !== "success");
+  history.replaceState({}, "", window.location.pathname);
+}
+
 function formatUtcDate(value) {
   const date = new Date(value);
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")} ${String(date.getUTCHours()).padStart(2, "0")}:${String(date.getUTCMinutes()).padStart(2, "0")} UTC`;
@@ -143,3 +162,4 @@ document.addEventListener("click", (event) => {
   runOnce(`action:${action}`, button, async () => { const result = await call(`/${action}`, {method:"POST",body:"{}"}); showResponse(result); await refresh(); qs("[data-marketing-message]").textContent = `${action} completed.`; });
 });
 qs("[data-marketing-schedule]").addEventListener("submit", (event) => { event.preventDefault(); const button = event.currentTarget.querySelector("button"); runOnce("schedule", button, async () => { const values=Object.fromEntries(new FormData(event.currentTarget)); const result = await call("/schedule",{method:"POST",body:JSON.stringify({hourUtc:Number(values.hourUtc),minuteUtc:Number(values.minuteUtc)})}); showResponse(result); await refresh(); qs("[data-marketing-message]").textContent="Schedule updated."; }); });
+showOAuthCallbackStatus();

@@ -31,6 +31,8 @@ test("Marketing Admin always exposes the existing Meta reconnect flow", () => {
   assert.match(html, /Reconnect Facebook \/ Meta/);
   assert.match(frontend, /call\("\/oauth\/start"/);
   assert.match(frontend, /window\.location\.assign\(result\.url\)/);
+  assert.match(frontend, /showOAuthCallbackStatus/);
+  assert.match(frontend, /Meta credential stored, but managed Page discovery needs attention/);
 });
 
 test("OAuth start reuses the protected route and returns a Facebook authorization URL", async () => {
@@ -82,6 +84,35 @@ test("OAuth callback stores the long-lived user credential in D1 rather than a P
     assert.equal(new URL(response.headers.get("Location")).searchParams.get("oauth"), "success");
     assert.equal(storedValues[0], "long-user-token");
     assert.equal(storedValues.includes("page-one-token"), false);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("OAuth callback stores the user credential even when /me/accounts returns no Pages", async () => {
+  const originalFetch = globalThis.fetch;
+  const storedValues = [];
+  const db = { prepare(sql) { return {
+    bind(...values) {
+      if (sql.includes("SELECT created_at")) return { first: async () => ({ created_at: new Date().toISOString() }) };
+      if (sql.includes("INSERT INTO marketing_connections")) return { run: async () => { storedValues.push(...values); return { success: true }; } };
+      return { run: async () => ({ success: true }) };
+    },
+    run: async () => ({ success: true }),
+  }; } };
+  let request = 0;
+  globalThis.fetch = async () => {
+    request += 1;
+    if (request === 1) return Response.json({ access_token: "short-user-token" });
+    if (request === 2) return Response.json({ access_token: "long-user-token", expires_in: 5000 });
+    return Response.json({ data: [] });
+  };
+  try {
+    const response = await handleMarketingRequest(new Request("https://admin.bingodogwash.com/api/admin/marketing/oauth/callback?state=valid&code=code"), {
+      GIFT_CARD_DB: db, META_APP_ID: "app", META_APP_SECRET: "secret", META_PAGE_ID: "page-1",
+    });
+    const location = new URL(response.headers.get("Location"));
+    assert.equal(location.searchParams.get("oauth"), "success");
+    assert.equal(location.searchParams.get("discovery"), "no_pages");
+    assert.equal(storedValues[0], "long-user-token");
   } finally { globalThis.fetch = originalFetch; }
 });
 
