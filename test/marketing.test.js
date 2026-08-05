@@ -116,6 +116,23 @@ test("OAuth callback stores the user credential even when /me/accounts returns n
   } finally { globalThis.fetch = originalFetch; }
 });
 
+test("OAuth callback reports a safe token-exchange failure stage without exposing credentials", async () => {
+  const originalFetch = globalThis.fetch;
+  const db = { prepare: () => ({ bind: () => ({ first: async () => ({ created_at: new Date().toISOString() }), run: async () => ({ success: true }) }) }) };
+  globalThis.fetch = async () => new Response(JSON.stringify({ error: { code: 100, message: "Sensitive provider detail" } }), { status: 400 });
+  try {
+    const response = await handleMarketingRequest(new Request("https://admin.bingodogwash.com/api/admin/marketing/oauth/callback?state=valid&code=secret-code"), {
+      GIFT_CARD_DB: db, META_APP_ID: "app", META_APP_SECRET: "secret",
+    });
+    const location = new URL(response.headers.get("Location"));
+    assert.equal(location.searchParams.get("oauth"), "error");
+    assert.equal(location.searchParams.get("stage"), "code_exchange");
+    assert.equal(location.searchParams.get("code"), "100");
+    assert.equal(location.toString().includes("secret-code"), false);
+    assert.equal(location.toString().includes("Sensitive provider detail"), false);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 test("campaign links record a click before preserving product destination and UTM tags", () => {
   const url = marketingTestHelpers.campaignUrl("https://example.com/dog-shampoo?size=large", "campaign-123");
   const tracker = new URL(url);

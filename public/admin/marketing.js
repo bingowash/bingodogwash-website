@@ -77,14 +77,14 @@ function showOAuthCallbackStatus() {
     success: params.get("discovery") === "success"
       ? `Meta reconnected. Facebook returned ${Number(params.get("pages") || 0)} managed Page(s). Run Safe Preflight.`
       : "Meta credential stored, but managed Page discovery needs attention. Run Safe Preflight for details.",
-    error: "Meta reconnect failed. Please try again or inspect the Worker callback logs.",
+    error: `Meta reconnect failed during ${params.get("stage") || "an unknown stage"}. Please try again or inspect the Worker callback logs.`,
     invalid_state: "Meta reconnect state was invalid or already used. Start reconnect again from this page.",
     missing_code: "Facebook did not return an authorization code. Start reconnect again.",
     server_error: "Meta reconnect is not fully configured on the server.",
   };
   const message = messages[oauth] || "Meta reconnect did not complete.";
   qs("[data-marketing-message]").textContent = message;
-  showResponse({ ok: oauth === "success", oauth, discovery: params.get("discovery") || "", returnedPageCount: Number(params.get("pages") || 0), message }, oauth !== "success");
+  showResponse({ ok: oauth === "success", oauth, stage: params.get("stage") || "", providerCode: Number(params.get("code") || 0) || null, discovery: params.get("discovery") || "", returnedPageCount: Number(params.get("pages") || 0), message }, oauth !== "success");
   history.replaceState({}, "", window.location.pathname);
 }
 

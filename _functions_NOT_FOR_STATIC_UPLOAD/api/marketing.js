@@ -657,10 +657,11 @@ async function oauthCallback(request, env, url) {
   const adminRedirect = (q) => Response.redirect(new URL(`/admin/marketing.html${q ? `?${q}` : ""}`, origin).toString(), 302);
   if (error) {
     logMetaValidation("oauth_callback", { validationError: clean(error, 200) });
-    return adminRedirect("oauth=error");
+    return adminRedirect("oauth=error&stage=authorization_denied");
   }
   if (!state) return adminRedirect("oauth=invalid_state");
   // validate and consume state
+  let callbackStage = "code_exchange";
   try {
     const guard = await env.GIFT_CARD_DB.prepare("SELECT created_at FROM marketing_one_time_guards WHERE action_key = ?").bind(`oauth_state:${state}`).first();
     if (!guard) return adminRedirect("oauth=invalid_state");
@@ -683,26 +684,28 @@ async function oauthCallback(request, env, url) {
     const tokenUrl = `${FACEBOOK_GRAPH_ORIGIN}/${GRAPH_VERSION}/oauth/access_token?client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(redirectUri)}&client_secret=${encodeURIComponent(appSecret)}&code=${encodeURIComponent(code)}`;
     let resp = await fetch(tokenUrl);
     let data;
-    try { data = await resp.json(); } catch (e) { logMetaValidation("oauth_callback", { validationError: "non_json_response" }); return adminRedirect("oauth=error"); }
+    try { data = await resp.json(); } catch (e) { logMetaValidation("oauth_callback", { validationError: "non_json_response", stage: callbackStage }); return adminRedirect(`oauth=error&stage=${callbackStage}_response`); }
     if (!resp.ok || data?.error) {
-      logMetaValidation("oauth_callback", { validationError: clean(data?.error?.message || JSON.stringify(data), 500), apiErrorCode: Number(data?.error?.code) || null });
-      return adminRedirect("oauth=error");
+      logMetaValidation("oauth_callback", { validationError: clean(data?.error?.message || JSON.stringify(data), 500), apiErrorCode: Number(data?.error?.code) || null, stage: callbackStage });
+      return adminRedirect(`oauth=error&stage=${callbackStage}&code=${Number(data?.error?.code) || 0}`);
     }
     const shortToken = data.access_token;
 
     // Exchange for long-lived user token
+    callbackStage = "long_token_exchange";
     const longUrl = `${FACEBOOK_GRAPH_ORIGIN}/${GRAPH_VERSION}/oauth/access_token?grant_type=fb_exchange_token&client_id=${encodeURIComponent(appId)}&client_secret=${encodeURIComponent(appSecret)}&fb_exchange_token=${encodeURIComponent(shortToken)}`;
     resp = await fetch(longUrl);
-    try { data = await resp.json(); } catch (e) { logMetaValidation("oauth_callback", { validationError: "non_json_response" }); return adminRedirect("oauth=error"); }
+    try { data = await resp.json(); } catch (e) { logMetaValidation("oauth_callback", { validationError: "non_json_response", stage: callbackStage }); return adminRedirect(`oauth=error&stage=${callbackStage}_response`); }
     if (!resp.ok || data?.error) {
-      logMetaValidation("oauth_callback", { validationError: clean(data?.error?.message || JSON.stringify(data), 500), apiErrorCode: Number(data?.error?.code) || null });
-      return adminRedirect("oauth=error");
+      logMetaValidation("oauth_callback", { validationError: clean(data?.error?.message || JSON.stringify(data), 500), apiErrorCode: Number(data?.error?.code) || null, stage: callbackStage });
+      return adminRedirect(`oauth=error&stage=${callbackStage}&code=${Number(data?.error?.code) || 0}`);
     }
     const userLongToken = data.access_token;
     const userLongExpires = Number(data.expires_in) || 0;
 
     // Persist first. Page discovery must never prevent a valid OAuth user credential
     // from being saved, because preflight uses that credential to diagnose Page access.
+    callbackStage = "d1_write";
     const now = new Date().toISOString();
     await env.GIFT_CARD_DB.prepare(`CREATE TABLE IF NOT EXISTS marketing_connections (id TEXT PRIMARY KEY, page_access_token TEXT, page_token_expires_at TEXT, instagram_access_token TEXT, instagram_token_expires_at TEXT, updated_at TEXT)`).run();
     const expiresAt = userLongExpires ? new Date(Date.now() + userLongExpires * 1000).toISOString() : "";
@@ -725,6 +728,7 @@ ON CONFLICT(id) DO UPDATE SET
 )
 .run();
 
+    callbackStage = "page_discovery";
     let returnedPageCount = 0;
     let discovery = "success";
     try {
@@ -739,8 +743,8 @@ ON CONFLICT(id) DO UPDATE SET
     logMarketingSettings("marketing_admin_request", { action: "oauth_callback", method: request.method, path: url.pathname, credentialStored: true, discovery, returnedPageCount });
     return adminRedirect(`oauth=success&discovery=${discovery}&pages=${returnedPageCount}`);
   } catch (error) {
-    logMetaValidation("oauth_callback", { validationError: clean(error?.message || String(error), 500) });
-    return adminRedirect("oauth=error");
+    logMetaValidation("oauth_callback", { validationError: clean(error?.message || String(error), 500), stage: callbackStage });
+    return adminRedirect(`oauth=error&stage=${callbackStage}`);
   }
 }
 async function graphGet(origin, path, params, token, operation = "", context = {}) {
