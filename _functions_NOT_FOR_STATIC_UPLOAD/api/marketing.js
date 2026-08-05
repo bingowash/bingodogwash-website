@@ -102,13 +102,14 @@ export async function runMarketingAutomation(env, options = {}) {
   const results = {};
   for (const platform of platforms) {
     if (platform === "facebook") {
-      const connection = await resolveMetaConnection(env, "facebook");
+      const facebookContext = await resolveFacebookPublishingContext(env, facebookPageIds);
+      const connection = facebookContext.connection;
       if (!connection.ok) {
         await savePlatformResult(db, postId, platform, "failed", "", 0, connection.error);
         results.facebook = { ok: false, error: connection.error, attempts: 0, tokenSource: connection.source || "none", diagnostic: connection.diagnostic };
         continue;
       }
-      const pageAccess = await resolveFacebookPageAccess(connection.token, facebookPageIds);
+      const pageAccess = facebookContext.pageAccess;
       results.facebook = await publishFacebookPages(env, db, postId, pageAccess, product, platformCaption(caption, trackedUrl, "facebook"), platformCampaignUrl(trackedUrl, "facebook"), connection.source);
       continue;
     }
@@ -130,7 +131,7 @@ export async function runMarketingAutomation(env, options = {}) {
     const instagramCaption = instagramProduct.id === product.id
       ? platformCaption(caption, trackedUrl, "instagram")
       : await generateCaption(env, instagramProduct, instagramUrl, campaignCode);
-    results.instagram = await publishWithRetry(env, db, postId, platform, instagramProduct, instagramCaption, instagramUrl, connection.token);
+    results.instagram = await publishWithRetry({ ...env, META_TOKEN_SOURCE: connection.source }, db, postId, platform, instagramProduct, instagramCaption, instagramUrl, connection.token);
     results.instagram.tokenSource = connection.source;
     results.instagram.product = { id: String(instagramProduct.id), name: instagramProduct.name };
     results.instagram.rejections = instagramSelection.rejections;
@@ -228,13 +229,14 @@ async function storedMetaConnection(db) {
   }
 }
 
-async function resolveMetaConnection(env, platform) {
+async function resolveMetaConnection(env, platform, requiredSource = "") {
   const stored = await storedMetaConnection(env.GIFT_CARD_DB);
   const candidates = platform === "facebook"
     ? [{ source: "d1", value: stored?.page_access_token }, { source: "secret", value: env.META_PAGE_ACCESS_TOKEN }]
     : [{ source: "d1", value: stored?.instagram_access_token }, { source: "secret", value: env.INSTAGRAM_ACCESS_TOKEN }];
   const unique = [];
   for (const candidate of candidates) {
+    if (requiredSource && candidate.source !== requiredSource) continue;
     const checked = metaAccessToken(candidate.value);
     if (checked.ok && !unique.some((item) => item.token === checked.token)) unique.push({ source: candidate.source, token: checked.token });
   }
@@ -246,13 +248,13 @@ async function resolveMetaConnection(env, platform) {
       let profile;
       let debug;
       if (platform === "facebook") {
-        debug = await graphGet(FACEBOOK_GRAPH_ORIGIN, `${GRAPH_VERSION}/debug_token`, { input_token: candidate.token }, candidate.token, "facebook_token_debug", { accountId: configuredFacebookPageIds(env)[0] || "" });
+        debug = await graphGet(FACEBOOK_GRAPH_ORIGIN, `${GRAPH_VERSION}/debug_token`, { input_token: candidate.token }, candidate.token, "facebook_token_debug", { accountId: configuredFacebookPageIds(env)[0] || "", tokenSource: candidate.source });
         if (debug?.data?.is_valid !== true) {
           lastFailure = { ok: false, source: candidate.source, error: FACEBOOK_TOKEN_EXPIRED, diagnostic: { operation: "facebook_token_debug", requestStage: "after_graph_response", graphRequestMade: true, tokenValid: false } };
           continue;
         }
       } else {
-        profile = await graphGet(INSTAGRAM_GRAPH_ORIGIN, "me", { fields: "id,username,account_type" }, candidate.token, "instagram_identity", { accountId: env.META_INSTAGRAM_USER_ID || "" });
+        profile = await graphGet(INSTAGRAM_GRAPH_ORIGIN, "me", { fields: "id,username,account_type" }, candidate.token, "instagram_identity", { accountId: env.META_INSTAGRAM_USER_ID || "", tokenSource: candidate.source });
         if (String(profile.id || "") !== String(env.META_INSTAGRAM_USER_ID || "")) {
           lastFailure = { ok: false, source: candidate.source, error: "Instagram token belongs to a different account.", diagnostic: { operation: "instagram_identity", requestStage: "after_graph_response", graphRequestMade: true, accountId: String(env.META_INSTAGRAM_USER_ID || "") } };
           continue;
@@ -266,10 +268,24 @@ async function resolveMetaConnection(env, platform) {
   return lastFailure || { ok: false, source: "none", error: META_ERROR.invalid };
 }
 
-async function resolveFacebookPageAccess(token, pageIds) {
+async function resolveFacebookPublishingContext(env, pageIds) {
+  const primary = await resolveMetaConnection(env, "facebook");
+  if (!primary.ok) return { connection: primary, pageAccess: [] };
+  const primaryPages = await resolveFacebookPageAccess(primary.token, pageIds, primary.source);
+  if (primary.source !== "d1" || primaryPages.every((entry) => entry.ok)) return { connection: primary, pageAccess: primaryPages };
+
+  const fallback = await resolveMetaConnection(env, "facebook", "secret");
+  if (!fallback.ok) return { connection: primary, pageAccess: primaryPages };
+  const fallbackPages = await resolveFacebookPageAccess(fallback.token, pageIds, fallback.source);
+  const primaryCount = primaryPages.filter((entry) => entry.ok).length;
+  const fallbackCount = fallbackPages.filter((entry) => entry.ok).length;
+  return fallbackCount > primaryCount ? { connection: fallback, pageAccess: fallbackPages } : { connection: primary, pageAccess: primaryPages };
+}
+
+async function resolveFacebookPageAccess(token, pageIds, tokenSource = "unknown") {
   const accessible = new Map();
   try {
-    const accounts = await graphGet(FACEBOOK_GRAPH_ORIGIN, `${GRAPH_VERSION}/me/accounts`, { fields: "id,name,access_token", limit: "100" }, token, "facebook_accounts", {});
+    const accounts = await graphGet(FACEBOOK_GRAPH_ORIGIN, `${GRAPH_VERSION}/me/accounts`, { fields: "id,name,access_token", limit: "100" }, token, "facebook_accounts", { tokenSource });
     for (const page of accounts?.data || []) {
       const checked = metaAccessToken(page?.access_token);
       if (checked.ok) accessible.set(String(page.id), checked.token);
@@ -285,7 +301,7 @@ async function resolveFacebookPageAccess(token, pageIds) {
       continue;
     }
     try {
-      const page = await graphGet(FACEBOOK_GRAPH_ORIGIN, `${GRAPH_VERSION}/${pageId}`, { fields: "id,name" }, token, "facebook_page_access", { accountId: pageId });
+      const page = await graphGet(FACEBOOK_GRAPH_ORIGIN, `${GRAPH_VERSION}/${pageId}`, { fields: "id,name" }, token, "facebook_page_access", { accountId: pageId, tokenSource });
       if (String(page.id) !== pageId) throw publishingError("Meta returned a different Facebook Page.", false, { operation: "facebook_page_access", accountId: pageId, requestStage: "after_graph_response" });
       results.push({ ok: true, pageId, token });
     } catch (error) {
@@ -349,7 +365,7 @@ async function publishFacebookPages(env, db, postId, pageAccess, product, captio
       pages[pageId] = { ok: false, error: entry.error, attempts: 0, diagnostic: entry.diagnostic };
       await savePlatformResult(db, postId, `facebook:${pageId}`, "failed", "", 0, entry.error);
     } else {
-      pages[pageId] = await publishWithRetry({ ...env, META_PAGE_ID: pageId }, db, postId, `facebook:${pageId}`, product, caption, url, entry.token);
+      pages[pageId] = await publishWithRetry({ ...env, META_PAGE_ID: pageId, META_TOKEN_SOURCE: tokenSource }, db, postId, `facebook:${pageId}`, product, caption, url, entry.token);
     }
     console.error(JSON.stringify({
       event: "facebook_page_publish_result",
@@ -378,11 +394,11 @@ async function publishFacebookPages(env, db, postId, pageAccess, product, captio
 
 async function publishFacebook(env, image, caption, link, token) {
   const body = new URLSearchParams({ url: absoluteImage(image), caption: `${caption}\n\n${link}`, access_token: token });
-  return graphPost(FACEBOOK_GRAPH_ORIGIN, `${GRAPH_VERSION}/${env.META_PAGE_ID}/photos`, body, "facebook_photo_upload", { accountId: String(env.META_PAGE_ID || "") });
+  return graphPost(FACEBOOK_GRAPH_ORIGIN, `${GRAPH_VERSION}/${env.META_PAGE_ID}/photos`, body, "facebook_photo_upload", { accountId: String(env.META_PAGE_ID || ""), tokenSource: env.META_TOKEN_SOURCE || "unknown" });
 }
 
 async function publishInstagram(env, image, caption, token) {
-  const context = { accountId: String(env.META_INSTAGRAM_USER_ID || "") };
+  const context = { accountId: String(env.META_INSTAGRAM_USER_ID || ""), tokenSource: env.META_TOKEN_SOURCE || "unknown" };
   const create = await graphPost(INSTAGRAM_GRAPH_ORIGIN, `${env.META_INSTAGRAM_USER_ID}/media`, new URLSearchParams({ image_url: absoluteImage(image), caption, access_token: token }), "media_create", context);
   return graphPost(INSTAGRAM_GRAPH_ORIGIN, `${env.META_INSTAGRAM_USER_ID}/media_publish`, new URLSearchParams({ creation_id: create, access_token: token }), "media_publish", context);
 }
@@ -393,7 +409,7 @@ async function graphPost(origin, path, body, operation = "", context = {}) {
   try {
     response = await fetch(endpoint, { method: "POST", headers: { Authorization: `Bearer ${body.get("access_token") || ""}` }, body });
   } catch (error) {
-    const diagnostic = metaDiagnostic(operation, null, null, networkCategory(error), context.accountId, "graph_request_failed");
+    const diagnostic = metaDiagnostic(operation, null, null, networkCategory(error), context, "graph_request_failed", origin, path);
     logMetaDiagnostic(diagnostic);
     throw publishingError(META_ERROR.network, true, diagnostic);
   }
@@ -401,7 +417,7 @@ async function graphPost(origin, path, body, operation = "", context = {}) {
   let nonJson = false;
   try { data = await response.json(); } catch { nonJson = true; }
   if (!response.ok || !data?.id) {
-    const diagnostic = metaDiagnostic(operation, response.status, data, nonJson ? "non_json" : response.ok ? "malformed_response" : "provider_error", context.accountId, "after_graph_response");
+    const diagnostic = metaDiagnostic(operation, response.status, data, nonJson ? "non_json" : response.ok ? "malformed_response" : "provider_error", context, "after_graph_response", origin, path);
     logMetaDiagnostic(diagnostic);
     throw publishingError(metaApiError(data, response.status), response.status === 429 || response.status >= 500, diagnostic);
   }
@@ -516,7 +532,8 @@ async function validateFacebookToken(env, token) {
 async function facebookPreflight(env) {
   const pageIds = configuredFacebookPageIds(env);
   const pageId = pageIds[0] || "";
-  const connection = await resolveMetaConnection(env, "facebook");
+  const facebookContext = await resolveFacebookPublishingContext(env, pageIds);
+  const connection = facebookContext.connection;
   if (!connection.ok) return { ok: false, pageId, pageIds, permissions: [], tokenStatus: { valid: false }, error: connection.error, api: "Facebook Pages", tokenSource: connection.source, diagnostic: connection.diagnostic };
   const permissions = Array.isArray(connection.debug?.scopes) ? connection.debug.scopes : [];
   const tokenStatus = {
@@ -538,7 +555,7 @@ async function facebookPreflight(env) {
       api: "Facebook Pages"
     };
   }
-  const pageAccess = await resolveFacebookPageAccess(connection.token, pageIds);
+  const pageAccess = facebookContext.pageAccess;
   const pages = Object.fromEntries(pageAccess.map((entry) => [entry.pageId, { ok: entry.ok, error: entry.error || "", diagnostic: entry.diagnostic || null }]));
   const accessiblePageIds = pageAccess.filter((entry) => entry.ok).map((entry) => entry.pageId);
   return { ok: accessiblePageIds.length > 0, pageId, pageIds, accessiblePageIds, pages, permissions, tokenStatus, tokenSource: connection.source, api: "Facebook Pages", id: accessiblePageIds[0] || "", error: accessiblePageIds.length ? "" : "No configured Facebook Pages are accessible with the selected token." };
@@ -707,21 +724,21 @@ async function graphGet(origin, path, params, token, operation = "", context = {
   try {
     response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
   } catch (error) {
-    const diagnostic = metaDiagnostic(operation, null, null, networkCategory(error), context.accountId, "graph_request_failed");
+    const diagnostic = metaDiagnostic(operation, null, null, networkCategory(error), context, "graph_request_failed", origin, path);
     logMetaDiagnostic(diagnostic);
     throw publishingError(META_ERROR.network, false, diagnostic);
   }
   let data = null;
   let nonJson = false;
   try { data = await response.json(); } catch { nonJson = true; }
-  if (nonJson) logMetaDiagnostic(metaDiagnostic(operation, response.status, null, "non_json", context.accountId, "after_graph_response"));
+  if (nonJson) logMetaDiagnostic(metaDiagnostic(operation, response.status, null, "non_json", context, "after_graph_response", origin, path));
   if (!response.ok) {
-    const diagnostic = metaDiagnostic(operation, response.status, data, nonJson ? "non_json" : "provider_error", context.accountId, "after_graph_response");
+    const diagnostic = metaDiagnostic(operation, response.status, data, nonJson ? "non_json" : "provider_error", context, "after_graph_response", origin, path);
     if (!nonJson) logMetaDiagnostic(diagnostic);
     throw publishingError(metaApiError(data, response.status), false, diagnostic);
   }
   if (operation.includes("identity") && !nonJson && (!data || typeof data.id !== "string" || !data.id)) {
-    logMetaDiagnostic(metaDiagnostic(operation, response.status, data, "malformed_response", context.accountId, "after_graph_response"));
+    logMetaDiagnostic(metaDiagnostic(operation, response.status, data, "malformed_response", context, "after_graph_response", origin, path));
   }
   return data || {};
 }
@@ -736,16 +753,21 @@ function numericMetaField(value) {
   return Number.isInteger(number) ? number : null;
 }
 
-function metaDiagnostic(operation, status, data, category, accountId = "", requestStage = "after_graph_response") {
+function metaDiagnostic(operation, status, data, category, context = {}, requestStage = "after_graph_response", origin = "", path = "") {
+  const graphVersion = String(path).split("/").find((part) => /^v\d+(?:\.\d+)?$/.test(part)) || new URL(origin || "https://invalid.invalid").pathname.split("/").find((part) => /^v\d+(?:\.\d+)?$/.test(part)) || "";
   return {
     event: "meta_api_failure",
     operation,
-    accountId: clean(accountId, 80) || null,
+    tokenSource: clean(context.tokenSource, 20) || "unknown",
+    graphHost: origin ? new URL(origin).host : null,
+    graphApiVersion: graphVersion || null,
+    accountId: clean(context.accountId, 80) || null,
     providerHttpStatus: Number.isInteger(status) ? status : null,
     providerErrorCode: numericMetaField(data?.error?.code),
     providerErrorType: clean(data?.error?.type, 100) || null,
     providerErrorSubcode: numericMetaField(data?.error?.error_subcode),
     category,
+    safeErrorMessage: data ? metaApiError(data, status) : category === "network" || category === "timeout" ? META_ERROR.network : META_ERROR.incomplete,
     requestStage,
     graphRequestMade: requestStage === "after_graph_response" ? true : requestStage === "before_graph_request" ? false : null,
   };
@@ -771,7 +793,7 @@ function logMetaValidation(method, details = {}) {
 function metaApiError(data, status) {
   const code = Number(data?.error?.code || 0);
   const type = typeof data?.error?.type === "string" ? data.error.type.toLowerCase() : "";
-  const providerMessage = clean(data?.error?.message, 500);
+  const providerMessage = safeMetaProviderMessage(data?.error?.message);
   if (code === 190 || (type === "oauthexception" && /access token|token.*(?:expired|invalid)|session.*invalid/i.test(providerMessage))) return META_ERROR.invalid;
   if (code === 10 || code === 200) return META_ERROR.permission;
   if (status === 429 || status >= 500) return META_ERROR.network;
@@ -782,6 +804,13 @@ function safeMetaError(error) {
   if (!error || typeof error.message !== "string") return META_ERROR.network;
   const message = clean(error.message, 500);
   return message || META_ERROR.network;
+}
+
+function safeMetaProviderMessage(value) {
+  return clean(value, 500)
+    .replace(/Bearer\s+\S+/gi, "Bearer [redacted]")
+    .replace(/access_token\s*[=:]\s*[^&\s]+/gi, "access_token=[redacted]")
+    .replace(/\b[A-Za-z0-9_|-]{60,}\b/g, "[redacted]");
 }
 
 function safeStoredMetaError(value) {
@@ -944,4 +973,4 @@ function clean(value, max = 500) { return String(value || "").replace(/\s+/g, " 
 async function readJson(request) { try { return await request.json(); } catch { return null; } }
 function json(body, status = 200) { return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" } }); }
 
-export const marketingTestHelpers = { campaignUrl, trackedDestination, nextRunAt, hash, benefit, metaAccessToken, resolveMetaConnection, resolveFacebookPageAccess, publishWithRetry, publishFacebook, publishInstagram, publishFacebookPages, validateInstagramImage, selectInstagramProduct, configuredFacebookPageIds, redirectPage, instagramPreflight, facebookPreflight, publishingDisabled };
+export const marketingTestHelpers = { campaignUrl, trackedDestination, nextRunAt, hash, benefit, metaAccessToken, resolveMetaConnection, resolveFacebookPublishingContext, resolveFacebookPageAccess, publishWithRetry, publishFacebook, publishInstagram, publishFacebookPages, validateInstagramImage, selectInstagramProduct, configuredFacebookPageIds, redirectPage, instagramPreflight, facebookPreflight, publishingDisabled };

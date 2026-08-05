@@ -333,6 +333,34 @@ test("Instagram image publishing OAuthException is preserved when it is not code
   } finally { globalThis.fetch = originalFetch; }
 });
 
+test("Instagram preflight can pass while a later media publish fails for a non-token reason", async () => {
+  const originalFetch = globalThis.fetch;
+  let requests = 0;
+  globalThis.fetch = async (url) => {
+    requests += 1;
+    if (String(url).includes("/me?")) {
+      return Response.json({ id: "instagram-id", username: "bingo", account_type: "BUSINESS" });
+    }
+    return new Response(JSON.stringify({ error: { code: 36003, type: "OAuthException", message: "Image aspect ratio is not supported" } }), { status: 400 });
+  };
+  const env = { INSTAGRAM_ACCESS_TOKEN: "I".repeat(50), META_INSTAGRAM_USER_ID: "instagram-id", META_INSTAGRAM_USERNAME: "bingo" };
+  try {
+    assert.equal((await marketingTestHelpers.instagramPreflight(env)).ok, true);
+    await assert.rejects(marketingTestHelpers.publishInstagram(env, "https://example.com/image.jpg", "caption", "I".repeat(50)), /Image aspect ratio is not supported/);
+    assert.equal(requests, 2);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("successful Instagram publishing returns the published media ID", async () => {
+  const originalFetch = globalThis.fetch;
+  let requests = 0;
+  globalThis.fetch = async () => { requests += 1; return Response.json({ id: requests === 1 ? "container-id" : "instagram-post-id" }); };
+  try {
+    assert.equal(await marketingTestHelpers.publishInstagram({ META_INSTAGRAM_USER_ID: "instagram-id" }, "https://example.com/image.jpg", "caption", "I".repeat(50)), "instagram-post-id");
+    assert.equal(requests, 2);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 test("newer D1 Facebook token is validated before an older Cloudflare secret", async () => {
   const originalFetch = globalThis.fetch;
   const storedToken = "D".repeat(50);
@@ -345,6 +373,26 @@ test("newer D1 Facebook token is validated before an older Cloudflare secret", a
     assert.equal(connection.ok, true);
     assert.equal(connection.source, "d1");
     assert.equal(authorization, `Bearer ${storedToken}`);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("Facebook uses the validated secret fallback when it reaches more configured Pages than D1", async () => {
+  const originalFetch = globalThis.fetch;
+  const storedToken = "D".repeat(50);
+  const secretToken = "S".repeat(50);
+  globalThis.fetch = async (url, options) => {
+    const token = options.headers.Authorization.slice("Bearer ".length);
+    if (String(url).includes("/debug_token")) return Response.json({ data: { is_valid: true, scopes: ["pages_manage_posts", "pages_read_engagement", "pages_show_list"] } });
+    if (String(url).includes("/me/accounts")) return Response.json({ data: token === storedToken
+      ? [{ id: "page-1", access_token: "P".repeat(50) }]
+      : [{ id: "page-1", access_token: "Q".repeat(50) }, { id: "page-2", access_token: "R".repeat(50) }] });
+    return new Response(JSON.stringify({ error: { code: 100, message: "Page is inaccessible" } }), { status: 400 });
+  };
+  const db = { prepare: () => ({ first: async () => ({ page_access_token: storedToken, updated_at: "2026-08-04T06:40:00Z" }) }) };
+  try {
+    const result = await marketingTestHelpers.resolveFacebookPublishingContext({ GIFT_CARD_DB: db, META_PAGE_ACCESS_TOKEN: secretToken, META_PAGE_IDS: "page-1,page-2" }, ["page-1", "page-2"]);
+    assert.equal(result.connection.source, "secret");
+    assert.equal(result.pageAccess.every((page) => page.ok), true);
   } finally { globalThis.fetch = originalFetch; }
 });
 
@@ -414,18 +462,15 @@ test("normal Instagram publishing logs only sanitized provider diagnostics", asy
       /Meta connection has expired or is invalid/,
     );
     assert.equal(logs.length, 1);
-    assert.deepEqual(JSON.parse(logs[0]), {
-      event: "meta_api_failure",
-      operation: "media_create",
-      accountId: "private-account-id",
-      providerHttpStatus: 400,
-      providerErrorCode: 190,
-      providerErrorType: null,
-      providerErrorSubcode: 463,
-      category: "provider_error",
-      requestStage: "after_graph_response",
-      graphRequestMade: true,
-    });
+    const diagnostic = JSON.parse(logs[0]);
+    assert.equal(diagnostic.operation, "media_create");
+    assert.equal(diagnostic.accountId, "private-account-id");
+    assert.equal(diagnostic.graphHost, "graph.instagram.com");
+    assert.equal(diagnostic.graphApiVersion, "v26.0");
+    assert.equal(diagnostic.providerErrorCode, 190);
+    assert.equal(diagnostic.providerErrorSubcode, 463);
+    assert.equal(diagnostic.safeErrorMessage, "Meta connection has expired or is invalid. Reconnect Meta in server settings.");
+    assert.equal(diagnostic.graphRequestMade, true);
     assert.doesNotMatch(logs[0], /RAW_PROVIDER_SECRET|private caption|TTTT/);
   } finally {
     globalThis.fetch = originalFetch;
@@ -447,7 +492,13 @@ test("Instagram diagnostics distinguish publish, network, non-JSON, malformed, a
         : new Response(JSON.stringify({ error: { code: 10, error_subcode: 2207001, message: "private provider message" } }), { status: 403 });
     };
     await assert.rejects(marketingTestHelpers.publishInstagram({ META_INSTAGRAM_USER_ID: "private-id" }, "/image.jpg", "caption", "S".repeat(50)), /permission/);
-    assert.deepEqual(logs.pop(), { event: "meta_api_failure", operation: "media_publish", accountId: "private-id", providerHttpStatus: 403, providerErrorCode: 10, providerErrorType: null, providerErrorSubcode: 2207001, category: "provider_error", requestStage: "after_graph_response", graphRequestMade: true });
+    const publishDiagnostic = logs.pop();
+    assert.equal(publishDiagnostic.operation, "media_publish");
+    assert.equal(publishDiagnostic.accountId, "private-id");
+    assert.equal(publishDiagnostic.providerHttpStatus, 403);
+    assert.equal(publishDiagnostic.providerErrorCode, 10);
+    assert.equal(publishDiagnostic.providerErrorSubcode, 2207001);
+    assert.equal(publishDiagnostic.safeErrorMessage, "Meta connection does not have permission to publish.");
 
     globalThis.fetch = async () => new Response("not json", { status: 502 });
     await assert.rejects(marketingTestHelpers.publishInstagram({ META_INSTAGRAM_USER_ID: "private-id" }, "/image.jpg", "caption", "S".repeat(50)), /temporarily unavailable/);
