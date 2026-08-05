@@ -57,6 +57,34 @@ test("OAuth callback uses its one-time state guard instead of a missing browser 
   assert.equal(new URL(response.headers.get("Location")).searchParams.get("oauth"), "invalid_state");
 });
 
+test("OAuth callback stores the long-lived user credential in D1 rather than a Page token", async () => {
+  const originalFetch = globalThis.fetch;
+  const storedValues = [];
+  const db = { prepare(sql) { return {
+    bind(...values) {
+      if (sql.includes("SELECT created_at")) return { first: async () => ({ created_at: new Date().toISOString() }) };
+      if (sql.includes("INSERT INTO marketing_connections")) return { run: async () => { storedValues.push(...values); return { success: true }; } };
+      return { run: async () => ({ success: true }) };
+    },
+    run: async () => ({ success: true }),
+  }; } };
+  let request = 0;
+  globalThis.fetch = async () => {
+    request += 1;
+    if (request === 1) return Response.json({ access_token: "short-user-token" });
+    if (request === 2) return Response.json({ access_token: "long-user-token", expires_in: 5000 });
+    return Response.json({ data: [{ id: "page-1", access_token: "page-one-token" }] });
+  };
+  try {
+    const response = await handleMarketingRequest(new Request("https://admin.bingodogwash.com/api/admin/marketing/oauth/callback?state=valid&code=code"), {
+      GIFT_CARD_DB: db, META_APP_ID: "app", META_APP_SECRET: "secret", META_PAGE_ID: "page-1",
+    });
+    assert.equal(new URL(response.headers.get("Location")).searchParams.get("oauth"), "success");
+    assert.equal(storedValues[0], "long-user-token");
+    assert.equal(storedValues.includes("page-one-token"), false);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 test("campaign links record a click before preserving product destination and UTM tags", () => {
   const url = marketingTestHelpers.campaignUrl("https://example.com/dog-shampoo?size=large", "campaign-123");
   const tracker = new URL(url);
@@ -265,7 +293,7 @@ test("Facebook preflight validates the configured Page ID on Facebook Graph only
     assert.equal(result.tokenStatus.type, "PAGE");
     assert.equal(result.pageId, "1264938680034651");
     assert.equal(urls.some((url) => url.includes("/debug_token")), true);
-    assert.equal(urls.some((url) => url.includes("/1264938680034651")), true);
+    assert.equal(urls.some((url) => url.includes("/me?")), true);
   } finally { globalThis.fetch = originalFetch; }
 });
 
@@ -341,17 +369,34 @@ test("Facebook multi-page publishing continues after a page fails and reports ea
   } finally { globalThis.fetch = originalFetch; }
 });
 
-test("valid Facebook token reports an inaccessible Page without calling it expired", async () => {
+test("Facebook publishing uses each Page's own /me/accounts token", async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (url) => String(url).includes("/me/accounts")
-    ? Response.json({ data: [{ id: "authorised-page", access_token: "P".repeat(50) }] })
-    : new Response(JSON.stringify({ error: { code: 100, type: "OAuthException", message: "Unsupported get request for this Page" } }), { status: 400 });
+  const authorizations = [];
+  globalThis.fetch = async (_url, options) => { authorizations.push(options.headers.Authorization); return Response.json({ id: `post-${authorizations.length}` }); };
+  const db = { prepare: () => ({ bind: () => ({ run: async () => ({ success: true }) }) }) };
+  try {
+    const result = await marketingTestHelpers.publishFacebookPages({}, db, "post-id", [
+      { ok: true, pageId: "page-1", token: "P".repeat(50), tokenSource: "d1:me/accounts", returnedByAccounts: true },
+      { ok: true, pageId: "page-2", token: "Q".repeat(50), tokenSource: "d1:me/accounts", returnedByAccounts: true },
+      { ok: true, pageId: "page-3", token: "R".repeat(50), tokenSource: "d1:me/accounts", returnedByAccounts: true },
+    ], { image: "https://example.com/dog.jpg" }, "caption", "https://bingodogwash.com/api/marketing/track?campaign=test", "d1");
+    assert.equal(result.status, "success");
+    assert.deepEqual(authorizations, [`Bearer ${"P".repeat(50)}`, `Bearer ${"Q".repeat(50)}`, `Bearer ${"R".repeat(50)}`]);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("valid Facebook user token reports an ID absent from /me/accounts without probing or calling it expired", async () => {
+  const originalFetch = globalThis.fetch;
+  let requests = 0;
+  globalThis.fetch = async () => { requests += 1; return Response.json({ data: [{ id: "authorised-page", access_token: "P".repeat(50) }] }); };
   try {
     const pages = await marketingTestHelpers.resolveFacebookPageAccess("U".repeat(50), ["authorised-page", "inaccessible-page"]);
     assert.equal(pages[0].ok, true);
     assert.equal(pages[1].ok, false);
-    assert.equal(pages[1].error, "Unsupported get request for this Page");
-    assert.equal(pages[1].diagnostic.providerErrorCode, 100);
+    assert.equal(pages[1].returnedByAccounts, false);
+    assert.equal(pages[1].possibleProfileId, true);
+    assert.match(pages[1].error, /profile ID|does not manage/);
+    assert.equal(requests, 1);
   } finally { globalThis.fetch = originalFetch; }
 });
 
@@ -409,23 +454,50 @@ test("newer D1 Facebook token is validated before an older Cloudflare secret", a
   } finally { globalThis.fetch = originalFetch; }
 });
 
-test("Facebook uses the validated secret fallback when it reaches more configured Pages than D1", async () => {
+test("D1 OAuth user credential is preferred and /me/accounts provides a separate token for three Pages", async () => {
   const originalFetch = globalThis.fetch;
   const storedToken = "D".repeat(50);
   const secretToken = "S".repeat(50);
   globalThis.fetch = async (url, options) => {
     const token = options.headers.Authorization.slice("Bearer ".length);
-    if (String(url).includes("/debug_token")) return Response.json({ data: { is_valid: true, scopes: ["pages_manage_posts", "pages_read_engagement", "pages_show_list"] } });
-    if (String(url).includes("/me/accounts")) return Response.json({ data: token === storedToken
-      ? [{ id: "page-1", access_token: "P".repeat(50) }]
-      : [{ id: "page-1", access_token: "Q".repeat(50) }, { id: "page-2", access_token: "R".repeat(50) }] });
-    return new Response(JSON.stringify({ error: { code: 100, message: "Page is inaccessible" } }), { status: 400 });
+    if (String(url).includes("/debug_token")) return Response.json({ data: { is_valid: true, type: token === storedToken ? "USER" : "PAGE", scopes: ["pages_manage_posts", "pages_read_engagement", "pages_show_list"] } });
+    if (String(url).includes("/me/accounts")) return Response.json({ data: [
+      { id: "page-1", access_token: "P".repeat(50) },
+      { id: "page-2", access_token: "Q".repeat(50) },
+      { id: "page-3", access_token: "R".repeat(50) },
+    ] });
+    throw new Error("secret fallback must not be used");
   };
   const db = { prepare: () => ({ first: async () => ({ page_access_token: storedToken, updated_at: "2026-08-04T06:40:00Z" }) }) };
   try {
-    const result = await marketingTestHelpers.resolveFacebookPublishingContext({ GIFT_CARD_DB: db, META_PAGE_ACCESS_TOKEN: secretToken, META_PAGE_IDS: "page-1,page-2" }, ["page-1", "page-2"]);
-    assert.equal(result.connection.source, "secret");
+    const result = await marketingTestHelpers.resolveFacebookPublishingContext({ GIFT_CARD_DB: db, META_PAGE_ACCESS_TOKEN: secretToken, META_PAGE_IDS: "page-1,page-2,page-3" }, ["page-1", "page-2", "page-3"]);
+    assert.equal(result.connection.source, "d1");
+    assert.equal(result.userCredentialSource, "d1");
+    assert.equal(result.accountsRequest.ok, true);
     assert.equal(result.pageAccess.every((page) => page.ok), true);
+    assert.equal(new Set(result.pageAccess.map((page) => page.token)).size, 3);
+    assert.equal(result.pageAccess.every((page) => page.tokenSource === "d1:me/accounts"), true);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("Cloudflare Page token fallback is restricted to its own Page and diagnostics expose no tokens", async () => {
+  const originalFetch = globalThis.fetch;
+  const secretToken = "SECRET-PAGE-" + "S".repeat(50);
+  globalThis.fetch = async (url) => {
+    if (String(url).includes("/debug_token")) return Response.json({ data: { is_valid: true, type: "PAGE", scopes: ["pages_manage_posts", "pages_read_engagement", "pages_show_list"] } });
+    if (String(url).includes("/me?")) return Response.json({ id: "page-1", name: "First Page" });
+    throw new Error("unexpected request");
+  };
+  try {
+    const result = await marketingTestHelpers.facebookPreflight({ META_PAGE_ACCESS_TOKEN: secretToken, META_PAGE_IDS: "page-1,page-2" });
+    assert.equal(result.tokenSource, "secret");
+    assert.equal(result.userCredentialSource, "none");
+    assert.equal(result.accountsRequest.attempted, false);
+    assert.equal(result.pages["page-1"].ok, true);
+    assert.equal(result.pages["page-1"].tokenSource, "secret:page_token");
+    assert.equal(result.pages["page-2"].ok, false);
+    assert.equal(result.pages["page-2"].classification, "not_available_to_page_token");
+    assert.equal(JSON.stringify(result).includes(secretToken), false);
   } finally { globalThis.fetch = originalFetch; }
 });
 
@@ -638,7 +710,7 @@ test("platform-specific failure produces a partial result with separated APIs an
   globalThis.fetch = async (url) => {
     urls.push(String(url));
     if (!String(url).includes("graph.")) return new Response(null, { status: 200, headers: { "Content-Type": "image/jpeg" } });
-    if (String(url).includes("/debug_token")) return Response.json({ data: { is_valid: true, scopes: ["pages_manage_posts", "pages_read_engagement", "pages_show_list"] } });
+    if (String(url).includes("/debug_token")) return Response.json({ data: { is_valid: true, type: "USER", scopes: ["pages_manage_posts", "pages_read_engagement", "pages_show_list"] } });
     if (String(url).includes("/me/accounts")) return Response.json({ data: [{ id: "1264938680034651", access_token: "P".repeat(50) }] });
     if (String(url).includes("graph.instagram.com/v26.0/me")) return Response.json({ id: "27879594505014566", username: "bingo_dogwash", account_type: "MEDIA_CREATOR" });
     if (String(url).includes("/27879594505014566/media")) return new Response(JSON.stringify({ error: { code: 190, type: "OAuthException" } }), { status: 400 });

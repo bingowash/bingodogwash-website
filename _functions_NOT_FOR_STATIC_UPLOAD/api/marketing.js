@@ -274,46 +274,60 @@ async function resolveMetaConnection(env, platform, requiredSource = "") {
 }
 
 async function resolveFacebookPublishingContext(env, pageIds) {
-  const primary = await resolveMetaConnection(env, "facebook");
-  if (!primary.ok) return { connection: primary, pageAccess: [] };
-  const primaryPages = await resolveFacebookPageAccess(primary.token, pageIds, primary.source);
-  if (primary.source !== "d1" || primaryPages.every((entry) => entry.ok)) return { connection: primary, pageAccess: primaryPages };
+  const stored = await resolveMetaConnection(env, "facebook", "d1");
+  const storedType = String(stored.debug?.type || "").toUpperCase();
+  if (stored.ok && storedType === "USER") {
+    const resolved = await resolveFacebookPageAccess(stored.token, pageIds, "d1", true);
+    return { connection: stored, ...resolved, userCredentialSource: "d1", d1CredentialType: storedType };
+  }
 
+  // A Page token stored by older deployments is not an OAuth user credential. Do not
+  // use it for discovery and never reuse it across configured Pages.
   const fallback = await resolveMetaConnection(env, "facebook", "secret");
-  if (!fallback.ok) return { connection: primary, pageAccess: primaryPages };
-  const fallbackPages = await resolveFacebookPageAccess(fallback.token, pageIds, fallback.source);
-  const primaryCount = primaryPages.filter((entry) => entry.ok).length;
-  const fallbackCount = fallbackPages.filter((entry) => entry.ok).length;
-  return fallbackCount > primaryCount ? { connection: fallback, pageAccess: fallbackPages } : { connection: primary, pageAccess: primaryPages };
+  if (!fallback.ok) return { connection: stored.ok ? stored : fallback, pageAccess: [], accountsRequest: { ok: false, attempted: false }, userCredentialSource: "none", d1CredentialType: storedType || "unknown" };
+  const fallbackType = String(fallback.debug?.type || "").toUpperCase();
+  if (fallbackType === "USER") {
+    const resolved = await resolveFacebookPageAccess(fallback.token, pageIds, "secret", true);
+    return { connection: fallback, ...resolved, userCredentialSource: "secret", d1CredentialType: storedType || "none" };
+  }
+  const resolved = await resolveFacebookPageTokenAccess(fallback.token, pageIds, "secret");
+  return { connection: fallback, ...resolved, userCredentialSource: "none", d1CredentialType: storedType || "none" };
 }
 
-async function resolveFacebookPageAccess(token, pageIds, tokenSource = "unknown") {
+async function resolveFacebookPageAccess(token, pageIds, tokenSource = "unknown", includeContext = false) {
   const accessible = new Map();
+  let accountsRequest;
   try {
     const accounts = await graphGet(FACEBOOK_GRAPH_ORIGIN, `${GRAPH_VERSION}/me/accounts`, { fields: "id,name,access_token", limit: "100" }, token, "facebook_accounts", { tokenSource });
     for (const page of accounts?.data || []) {
       const checked = metaAccessToken(page?.access_token);
       if (checked.ok) accessible.set(String(page.id), checked.token);
     }
+    accountsRequest = { ok: true, attempted: true, returnedPageCount: accessible.size };
   } catch (error) {
-    console.error(JSON.stringify({ event: "meta_page_discovery_fallback", operation: "facebook_accounts", error: safeMetaError(error), diagnostic: error?.diagnostic || null }));
+    accountsRequest = { ok: false, attempted: true, error: safeMetaError(error), diagnostic: error?.diagnostic || null };
+    console.error(JSON.stringify({ event: "meta_page_discovery_failed", operation: "facebook_accounts", tokenSource, error: accountsRequest.error, diagnostic: accountsRequest.diagnostic }));
   }
 
-  const results = [];
-  for (const pageId of pageIds) {
-    if (accessible.has(pageId)) {
-      results.push({ ok: true, pageId, token: accessible.get(pageId) });
-      continue;
-    }
-    try {
-      const page = await graphGet(FACEBOOK_GRAPH_ORIGIN, `${GRAPH_VERSION}/${pageId}`, { fields: "id,name" }, token, "facebook_page_access", { accountId: pageId, tokenSource });
-      if (String(page.id) !== pageId) throw publishingError("Meta returned a different Facebook Page.", false, { operation: "facebook_page_access", accountId: pageId, requestStage: "after_graph_response" });
-      results.push({ ok: true, pageId, token });
-    } catch (error) {
-      results.push({ ok: false, pageId, error: safeMetaError(error), diagnostic: error?.diagnostic || null });
-    }
+  const pageAccess = pageIds.map((pageId) => accessible.has(pageId)
+    ? { ok: true, pageId, token: accessible.get(pageId), returnedByAccounts: true, tokenSource: `${tokenSource}:me/accounts` }
+    : { ok: false, pageId, returnedByAccounts: false, tokenSource: "none", classification: "not_managed_page_or_profile", possibleProfileId: true, error: "Configured ID was not returned by /me/accounts; it may be a Facebook profile ID or a Page this user does not manage.", diagnostic: accountsRequest?.diagnostic || null });
+  return includeContext ? { pageAccess, accountsRequest } : pageAccess;
+}
+
+async function resolveFacebookPageTokenAccess(token, pageIds, tokenSource) {
+  let tokenPageId = "";
+  let diagnostic = null;
+  try {
+    const page = await graphGet(FACEBOOK_GRAPH_ORIGIN, `${GRAPH_VERSION}/me`, { fields: "id,name" }, token, "facebook_page_identity", { tokenSource });
+    tokenPageId = String(page?.id || "");
+  } catch (error) {
+    diagnostic = error?.diagnostic || null;
   }
-  return results;
+  const pageAccess = pageIds.map((pageId) => pageId === tokenPageId
+    ? { ok: true, pageId, token, returnedByAccounts: false, tokenSource: `${tokenSource}:page_token` }
+    : { ok: false, pageId, returnedByAccounts: false, tokenSource: "none", classification: "not_available_to_page_token", possibleProfileId: true, error: "Configured ID is not the Page represented by the fallback Page token; it may be a Facebook profile ID or an unmanaged Page.", diagnostic });
+  return { pageAccess, accountsRequest: { ok: false, attempted: false, reason: "Fallback credential is a Page token; /me/accounts was not called." } };
 }
 
 async function generateCaption(env, product, url, campaignCode) {
@@ -367,10 +381,10 @@ async function publishFacebookPages(env, db, postId, pageAccess, product, captio
   for (const entry of pageAccess) {
     const { pageId } = entry;
     if (!entry.ok) {
-      pages[pageId] = { ok: false, error: entry.error, attempts: 0, diagnostic: entry.diagnostic };
+      pages[pageId] = { ok: false, error: entry.error, attempts: 0, diagnostic: entry.diagnostic, tokenSource: entry.tokenSource || "none", returnedByAccounts: entry.returnedByAccounts === true, classification: entry.classification || "" };
       await savePlatformResult(db, postId, `facebook:${pageId}`, "failed", "", 0, entry.error);
     } else {
-      pages[pageId] = await publishWithRetry({ ...env, META_PAGE_ID: pageId, META_TOKEN_SOURCE: tokenSource }, db, postId, `facebook:${pageId}`, product, caption, url, entry.token);
+      pages[pageId] = { ...await publishWithRetry({ ...env, META_PAGE_ID: pageId, META_TOKEN_SOURCE: entry.tokenSource || tokenSource }, db, postId, `facebook:${pageId}`, product, caption, url, entry.token), tokenSource: entry.tokenSource || tokenSource, returnedByAccounts: entry.returnedByAccounts === true };
     }
     console.error(JSON.stringify({
       event: "facebook_page_publish_result",
@@ -561,31 +575,45 @@ async function facebookPreflight(env) {
     };
   }
   const pageAccess = facebookContext.pageAccess;
-  const pages = Object.fromEntries(pageAccess.map((entry) => [entry.pageId, { ok: entry.ok, error: entry.error || "", diagnostic: entry.diagnostic || null }]));
+  const pages = Object.fromEntries(pageAccess.map((entry) => [entry.pageId, {
+    ok: entry.ok,
+    returnedByAccounts: entry.returnedByAccounts === true,
+    tokenSource: entry.tokenSource || "none",
+    classification: entry.classification || "",
+    possibleProfileId: entry.possibleProfileId === true,
+    error: entry.error || "",
+    diagnostic: entry.diagnostic || null,
+  }]));
   const accessiblePageIds = pageAccess.filter((entry) => entry.ok).map((entry) => entry.pageId);
-  return { ok: accessiblePageIds.length > 0, pageId, pageIds, accessiblePageIds, pages, permissions, tokenStatus, tokenSource: connection.source, api: "Facebook Pages", id: accessiblePageIds[0] || "", error: accessiblePageIds.length ? "" : "No configured Facebook Pages are accessible with the selected token." };
+  return { ok: accessiblePageIds.length > 0, pageId, pageIds, accessiblePageIds, pages, permissions, tokenStatus, tokenSource: connection.source, userCredentialSource: facebookContext.userCredentialSource, accountsRequest: facebookContext.accountsRequest, d1CredentialType: facebookContext.d1CredentialType, api: "Facebook Pages", id: accessiblePageIds[0] || "", error: accessiblePageIds.length ? "" : "No configured Facebook Pages are accessible with the selected credential." };
 }
 
 async function metaDiagnostics(env) {
-  const [facebook, instagram] = await Promise.all([
-    resolveMetaConnection(env, "facebook"),
+  const [facebookContext, instagram, stored] = await Promise.all([
+    resolveFacebookPublishingContext(env, configuredFacebookPageIds(env)),
     resolveMetaConnection(env, "instagram"),
+    storedMetaConnection(env.GIFT_CARD_DB),
   ]);
+  const facebook = facebookContext.connection;
   return {
     facebook: {
       secretConfigured: configured(env.META_PAGE_ACCESS_TOKEN),
-      storedTokenConfigured: configured((await storedMetaConnection(env.GIFT_CARD_DB))?.page_access_token),
+      storedTokenConfigured: configured(stored?.page_access_token),
       pageIdConfigured: configuredFacebookPageIds(env).length > 0,
       pageIds: configuredFacebookPageIds(env),
       tokenValidated: facebook.ok,
       tokenSource: facebook.source || "none",
+      userCredentialSource: facebookContext.userCredentialSource || "none",
+      d1CredentialType: facebookContext.d1CredentialType || "unknown",
+      accountsRequest: facebookContext.accountsRequest || { ok: false, attempted: false },
+      pages: Object.fromEntries((facebookContext.pageAccess || []).map((entry) => [entry.pageId, { ok: entry.ok, returnedByAccounts: entry.returnedByAccounts === true, tokenSource: entry.tokenSource || "none", classification: entry.classification || "", possibleProfileId: entry.possibleProfileId === true, error: entry.error || "" }])),
       validationError: facebook.ok ? "" : facebook.error,
       diagnostic: facebook.diagnostic || null,
       debug: facebook.ok ? { tokenStatus: { valid: facebook.debug?.is_valid === true }, appId: clean(facebook.debug?.app_id, 80), type: clean(facebook.debug?.type, 40), expiresAt: Number.isFinite(facebook.debug?.expires_at) ? new Date(facebook.debug.expires_at * 1000).toISOString() : "" } : undefined,
     },
     instagram: {
       secretConfigured: configured(env.INSTAGRAM_ACCESS_TOKEN),
-      storedTokenConfigured: configured((await storedMetaConnection(env.GIFT_CARD_DB))?.instagram_access_token),
+      storedTokenConfigured: configured(stored?.instagram_access_token),
       userIdConfigured: configured(env.META_INSTAGRAM_USER_ID),
       tokenValidated: instagram.ok,
       tokenSource: instagram.source || "none",
