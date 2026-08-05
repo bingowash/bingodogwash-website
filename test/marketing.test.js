@@ -208,7 +208,8 @@ test("Instagram preflight validates the configured Login API user and publishing
   try {
     const result = await marketingTestHelpers.instagramPreflight({ INSTAGRAM_ACCESS_TOKEN: "A".repeat(50), META_INSTAGRAM_USER_ID: "27879594505014566", META_INSTAGRAM_USERNAME: "bingo_dogwash" });
     assert.equal(result.ok, true); assert.equal(result.username, "bingo_dogwash"); assert.equal(result.accountType, "MEDIA_CREATOR"); assert.equal(result.publishingPermission, "granted");
-    assert.equal(urls.every((url) => url.startsWith("https://graph.facebook.com/v25.0/")), true);
+    assert.equal(urls.some((url) => url.startsWith("https://graph.instagram.com/v26.0/me")), true);
+    assert.equal(urls.some((url) => url.startsWith("https://graph.facebook.com/v25.0/me/permissions")), true);
   } finally { globalThis.fetch = originalFetch; }
 });
 
@@ -293,6 +294,73 @@ test("successful Facebook publish uses Bearer auth and returns post ID", async (
     assert.equal(result, "fb-photo-123");
     assert.equal(requestedHeaders.Authorization, `Bearer ${"B".repeat(50)}`);
   } finally { globalThis.fetch = originalFetch; }
+});
+
+test("Facebook page configuration preserves the legacy ID and supports multiple de-duplicated IDs", () => {
+  assert.deepEqual(marketingTestHelpers.configuredFacebookPageIds({ META_PAGE_ID: "1264938680034651" }), ["1264938680034651"]);
+  assert.deepEqual(marketingTestHelpers.configuredFacebookPageIds({
+    META_PAGE_ID: "1264938680034651",
+    META_PAGE_IDS: "1264938680034651,61592339597666, 61590905394658",
+  }), ["1264938680034651", "61592339597666", "61590905394658"]);
+});
+
+test("Facebook multi-page publishing continues after a page fails and reports each page", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => String(url).includes("/failed-page/")
+    ? new Response(JSON.stringify({ error: { code: 100, message: "Page is unavailable" } }), { status: 400 })
+    : Response.json({ id: `post-${String(url).includes("/first-page/") ? "first" : "last"}` });
+  const db = { prepare: () => ({ bind: () => ({ run: async () => ({ success: true }) }) }) };
+  try {
+    const result = await marketingTestHelpers.publishFacebookPages(
+      {}, db, "post-id", ["first-page", "failed-page", "last-page"],
+      { image: "https://example.com/dog.jpg" }, "caption", "https://bingodogwash.com/api/marketing/track?campaign=test", "T".repeat(50),
+    );
+    assert.equal(result.status, "partial");
+    assert.deepEqual(result.succeededPages, ["first-page", "last-page"]);
+    assert.deepEqual(result.failedPages, ["failed-page"]);
+    assert.equal(result.pages["failed-page"].error, "Page is unavailable");
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("Instagram image validation rejects unsupported files and accepts public JPEG responses", async () => {
+  assert.match((await marketingTestHelpers.validateInstagramImage("https://example.com/catalogue.pdf")).reason, /Unsupported/);
+  assert.match((await marketingTestHelpers.validateInstagramImage("https://example.com/download/photo.jpg?download=1")).reason, /Download/);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(null, { status: 200, headers: { "Content-Type": "image/jpeg" } });
+  try {
+    assert.deepEqual(await marketingTestHelpers.validateInstagramImage("https://example.com/photo.jpg"), { ok: true, contentType: "image/jpeg" });
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("tracking redirect page is mobile-safe and never exposes a direct social supplier link", () => {
+  const tracked = marketingTestHelpers.campaignUrl("https://etsy.com/listing/123", "campaign-redirect", "instagram");
+  assert.equal(new URL(tracked).origin, "https://bingodogwash.com");
+  assert.equal(new URL(tracked).searchParams.get("platform"), "instagram");
+  const response = marketingTestHelpers.redirectPage("https://etsy.com/listing/123");
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("Content-Type"), /text\/html/);
+});
+
+test("tracking GET records both click and redirect with campaign, platform and product metadata", async () => {
+  const writes = [];
+  const db = {
+    prepare(sql) {
+      return {
+        bind(...values) {
+          if (sql.startsWith("SELECT")) return { first: async () => ({ id: "post-1", product_id: "product-7", product_url: marketingTestHelpers.campaignUrl("https://etsy.com/listing/7", "campaign-events") }) };
+          return { run: async () => { writes.push({ sql, values }); return { success: true }; } };
+        },
+      };
+    },
+  };
+  const url = marketingTestHelpers.campaignUrl("https://etsy.com/listing/7", "campaign-events", "facebook");
+  const response = await handleMarketingRequest(new Request(url), { GIFT_CARD_DB: db });
+  assert.equal(response.status, 200);
+  assert.equal(writes.length, 2);
+  assert.equal(writes[0].values[3], "click");
+  assert.equal(writes[0].values[4], "facebook");
+  assert.deepEqual(JSON.parse(writes[0].values[5]), { campaign: "campaign-events", platform: "facebook", product: "product-7" });
+  assert.match(writes[1].sql, /'redirect'/);
 });
 
 test("removed controlled Instagram endpoint returns 404 without touching the guard table", async () => {
@@ -455,6 +523,7 @@ test("platform-specific failure produces a partial result with separated APIs an
   const originalFetch = globalThis.fetch; const urls = [];
   globalThis.fetch = async (url) => {
     urls.push(String(url));
+    if (!String(url).includes("graph.")) return new Response(null, { status: 200, headers: { "Content-Type": "image/jpeg" } });
     return String(url).includes("/27879594505014566/media")
       ? new Response(JSON.stringify({ error: { code: 190, type: "OAuthException" } }), { status: 400 })
       : Response.json({ id: "facebook-post-id" });
@@ -465,6 +534,6 @@ test("platform-specific failure produces a partial result with separated APIs an
     const result = await runMarketingAutomation({ GIFT_CARD_DB: db, META_PAGE_ID: "1264938680034651", META_PAGE_ACCESS_TOKEN: "F".repeat(50), META_INSTAGRAM_USER_ID: "27879594505014566", INSTAGRAM_ACCESS_TOKEN: "I".repeat(50) }, { trigger: "test" });
     assert.equal(result.status, "partial"); assert.equal(result.platforms.facebook.ok, true); assert.equal(result.platforms.instagram.ok, false); assert.equal(result.platforms.instagram.attempts, 1);
     assert.equal(urls.some((url) => url.includes("graph.facebook.com/v25.0/1264938680034651/photos")), true);
-    assert.equal(urls.some((url) => url.includes("graph.facebook.com/v25.0/27879594505014566/media")), true);
+    assert.equal(urls.some((url) => url.includes("graph.instagram.com/v26.0/27879594505014566/media")), true);
   } finally { globalThis.fetch = originalFetch; }
 });

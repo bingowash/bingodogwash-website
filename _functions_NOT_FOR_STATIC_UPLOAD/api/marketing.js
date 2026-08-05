@@ -91,7 +91,8 @@ export async function runMarketingAutomation(env, options = {}) {
     .bind(postId, product.source, product.id, product.name, trackedUrl, product.image, caption, campaignCode, options.trigger || "manual", now, now, now).run();
 
   const platforms = [];
-  if (configured(env.META_PAGE_ID)) platforms.push("facebook");
+  const facebookPageIds = configuredFacebookPageIds(env);
+  if (facebookPageIds.length) platforms.push("facebook");
   if (configured(env.META_INSTAGRAM_USER_ID)) platforms.push("instagram");
   if (!platforms.length) {
     await finishPost(db, postId, "failed", "Meta credentials are not configured.", {});
@@ -106,10 +107,29 @@ export async function runMarketingAutomation(env, options = {}) {
       results[platform] = { ok: false, error: tokenCheck.error, attempts: 0 };
       continue;
     }
-    results[platform] = await publishWithRetry(env, db, postId, platform, product, caption, trackedUrl, tokenCheck.token);
+    if (platform === "facebook") {
+      results.facebook = await publishFacebookPages(env, db, postId, facebookPageIds, product, platformCaption(caption, trackedUrl, "facebook"), platformCampaignUrl(trackedUrl, "facebook"), tokenCheck.token);
+      continue;
+    }
+    const instagramSelection = await selectInstagramProduct(db, product);
+    if (!instagramSelection.product) {
+      const error = `Instagram skipped: no compatible publicly accessible JPG, JPEG or PNG product image was available. ${instagramSelection.rejections.length} image(s) rejected.`;
+      await savePlatformResult(db, postId, platform, "failed", "", 0, error);
+      results.instagram = { ok: false, skipped: true, error, attempts: 0, rejections: instagramSelection.rejections };
+      continue;
+    }
+    const instagramProduct = instagramSelection.product;
+    const instagramUrl = campaignUrl(instagramProduct.url, campaignCode, "instagram");
+    const instagramCaption = instagramProduct.id === product.id
+      ? platformCaption(caption, trackedUrl, "instagram")
+      : await generateCaption(env, instagramProduct, instagramUrl, campaignCode);
+    results.instagram = await publishWithRetry(env, db, postId, platform, instagramProduct, instagramCaption, instagramUrl, tokenCheck.token);
+    results.instagram.product = { id: String(instagramProduct.id), name: instagramProduct.name };
+    results.instagram.rejections = instagramSelection.rejections;
   }
   const succeeded = Object.values(results).filter((result) => result.ok).length;
-  const status = succeeded === platforms.length ? "success" : succeeded ? "partial" : "failed";
+  const hasPartialPlatform = Object.values(results).some((result) => result.status === "partial");
+  const status = succeeded === platforms.length && !hasPartialPlatform ? "success" : succeeded ? "partial" : "failed";
   const error = Object.values(results).filter((result) => !result.ok).map((result) => result.error).join(" | ");
   await finishPost(db, postId, status, error, results);
   if (status !== "failed" && options.trigger === "scheduled") {
@@ -133,6 +153,62 @@ async function selectNextProduct(db) {
     COALESCE((SELECT MAX(mp.created_at) FROM marketing_posts mp WHERE mp.product_source = 'etsy' AND mp.product_id = etsy_products.id AND mp.status IN ('success', 'partial')), ''),
     updated_at DESC LIMIT 1`).first();
   return result || null;
+}
+
+async function selectInstagramProduct(db, preferredProduct) {
+  const candidates = [preferredProduct];
+  try {
+    const rows = await db.prepare(`SELECT
+        'etsy' AS source, id, COALESCE(NULLIF(display_title, ''), title) AS name,
+        COALESCE(NULLIF(display_description, ''), description, '') AS description,
+        price, currency, category, quantity AS stock, listing_url AS url, primary_image AS image
+      FROM etsy_products
+      WHERE public_visibility = 1 AND admin_status = 'published'
+        AND COALESCE(quantity, 1) > 0 AND COALESCE(listing_url, '') <> '' AND COALESCE(primary_image, '') <> ''
+      ORDER BY updated_at DESC LIMIT 100`).all();
+    for (const product of rows?.results || []) {
+      if (!candidates.some((candidate) => String(candidate.id) === String(product.id))) candidates.push(product);
+    }
+  } catch (error) {
+    console.error(JSON.stringify({ event: "instagram_candidate_lookup_failed", error: clean(error?.message, 500), timestamp: new Date().toISOString() }));
+  }
+
+  const rejections = [];
+  for (const product of candidates) {
+    const validation = await validateInstagramImage(product.image);
+    if (validation.ok) return { product, rejections };
+    const rejection = {
+      productId: String(product.id || ""),
+      productName: clean(product.name, 200),
+      imageUrl: clean(product.image, 1000),
+      reason: validation.reason,
+      timestamp: new Date().toISOString(),
+    };
+    rejections.push(rejection);
+    console.error(JSON.stringify({ event: "instagram_image_rejected", ...rejection }));
+  }
+  return { product: null, rejections };
+}
+
+async function validateInstagramImage(image) {
+  let url;
+  try { url = new URL(absoluteImage(image)); } catch { return { ok: false, reason: "Invalid image URL." }; }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return { ok: false, reason: "Image URL is not HTTP(S)." };
+  const pathname = url.pathname.toLowerCase();
+  if (/\.(pdf|zip|svg|webp|gif|bmp|tiff?|avif)(?:$|[?#])/.test(pathname)) return { ok: false, reason: "Unsupported image file type." };
+  if (/(^|\/)download(?:\/|$)/.test(pathname) || /[?&](download|attachment)=/i.test(url.search)) return { ok: false, reason: "Download URLs are not accepted by Instagram." };
+  if (!/\.(jpe?g|png)$/.test(pathname)) return { ok: false, reason: "Image URL must identify a JPG, JPEG or PNG file." };
+  let response;
+  try {
+    response = await fetch(url, { method: "HEAD", redirect: "follow" });
+    if (!response.ok) response = await fetch(url, { method: "GET", headers: { Range: "bytes=0-0" }, redirect: "follow" });
+  } catch {
+    return { ok: false, reason: "Image URL is not publicly accessible." };
+  }
+  if (!response.ok) return { ok: false, reason: `Image URL returned HTTP ${response.status}.` };
+  const contentType = (response.headers.get("Content-Type") || "").split(";", 1)[0].trim().toLowerCase();
+  if (!['image/jpeg', 'image/png'].includes(contentType)) return { ok: false, reason: contentType ? `Unsupported Content-Type: ${contentType}.` : "Image response did not include a supported Content-Type." };
+  return { ok: true, contentType };
 }
 
 async function generateCaption(env, product, url, campaignCode) {
@@ -166,7 +242,7 @@ async function publishWithRetry(env, db, postId, platform, product, caption, url
   let lastError = "Unknown publishing error.";
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt += 1) {
     try {
-      const externalPostId = platform === "facebook"
+      const externalPostId = platform.startsWith("facebook")
         ? await publishFacebook(env, product.image, caption, url, token)
         : await publishInstagram(env, product.image, caption, token);
       await savePlatformResult(db, postId, platform, "success", externalPostId, attempt, "");
@@ -179,6 +255,33 @@ async function publishWithRetry(env, db, postId, platform, product, caption, url
     }
   }
   return { ok: false, error: lastError, attempts: MAX_RETRIES };
+}
+
+async function publishFacebookPages(env, db, postId, pageIds, product, caption, url, token) {
+  const pages = {};
+  for (const pageId of pageIds) {
+    pages[pageId] = await publishWithRetry({ ...env, META_PAGE_ID: pageId }, db, postId, `facebook:${pageId}`, product, caption, url, token);
+    console.error(JSON.stringify({
+      event: "facebook_page_publish_result",
+      pageId,
+      success: pages[pageId].ok,
+      facebookPostId: pages[pageId].id || "",
+      error: pages[pageId].error || "",
+      timestamp: new Date().toISOString(),
+    }));
+  }
+  const succeeded = Object.values(pages).filter((result) => result.ok).length;
+  const failedPages = Object.entries(pages).filter(([, result]) => !result.ok).map(([pageId]) => pageId);
+  return {
+    ok: succeeded > 0,
+    status: succeeded === pageIds.length ? "success" : succeeded ? "partial" : "failed",
+    pages,
+    succeededPages: Object.entries(pages).filter(([, result]) => result.ok).map(([pageId]) => pageId),
+    failedPages,
+    id: pageIds.length === 1 ? pages[pageIds[0]]?.id || "" : "",
+    attempts: Math.max(...Object.values(pages).map((result) => result.attempts || 0), 0),
+    error: failedPages.map((pageId) => `${pageId}: ${pages[pageId].error}`).join(" | "),
+  };
 }
 
 async function publishFacebook(env, image, caption, link, token) {
@@ -247,7 +350,22 @@ async function instagramPreflight(env) {
   if (!["BUSINESS", "CREATOR", "MEDIA_CREATOR"].includes(accountType)) {
     return { ok: false, authenticationOk: true, identityOk: false, error: META_ERROR.incomplete, api: "Instagram Login" };
   }
-      return {
+  let permissions;
+  try {
+    permissions = await graphGet(FACEBOOK_GRAPH_ORIGIN, `${GRAPH_VERSION}/me/permissions`, {}, tokenCheck.token, "instagram_permissions");
+  } catch {
+    return { ok: false, authenticationOk: true, identityOk: true, api: "Instagram Login", id: String(profile.id), username: profile.username, accountType: profile.account_type, publishingPermission: "unconfirmed", failedCheck: "publishing-permission", error: INSTAGRAM_PERMISSION_UNCONFIRMED };
+  }
+  const permission = Array.isArray(permissions?.data)
+    ? permissions.data.find((item) => item?.permission === INSTAGRAM_PUBLISH_PERMISSION)
+    : null;
+  if (!permission) {
+    return { ok: false, authenticationOk: true, identityOk: true, api: "Instagram Login", id: String(profile.id), username: profile.username, accountType: profile.account_type, publishingPermission: "unconfirmed", failedCheck: "publishing-permission", error: INSTAGRAM_PERMISSION_UNCONFIRMED };
+  }
+  if (permission.status !== "granted") {
+    return { ok: false, authenticationOk: true, identityOk: true, api: "Instagram Login", id: String(profile.id), username: profile.username, accountType: profile.account_type, publishingPermission: permission.status || "declined", failedCheck: "publishing-permission", error: META_ERROR.permission };
+  }
+  return {
     ok: true,
     authenticationOk: true,
     identityOk: true,
@@ -255,16 +373,16 @@ async function instagramPreflight(env) {
     id: String(profile.id),
     username: profile.username,
     accountType: profile.account_type,
-    publishingPermission: "assumed"
+    publishingPermission: "granted"
   };
 }
 
 async function validateFacebookToken(env, token) {
   const tokenCheck = metaAccessToken(token);
-  const pageId = String(env.META_PAGE_ID || "");
+  const pageId = configuredFacebookPageIds(env)[0] || "";
   if (!tokenCheck.ok) {
     logMetaValidation("facebook_token_check", {
-      missingConfig: !configured(env.META_PAGE_ACCESS_TOKEN) ? "META_PAGE_ACCESS_TOKEN" : (!configured(env.META_PAGE_ID) ? "META_PAGE_ID" : null),
+      missingConfig: !configured(env.META_PAGE_ACCESS_TOKEN) ? "META_PAGE_ACCESS_TOKEN" : (!pageId ? "META_PAGE_ID or META_PAGE_IDS" : null),
       validationError: tokenCheck.error,
     });
     return {
@@ -276,7 +394,7 @@ async function validateFacebookToken(env, token) {
       api: "Facebook Pages"
     };
   }
-  if (!configured(env.META_PAGE_ID)) {
+  if (!pageId) {
     logMetaValidation("facebook_token_check", {
       missingConfig: "META_PAGE_ID",
       validationError: META_ERROR.incomplete,
@@ -324,7 +442,7 @@ async function validateFacebookToken(env, token) {
 
 async function facebookPreflight(env) {
   const validation = await validateFacebookToken(env, env.META_PAGE_ACCESS_TOKEN);
-  const pageId = String(env.META_PAGE_ID || "");
+  const pageId = configuredFacebookPageIds(env)[0] || "";
   if (!validation.ok) {
     return { ...validation, pageId };
   }
@@ -367,7 +485,8 @@ async function metaDiagnostics(env) {
   const diagnostics = {
     facebook: {
       secretConfigured: typeof env.META_PAGE_ACCESS_TOKEN === "string" && env.META_PAGE_ACCESS_TOKEN.trim().length > 0,
-      pageIdConfigured: configured(env.META_PAGE_ID),
+      pageIdConfigured: configuredFacebookPageIds(env).length > 0,
+      pageIds: configuredFacebookPageIds(env),
       tokenValidated: facebookToken.ok,
       validationError: facebookToken.ok ? "" : facebookToken.error,
     },
@@ -495,7 +614,7 @@ async function oauthCallback(request, env, url) {
       return adminRedirect("oauth=error");
     }
     const pages = Array.isArray(data?.data) ? data.data : [];
-    const pageId = String(env.META_PAGE_ID || "");
+    const pageId = configuredFacebookPageIds(env)[0] || "";
     let pageToken = null;
     for (const p of pages) {
       if (String(p.id) === pageId) { pageToken = p.access_token; break; }
@@ -595,7 +714,8 @@ function metaApiError(data, status) {
   if (code === 190 || type === "oauthexception") return META_ERROR.invalid;
   if (code === 10 || code === 200) return META_ERROR.permission;
   if (status === 429 || status >= 500) return META_ERROR.network;
-  return META_ERROR.incomplete;
+  const providerMessage = clean(data?.error?.message, 500);
+  return providerMessage || META_ERROR.incomplete;
 }
 
 function safeMetaError(error) {
@@ -612,7 +732,7 @@ function safeStoredMetaError(value) {
   if (/permission|authori[sz]/.test(normalized)) return META_ERROR.permission;
   if (/missing|not configured/.test(normalized)) return META_ERROR.missing;
   if (/account|page id|user id|identity/.test(normalized)) return META_ERROR.incomplete;
-  return META_ERROR.network;
+  return clean(message, 500);
 }
 
 function metaAccessToken(value) {
@@ -675,11 +795,18 @@ async function trackCampaignEvent(request, env, url) {
   const type = clean(url.searchParams.get("event") || "click", 20);
   if (!campaign || !["click", "engagement", "sale"].includes(type)) return json({ ok: false, error: "Invalid tracking event." }, 400);
   if (type !== "click" && !(await hasTrackingSecret(request, env))) return json({ ok: false, error: "Tracking authorisation required." }, 401);
-  const post = await env.GIFT_CARD_DB.prepare("SELECT id, product_url FROM marketing_posts WHERE campaign_code = ? LIMIT 1").bind(campaign).first();
+  const post = await env.GIFT_CARD_DB.prepare("SELECT id, product_id, product_url FROM marketing_posts WHERE campaign_code = ? LIMIT 1").bind(campaign).first();
   if (!post) return json({ ok: false, error: "Campaign not found." }, 404);
-  await env.GIFT_CARD_DB.prepare("INSERT INTO marketing_events (id, post_id, campaign_code, event_type, platform, value, metadata, created_at) VALUES (?, ?, ?, ?, ?, 1, '', ?)")
-    .bind(crypto.randomUUID(), post.id, campaign, type, clean(url.searchParams.get("platform"), 30), new Date().toISOString()).run();
-  return request.method === "GET" ? Response.redirect(trackedDestination(post.product_url), 302) : json({ ok: true });
+  const platform = clean(url.searchParams.get("platform"), 30);
+  const now = new Date().toISOString();
+  await env.GIFT_CARD_DB.prepare("INSERT INTO marketing_events (id, post_id, campaign_code, event_type, platform, value, metadata, created_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?)")
+    .bind(crypto.randomUUID(), post.id, campaign, type, platform, JSON.stringify({ campaign, platform, product: post.product_id }), now).run();
+  if (request.method !== "GET") return json({ ok: true });
+  await env.GIFT_CARD_DB.prepare("INSERT INTO marketing_events (id, post_id, campaign_code, event_type, platform, value, metadata, created_at) VALUES (?, ?, ?, 'redirect', ?, 1, ?, ?)")
+    .bind(crypto.randomUUID(), post.id, campaign, platform, JSON.stringify({ campaign, platform, product: post.product_id }), now).run();
+  const requestedDestination = trackedDestination(url.toString());
+  const destination = requestedDestination === "https://bingodogwash.com/shop" ? trackedDestination(post.product_url) : requestedDestination;
+  return redirectPage(destination);
 }
 
 async function getSettings(env) {
@@ -739,8 +866,13 @@ async function finishPost(db, id, status, error, results) { const now = new Date
 async function savePlatformResult(db, postId, platform, status, externalId, attempts, error) { const now = new Date().toISOString(); await db.prepare(`INSERT INTO marketing_platform_results (id, post_id, platform, status, external_post_id, attempt_count, error_message, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)` ).bind(crypto.randomUUID(), postId, platform, status, externalId, attempts, error, now, now).run(); }
 async function isAdmin(request, env) { const expected = String(env.ADMIN_API_TOKEN || ""); const auth = request.headers.get("Authorization") || ""; const received = auth.startsWith("Bearer ") ? auth.slice(7) : request.headers.get("X-Admin-Token") || ""; if (!expected || received.length !== expected.length) return false; const [a, b] = await Promise.all([crypto.subtle.digest("SHA-256", new TextEncoder().encode(received)), crypto.subtle.digest("SHA-256", new TextEncoder().encode(expected))]); const aa = new Uint8Array(a), bb = new Uint8Array(b); let diff = 0; for (let i = 0; i < aa.length; i += 1) diff |= aa[i] ^ bb[i]; return diff === 0; }
 async function hasTrackingSecret(request, env) { const expected = String(env.MARKETING_TRACKING_SECRET || ""); const received = request.headers.get("X-Marketing-Tracking-Secret") || ""; if (!expected || received.length !== expected.length) return false; const [a, b] = await Promise.all([crypto.subtle.digest("SHA-256", new TextEncoder().encode(received)), crypto.subtle.digest("SHA-256", new TextEncoder().encode(expected))]); const aa = new Uint8Array(a), bb = new Uint8Array(b); let diff = 0; for (let i = 0; i < aa.length; i += 1) diff |= aa[i] ^ bb[i]; return diff === 0; }
-function campaignUrl(productUrl, campaign) { const destination = new URL(productUrl, "https://bingodogwash.com"); destination.searchParams.set("utm_source", "social"); destination.searchParams.set("utm_medium", "organic"); destination.searchParams.set("utm_campaign", campaign); const tracker = new URL(TRACK_PATH, "https://bingodogwash.com"); tracker.searchParams.set("campaign", campaign); tracker.searchParams.set("event", "click"); tracker.searchParams.set("destination", destination.toString()); return tracker.toString(); }
+function campaignUrl(productUrl, campaign, platform = "") { const destination = new URL(productUrl, "https://bingodogwash.com"); destination.searchParams.set("utm_source", platform || "social"); destination.searchParams.set("utm_medium", "organic"); destination.searchParams.set("utm_campaign", campaign); const tracker = new URL(TRACK_PATH, "https://bingodogwash.com"); tracker.searchParams.set("campaign", campaign); tracker.searchParams.set("event", "click"); if (platform) tracker.searchParams.set("platform", platform); tracker.searchParams.set("destination", destination.toString()); return tracker.toString(); }
+function platformCampaignUrl(value, platform) { const url = new URL(value); url.searchParams.set("platform", platform); const destination = new URL(url.searchParams.get("destination")); destination.searchParams.set("utm_source", platform); url.searchParams.set("destination", destination.toString()); return url.toString(); }
+function platformCaption(caption, originalUrl, platform) { return caption.replaceAll(originalUrl, platformCampaignUrl(originalUrl, platform)); }
 function trackedDestination(value) { try { const tracker = new URL(value, "https://bingodogwash.com"); const destination = new URL(tracker.searchParams.get("destination") || "/shop", "https://bingodogwash.com"); if (!/^https?:$/.test(destination.protocol)) return "https://bingodogwash.com/shop"; return destination.toString(); } catch { return "https://bingodogwash.com/shop"; } }
+function redirectPage(destination) { const safeDestination = escapeHtml(destination); const scriptDestination = JSON.stringify(destination).replace(/</g, "\\u003c"); return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="1;url=${safeDestination}"><title>Bingo Dog Wash</title></head><body><main style="font:18px system-ui;text-align:center;padding:15vh 1rem"><p>Taking you to your selected product...</p><p><a href="${safeDestination}">Continue</a></p></main><script>setTimeout(function(){location.replace(${scriptDestination})},300)</script></body></html>`, { status: 200, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } }); }
+function escapeHtml(value) { return String(value).replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]); }
+function configuredFacebookPageIds(env) { const values = configured(env.META_PAGE_IDS) ? env.META_PAGE_IDS.split(",") : []; if (configured(env.META_PAGE_ID)) values.unshift(env.META_PAGE_ID); return [...new Set(values.map((value) => String(value).trim()).filter(Boolean))]; }
 function absoluteImage(value) { return new URL(value, "https://bingodogwash.com/").toString(); }
 function priceLabel(product) { return Number.isFinite(product.price) ? new Intl.NumberFormat("en-GB", { style: "currency", currency: product.currency || "GBP" }).format(product.price / 100) : "See product page"; }
 function benefit(product) { const text = clean(product.description, 180).replace(/[.!?]+$/, ""); return text ? text.charAt(0).toLowerCase() + text.slice(1) : `everyday ${clean(product.category || "dog care", 60).toLowerCase()}`; }
@@ -752,4 +884,4 @@ function clean(value, max = 500) { return String(value || "").replace(/\s+/g, " 
 async function readJson(request) { try { return await request.json(); } catch { return null; } }
 function json(body, status = 200) { return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" } }); }
 
-export const marketingTestHelpers = { campaignUrl, trackedDestination, nextRunAt, hash, benefit, metaAccessToken, publishWithRetry, publishFacebook, publishInstagram, instagramPreflight, facebookPreflight, publishingDisabled };
+export const marketingTestHelpers = { campaignUrl, trackedDestination, nextRunAt, hash, benefit, metaAccessToken, publishWithRetry, publishFacebook, publishInstagram, publishFacebookPages, validateInstagramImage, selectInstagramProduct, configuredFacebookPageIds, redirectPage, instagramPreflight, facebookPreflight, publishingDisabled };
