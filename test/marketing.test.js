@@ -33,6 +33,8 @@ test("Marketing Admin always exposes the existing Meta reconnect flow", () => {
   assert.match(frontend, /window\.location\.assign\(result\.url\)/);
   assert.match(frontend, /showOAuthCallbackStatus/);
   assert.match(frontend, /Meta credential stored, but managed Page discovery needs attention/);
+  assert.match(frontend, /oauthCallbackResult/);
+  assert.match(frontend, /Meta code/);
 });
 
 test("OAuth start reuses the protected route and returns a Facebook authorization URL", async () => {

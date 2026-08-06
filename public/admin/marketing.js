@@ -1,6 +1,7 @@
 const api = "/api/admin/marketing";
 let token = "";
 let state = null;
+let oauthCallbackResult = null;
 const pending = new Set();
 const qs = (value) => document.querySelector(value);
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#039;" }[char]));
@@ -73,26 +74,32 @@ function showOAuthCallbackStatus() {
   const params = new URLSearchParams(window.location.search);
   const oauth = params.get("oauth");
   if (!oauth) return;
+  const providerHttpStatus = Number(params.get("httpStatus") || 0) || null;
+  const providerErrorCode = Number(params.get("providerCode") || params.get("code") || 0) || null;
+  const providerErrorType = params.get("providerType") || null;
+  const providerErrorSubcode = Number(params.get("providerSubcode") || 0) || null;
+  const safeProviderMessage = params.get("providerMessage") || "";
+  const safeFailureSummary = [providerHttpStatus ? `HTTP ${providerHttpStatus}` : "", providerErrorCode ? `Meta code ${providerErrorCode}` : "", providerErrorType, providerErrorSubcode ? `subcode ${providerErrorSubcode}` : "", safeProviderMessage].filter(Boolean).join("; ");
   const messages = {
     success: params.get("discovery") === "success"
       ? `Meta reconnected. Facebook returned ${Number(params.get("pages") || 0)} managed Page(s). Run Safe Preflight.`
       : "Meta credential stored, but managed Page discovery needs attention. Run Safe Preflight for details.",
-    error: `Meta reconnect failed during ${params.get("stage") || "an unknown stage"}. Please try again or inspect the Worker callback logs.`,
+    error: `Meta reconnect failed during ${params.get("stage") || "an unknown stage"}.${safeFailureSummary ? ` ${safeFailureSummary}` : ""}`,
     invalid_state: "Meta reconnect state was invalid or already used. Start reconnect again from this page.",
     missing_code: "Facebook did not return an authorization code. Start reconnect again.",
     server_error: "Meta reconnect is not fully configured on the server.",
   };
   const message = messages[oauth] || "Meta reconnect did not complete.";
   qs("[data-marketing-message]").textContent = message;
-  showResponse({
+  oauthCallbackResult = {
     ok: oauth === "success",
     oauth,
     stage: params.get("stage") || "",
-    providerHttpStatus: Number(params.get("httpStatus") || 0) || null,
-    providerErrorCode: Number(params.get("providerCode") || params.get("code") || 0) || null,
-    providerErrorType: params.get("providerType") || null,
-    providerErrorSubcode: Number(params.get("providerSubcode") || 0) || null,
-    safeProviderMessage: params.get("providerMessage") || "",
+    providerHttpStatus,
+    providerErrorCode,
+    providerErrorType,
+    providerErrorSubcode,
+    safeProviderMessage,
     appIdConfigured: params.get("appIdConfigured") === "true",
     appSecretConfigured: params.get("appSecretConfigured") === "true",
     redirectUriConfigured: params.get("redirectUriConfigured") === "true",
@@ -105,7 +112,8 @@ function showOAuthCallbackStatus() {
     discovery: params.get("discovery") || "",
     returnedPageCount: Number(params.get("pages") || 0),
     message,
-  }, oauth !== "success");
+  };
+  showResponse(oauthCallbackResult, oauth !== "success");
   history.replaceState({}, "", window.location.pathname);
 }
 
@@ -165,7 +173,7 @@ tokenInput.addEventListener("paste", (event) => {
     showResponse({ ok: false, error: message, status: 0 }, true);
   }
 });
-unlockForm.addEventListener("submit", (event) => { event.preventDefault(); const button = event.currentTarget.querySelector("button"); runOnce("unlock", button, async () => { token = validateToken(new FormData(event.currentTarget).get("token")); const result = await refresh(); qs("[data-marketing-message]").textContent = "Marketing controls unlocked."; showResponse({ ok: result.ok, settings: result.settings, connectedPlatforms: result.connectedPlatforms }); }); });
+unlockForm.addEventListener("submit", (event) => { event.preventDefault(); const button = event.currentTarget.querySelector("button"); runOnce("unlock", button, async () => { token = validateToken(new FormData(event.currentTarget).get("token")); const result = await refresh(); if (oauthCallbackResult) { qs("[data-marketing-message]").textContent = oauthCallbackResult.message; showResponse(oauthCallbackResult, oauthCallbackResult.ok !== true); } else { qs("[data-marketing-message]").textContent = "Marketing controls unlocked."; showResponse({ ok: result.ok, settings: result.settings, connectedPlatforms: result.connectedPlatforms }); } }); });
 document.addEventListener("click", (event) => {
   const button = event.target.closest("[data-action]");
   const action = button?.dataset.action;
