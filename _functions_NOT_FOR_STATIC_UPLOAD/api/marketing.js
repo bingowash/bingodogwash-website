@@ -742,7 +742,6 @@ ON CONFLICT(id) DO UPDATE SET
   expiresAt,
   null,
   null,
-  null,
   now
 )
 .run();

@@ -84,7 +84,11 @@ test("OAuth callback stores the long-lived user credential in D1 rather than a P
       GIFT_CARD_DB: db, META_APP_ID: "app", META_APP_SECRET: "secret", META_PAGE_ID: "page-1",
     });
     assert.equal(new URL(response.headers.get("Location")).searchParams.get("oauth"), "success");
+    assert.equal(storedValues.length, 5);
     assert.equal(storedValues[0], "long-user-token");
+    assert.equal(storedValues[2], null);
+    assert.equal(storedValues[3], null);
+    assert.match(storedValues[4], /^\d{4}-\d{2}-\d{2}T/);
     assert.equal(storedValues.includes("page-one-token"), false);
   } finally { globalThis.fetch = originalFetch; }
 });
