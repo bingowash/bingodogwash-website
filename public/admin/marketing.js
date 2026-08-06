@@ -84,7 +84,28 @@ function showOAuthCallbackStatus() {
   };
   const message = messages[oauth] || "Meta reconnect did not complete.";
   qs("[data-marketing-message]").textContent = message;
-  showResponse({ ok: oauth === "success", oauth, stage: params.get("stage") || "", providerCode: Number(params.get("code") || 0) || null, discovery: params.get("discovery") || "", returnedPageCount: Number(params.get("pages") || 0), message }, oauth !== "success");
+  showResponse({
+    ok: oauth === "success",
+    oauth,
+    stage: params.get("stage") || "",
+    providerHttpStatus: Number(params.get("httpStatus") || 0) || null,
+    providerErrorCode: Number(params.get("providerCode") || params.get("code") || 0) || null,
+    providerErrorType: params.get("providerType") || null,
+    providerErrorSubcode: Number(params.get("providerSubcode") || 0) || null,
+    safeProviderMessage: params.get("providerMessage") || "",
+    appIdConfigured: params.get("appIdConfigured") === "true",
+    appSecretConfigured: params.get("appSecretConfigured") === "true",
+    redirectUriConfigured: params.get("redirectUriConfigured") === "true",
+    redirectUriUsed: params.get("redirectUriUsed") || "",
+    callbackHost: params.get("callbackHost") || "",
+    productionEnvironment: params.get("productionEnvironment") === "true",
+    graphHost: params.get("graphHost") || "",
+    graphApiVersion: params.get("graphApiVersion") || "",
+    requestMethod: params.get("requestMethod") || "",
+    discovery: params.get("discovery") || "",
+    returnedPageCount: Number(params.get("pages") || 0),
+    message,
+  }, oauth !== "success");
   history.replaceState({}, "", window.location.pathname);
 }
 

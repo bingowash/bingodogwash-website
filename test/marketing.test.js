@@ -64,7 +64,7 @@ test("OAuth callback stores the long-lived user credential in D1 rather than a P
   const storedValues = [];
   const db = { prepare(sql) { return {
     bind(...values) {
-      if (sql.includes("SELECT created_at")) return { first: async () => ({ created_at: new Date().toISOString() }) };
+      if (sql.includes("RETURNING created_at")) return { first: async () => ({ created_at: new Date().toISOString() }) };
       if (sql.includes("INSERT INTO marketing_connections")) return { run: async () => { storedValues.push(...values); return { success: true }; } };
       return { run: async () => ({ success: true }) };
     },
@@ -92,7 +92,7 @@ test("OAuth callback stores the user credential even when /me/accounts returns n
   const storedValues = [];
   const db = { prepare(sql) { return {
     bind(...values) {
-      if (sql.includes("SELECT created_at")) return { first: async () => ({ created_at: new Date().toISOString() }) };
+      if (sql.includes("RETURNING created_at")) return { first: async () => ({ created_at: new Date().toISOString() }) };
       if (sql.includes("INSERT INTO marketing_connections")) return { run: async () => { storedValues.push(...values); return { success: true }; } };
       return { run: async () => ({ success: true }) };
     },
@@ -119,7 +119,7 @@ test("OAuth callback stores the user credential even when /me/accounts returns n
 test("OAuth callback reports a safe token-exchange failure stage without exposing credentials", async () => {
   const originalFetch = globalThis.fetch;
   const db = { prepare: () => ({ bind: () => ({ first: async () => ({ created_at: new Date().toISOString() }), run: async () => ({ success: true }) }) }) };
-  globalThis.fetch = async () => new Response(JSON.stringify({ error: { code: 100, message: "Sensitive provider detail" } }), { status: 400 });
+  globalThis.fetch = async () => new Response(JSON.stringify({ error: { code: 100, type: "OAuthException", error_subcode: 36008, message: "The authorization code secret-code is invalid or expired." } }), { status: 400 });
   try {
     const response = await handleMarketingRequest(new Request("https://admin.bingodogwash.com/api/admin/marketing/oauth/callback?state=valid&code=secret-code"), {
       GIFT_CARD_DB: db, META_APP_ID: "app", META_APP_SECRET: "secret",
@@ -127,9 +127,89 @@ test("OAuth callback reports a safe token-exchange failure stage without exposin
     const location = new URL(response.headers.get("Location"));
     assert.equal(location.searchParams.get("oauth"), "error");
     assert.equal(location.searchParams.get("stage"), "code_exchange");
-    assert.equal(location.searchParams.get("code"), "100");
+    assert.equal(location.searchParams.get("providerCode"), "100");
+    assert.equal(location.searchParams.get("httpStatus"), "400");
+    assert.equal(location.searchParams.get("providerType"), "OAuthException");
+    assert.equal(location.searchParams.get("providerSubcode"), "36008");
+    assert.match(location.searchParams.get("providerMessage"), /\[redacted\]/);
+    assert.equal(location.searchParams.get("appIdConfigured"), "true");
+    assert.equal(location.searchParams.get("appSecretConfigured"), "true");
+    assert.equal(location.searchParams.get("redirectUriUsed"), "https://admin.bingodogwash.com/api/admin/marketing/oauth/callback");
+    assert.equal(location.searchParams.get("graphHost"), "graph.facebook.com");
+    assert.equal(location.searchParams.get("graphApiVersion"), "v25.0");
+    assert.equal(location.searchParams.get("requestMethod"), "POST");
     assert.equal(location.toString().includes("secret-code"), false);
-    assert.equal(location.toString().includes("Sensitive provider detail"), false);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("OAuth login and code exchange use the exact same configured redirect URI with form encoding", async () => {
+  const originalFetch = globalThis.fetch;
+  const redirectUri = "https://admin.bingodogwash.com/api/admin/marketing/oauth/callback";
+  let exchangedUrl = "";
+  let exchangedOptions;
+  const db = { prepare(sql) { return { bind: (key) => sql.includes("INSERT OR REPLACE")
+    ? ({ run: async () => ({ success: true }) })
+    : ({ first: async () => ({ created_at: new Date().toISOString(), key }) }) }; } };
+  globalThis.fetch = async (url, options) => {
+    exchangedUrl = String(url); exchangedOptions = options;
+    return new Response(JSON.stringify({ error: { code: 100, type: "OAuthException", message: "Redirect URI mismatch" } }), { status: 400 });
+  };
+  try {
+    const start = await handleMarketingRequest(new Request("https://admin.bingodogwash.com/api/admin/marketing/oauth/start", { method: "POST", headers: { Authorization: "Bearer admin" } }), { ADMIN_API_TOKEN: "admin", GIFT_CARD_DB: db, META_APP_ID: "app", META_REDIRECT_URI: redirectUri });
+    const loginRedirect = new URL((await start.json()).url).searchParams.get("redirect_uri");
+    await handleMarketingRequest(new Request("https://admin.bingodogwash.com/api/admin/marketing/oauth/callback?state=valid&code=one-time-code"), { GIFT_CARD_DB: db, META_APP_ID: "app", META_APP_SECRET: "secret", META_REDIRECT_URI: redirectUri });
+    assert.equal(loginRedirect, redirectUri);
+    assert.equal(new URLSearchParams(exchangedOptions.body).get("redirect_uri"), redirectUri);
+    assert.equal(exchangedOptions.method, "POST");
+    assert.equal(exchangedOptions.headers["Content-Type"], "application/x-www-form-urlencoded");
+    assert.equal(exchangedUrl, "https://graph.facebook.com/v25.0/oauth/access_token");
+    assert.equal(exchangedUrl.includes("one-time-code"), false);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("OAuth callback fails before a request when the production app secret is missing", async () => {
+  const originalFetch = globalThis.fetch;
+  let requests = 0;
+  globalThis.fetch = async () => { requests += 1; throw new Error("unexpected request"); };
+  const db = { prepare: () => ({ bind: () => ({ first: async () => ({ created_at: new Date().toISOString() }) }) }) };
+  try {
+    const response = await handleMarketingRequest(new Request("https://admin.bingodogwash.com/api/admin/marketing/oauth/callback?state=valid&code=code"), { GIFT_CARD_DB: db, META_APP_ID: "app" });
+    assert.equal(new URL(response.headers.get("Location")).searchParams.get("oauth"), "server_error");
+    assert.equal(requests, 0);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("OAuth callback atomically consumes state and refuses a duplicate callback", async () => {
+  const originalFetch = globalThis.fetch;
+  let guardAvailable = true;
+  let requests = 0;
+  const db = { prepare(sql) { return {
+    bind(...values) {
+      if (sql.includes("RETURNING created_at")) return { first: async () => { if (!guardAvailable) return null; guardAvailable = false; return { created_at: new Date().toISOString() }; } };
+      if (sql.includes("INSERT INTO marketing_connections")) return { run: async () => ({ success: true, values }) };
+      return { run: async () => ({ success: true }) };
+    }, run: async () => ({ success: true }),
+  }; } };
+  globalThis.fetch = async () => { requests += 1; return requests === 1 ? Response.json({ access_token: "short-user-token" }) : requests === 2 ? Response.json({ access_token: "long-user-token", expires_in: 5000 }) : Response.json({ data: [] }); };
+  try {
+    const request = () => new Request("https://admin.bingodogwash.com/api/admin/marketing/oauth/callback?state=once&code=single-use-code");
+    const first = await handleMarketingRequest(request(), { GIFT_CARD_DB: db, META_APP_ID: "app", META_APP_SECRET: "secret" });
+    const second = await handleMarketingRequest(request(), { GIFT_CARD_DB: db, META_APP_ID: "app", META_APP_SECRET: "secret" });
+    assert.equal(new URL(first.headers.get("Location")).searchParams.get("oauth"), "success");
+    assert.equal(new URL(second.headers.get("Location")).searchParams.get("oauth"), "invalid_state");
+    assert.equal(requests, 3);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("OAuth callback rejects an expired state before exchanging its authorization code", async () => {
+  const originalFetch = globalThis.fetch;
+  let requests = 0;
+  globalThis.fetch = async () => { requests += 1; throw new Error("unexpected request"); };
+  const db = { prepare: () => ({ bind: () => ({ first: async () => ({ created_at: new Date(Date.now() - 11 * 60 * 1000).toISOString() }) }) }) };
+  try {
+    const response = await handleMarketingRequest(new Request("https://admin.bingodogwash.com/api/admin/marketing/oauth/callback?state=old&code=expired-code"), { GIFT_CARD_DB: db, META_APP_ID: "app", META_APP_SECRET: "secret" });
+    assert.equal(new URL(response.headers.get("Location")).searchParams.get("stage"), "expired_state");
+    assert.equal(requests, 0);
   } finally { globalThis.fetch = originalFetch; }
 });
 

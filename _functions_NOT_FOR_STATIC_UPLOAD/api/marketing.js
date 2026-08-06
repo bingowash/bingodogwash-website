@@ -660,15 +660,17 @@ async function oauthCallback(request, env, url) {
     return adminRedirect("oauth=error&stage=authorization_denied");
   }
   if (!state) return adminRedirect("oauth=invalid_state");
-  // validate and consume state
+  // Atomically validate and consume state so concurrent/replayed callbacks cannot
+  // exchange the same single-use authorization code twice.
   let callbackStage = "code_exchange";
   try {
-    const guard = await env.GIFT_CARD_DB.prepare("SELECT created_at FROM marketing_one_time_guards WHERE action_key = ?").bind(`oauth_state:${state}`).first();
+    const guard = await env.GIFT_CARD_DB.prepare("DELETE FROM marketing_one_time_guards WHERE action_key = ? RETURNING created_at").bind(`oauth_state:${state}`).first();
     if (!guard) return adminRedirect("oauth=invalid_state");
-    await env.GIFT_CARD_DB.prepare("DELETE FROM marketing_one_time_guards WHERE action_key = ?").bind(`oauth_state:${state}`).run();
+    const stateAge = Date.now() - new Date(guard.created_at).getTime();
+    if (!Number.isFinite(stateAge) || stateAge < 0 || stateAge > 10 * 60 * 1000) return adminRedirect("oauth=error&stage=expired_state");
   } catch (e) {
-    logMetaValidation("oauth_callback", { validationError: clean(e?.message || String(e), 300) });
-    return adminRedirect("oauth=error");
+    logMetaValidation("oauth_callback", { validationError: clean(e?.message || String(e), 300), stage: "state_consume" });
+    return adminRedirect("oauth=error&stage=state_consume");
   }
   if (!code) return adminRedirect("oauth=missing_code");
 
@@ -681,24 +683,41 @@ async function oauthCallback(request, env, url) {
     return adminRedirect("oauth=server_error");
   }
   try {
-    const tokenUrl = `${FACEBOOK_GRAPH_ORIGIN}/${GRAPH_VERSION}/oauth/access_token?client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(redirectUri)}&client_secret=${encodeURIComponent(appSecret)}&code=${encodeURIComponent(code)}`;
-    let resp = await fetch(tokenUrl);
+    const tokenUrl = `${FACEBOOK_GRAPH_ORIGIN}/${GRAPH_VERSION}/oauth/access_token`;
+    let resp;
     let data;
-    try { data = await resp.json(); } catch (e) { logMetaValidation("oauth_callback", { validationError: "non_json_response", stage: callbackStage }); return adminRedirect(`oauth=error&stage=${callbackStage}_response`); }
+    try {
+      resp = await fetch(tokenUrl, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ client_id: String(appId), redirect_uri: redirectUri, client_secret: String(appSecret), code }) });
+    } catch (error) {
+      const diagnostic = oauthExchangeDiagnostic(callbackStage, null, null, env, redirectUri, url, clean(error?.message || "Network request failed.", 300));
+      logOAuthExchangeDiagnostic(diagnostic);
+      return oauthDiagnosticRedirect(adminRedirect, diagnostic);
+    }
+    try { data = await resp.json(); } catch {
+      const diagnostic = oauthExchangeDiagnostic(`${callbackStage}_response`, resp, null, env, redirectUri, url, "Meta returned a non-JSON response.");
+      logOAuthExchangeDiagnostic(diagnostic);
+      return oauthDiagnosticRedirect(adminRedirect, diagnostic);
+    }
     if (!resp.ok || data?.error) {
-      logMetaValidation("oauth_callback", { validationError: clean(data?.error?.message || JSON.stringify(data), 500), apiErrorCode: Number(data?.error?.code) || null, stage: callbackStage });
-      return adminRedirect(`oauth=error&stage=${callbackStage}&code=${Number(data?.error?.code) || 0}`);
+      const diagnostic = oauthExchangeDiagnostic(callbackStage, resp, data, env, redirectUri, url);
+      logOAuthExchangeDiagnostic(diagnostic);
+      return oauthDiagnosticRedirect(adminRedirect, diagnostic);
     }
     const shortToken = data.access_token;
 
     // Exchange for long-lived user token
     callbackStage = "long_token_exchange";
-    const longUrl = `${FACEBOOK_GRAPH_ORIGIN}/${GRAPH_VERSION}/oauth/access_token?grant_type=fb_exchange_token&client_id=${encodeURIComponent(appId)}&client_secret=${encodeURIComponent(appSecret)}&fb_exchange_token=${encodeURIComponent(shortToken)}`;
-    resp = await fetch(longUrl);
-    try { data = await resp.json(); } catch (e) { logMetaValidation("oauth_callback", { validationError: "non_json_response", stage: callbackStage }); return adminRedirect(`oauth=error&stage=${callbackStage}_response`); }
+    const longUrl = `${FACEBOOK_GRAPH_ORIGIN}/${GRAPH_VERSION}/oauth/access_token`;
+    resp = await fetch(longUrl, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "fb_exchange_token", client_id: String(appId), client_secret: String(appSecret), fb_exchange_token: String(shortToken) }) });
+    try { data = await resp.json(); } catch {
+      const diagnostic = oauthExchangeDiagnostic(`${callbackStage}_response`, resp, null, env, redirectUri, url, "Meta returned a non-JSON response.", [shortToken]);
+      logOAuthExchangeDiagnostic(diagnostic);
+      return oauthDiagnosticRedirect(adminRedirect, diagnostic);
+    }
     if (!resp.ok || data?.error) {
-      logMetaValidation("oauth_callback", { validationError: clean(data?.error?.message || JSON.stringify(data), 500), apiErrorCode: Number(data?.error?.code) || null, stage: callbackStage });
-      return adminRedirect(`oauth=error&stage=${callbackStage}&code=${Number(data?.error?.code) || 0}`);
+      const diagnostic = oauthExchangeDiagnostic(callbackStage, resp, data, env, redirectUri, url, "", [shortToken]);
+      logOAuthExchangeDiagnostic(diagnostic);
+      return oauthDiagnosticRedirect(adminRedirect, diagnostic);
     }
     const userLongToken = data.access_token;
     const userLongExpires = Number(data.expires_in) || 0;
@@ -747,6 +766,58 @@ ON CONFLICT(id) DO UPDATE SET
     return adminRedirect(`oauth=error&stage=${callbackStage}`);
   }
 }
+
+function oauthExchangeDiagnostic(stage, response, data, env, redirectUri, callbackUrl, fallbackMessage = "", extraSensitiveValues = []) {
+  let providerMessage = safeMetaProviderMessage(data?.error?.message) || clean(fallbackMessage, 300) || "Meta OAuth exchange failed.";
+  for (const sensitive of [callbackUrl.searchParams.get("code"), env.META_APP_SECRET, ...extraSensitiveValues]) {
+    if (sensitive && String(sensitive).length >= 4) providerMessage = providerMessage.replaceAll(String(sensitive), "[redacted]");
+  }
+  return {
+    event: "meta_oauth_exchange_failure",
+    stage,
+    providerHttpStatus: Number.isInteger(response?.status) ? response.status : null,
+    providerErrorCode: numericMetaField(data?.error?.code),
+    providerErrorType: clean(data?.error?.type, 100) || null,
+    providerErrorSubcode: numericMetaField(data?.error?.error_subcode),
+    safeProviderMessage: providerMessage,
+    appIdConfigured: configured(env.META_APP_ID),
+    appSecretConfigured: configured(env.META_APP_SECRET),
+    redirectUriConfigured: configured(env.META_REDIRECT_URI),
+    redirectUriUsed: redirectUri,
+    callbackHost: callbackUrl.host,
+    productionEnvironment: callbackUrl.hostname === "admin.bingodogwash.com",
+    graphHost: new URL(FACEBOOK_GRAPH_ORIGIN).host,
+    graphApiVersion: GRAPH_VERSION,
+    requestMethod: "POST",
+  };
+}
+
+function logOAuthExchangeDiagnostic(diagnostic) {
+  console.error(JSON.stringify(diagnostic));
+}
+
+function oauthDiagnosticRedirect(adminRedirect, diagnostic) {
+  const params = new URLSearchParams({
+    oauth: "error",
+    stage: diagnostic.stage,
+    httpStatus: diagnostic.providerHttpStatus == null ? "" : String(diagnostic.providerHttpStatus),
+    providerCode: diagnostic.providerErrorCode == null ? "" : String(diagnostic.providerErrorCode),
+    providerType: diagnostic.providerErrorType || "",
+    providerSubcode: diagnostic.providerErrorSubcode == null ? "" : String(diagnostic.providerErrorSubcode),
+    providerMessage: diagnostic.safeProviderMessage,
+    appIdConfigured: String(diagnostic.appIdConfigured),
+    appSecretConfigured: String(diagnostic.appSecretConfigured),
+    redirectUriConfigured: String(diagnostic.redirectUriConfigured),
+    redirectUriUsed: diagnostic.redirectUriUsed,
+    callbackHost: diagnostic.callbackHost,
+    productionEnvironment: String(diagnostic.productionEnvironment),
+    graphHost: diagnostic.graphHost,
+    graphApiVersion: diagnostic.graphApiVersion,
+    requestMethod: diagnostic.requestMethod,
+  });
+  return adminRedirect(params.toString());
+}
+
 async function graphGet(origin, path, params, token, operation = "", context = {}) {
   const url = new URL(`${origin}/${path}`);
   Object.entries(params).forEach(([name, value]) => url.searchParams.set(name, value));
