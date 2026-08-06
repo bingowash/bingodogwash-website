@@ -274,24 +274,34 @@ async function resolveMetaConnection(env, platform, requiredSource = "") {
 }
 
 async function resolveFacebookPublishingContext(env, pageIds) {
+  const singlePageMode = pageIds.length === 1;
+  if (singlePageMode) {
+    const pageCredential = await resolveMetaConnection(env, "facebook", "secret");
+    const pageCredentialType = String(pageCredential.debug?.type || "").toUpperCase();
+    if (pageCredential.ok && pageCredentialType === "PAGE") {
+      const resolved = await resolveFacebookPageTokenAccess(pageCredential.token, pageIds, "secret");
+      return { connection: pageCredential, ...resolved, userCredentialSource: "none", d1CredentialType: "not-required", singlePageMode: true, statusMessage: `Single-Page mode active — Facebook Page ${pageIds[0]}` };
+    }
+  }
+
   const stored = await resolveMetaConnection(env, "facebook", "d1");
   const storedType = String(stored.debug?.type || "").toUpperCase();
   if (stored.ok && storedType === "USER") {
     const resolved = await resolveFacebookPageAccess(stored.token, pageIds, "d1", true);
-    return { connection: stored, ...resolved, userCredentialSource: "d1", d1CredentialType: storedType };
+    return { connection: stored, ...resolved, userCredentialSource: "d1", d1CredentialType: storedType, singlePageMode, statusMessage: singlePageMode ? `Single-Page mode active — Facebook Page ${pageIds[0]}` : "Multi-Page mode active" };
   }
 
   // A Page token stored by older deployments is not an OAuth user credential. Do not
   // use it for discovery and never reuse it across configured Pages.
   const fallback = await resolveMetaConnection(env, "facebook", "secret");
-  if (!fallback.ok) return { connection: stored.ok ? stored : fallback, pageAccess: [], accountsRequest: { ok: false, attempted: false }, userCredentialSource: "none", d1CredentialType: storedType || "unknown" };
+  if (!fallback.ok) return { connection: stored.ok ? stored : fallback, pageAccess: [], accountsRequest: { ok: false, attempted: false }, userCredentialSource: "none", d1CredentialType: storedType || "unknown", singlePageMode, statusMessage: singlePageMode ? `Single-Page mode active — Facebook Page ${pageIds[0]}` : "Multi-Page mode active" };
   const fallbackType = String(fallback.debug?.type || "").toUpperCase();
   if (fallbackType === "USER") {
     const resolved = await resolveFacebookPageAccess(fallback.token, pageIds, "secret", true);
-    return { connection: fallback, ...resolved, userCredentialSource: "secret", d1CredentialType: storedType || "none" };
+    return { connection: fallback, ...resolved, userCredentialSource: "secret", d1CredentialType: storedType || "none", singlePageMode, statusMessage: singlePageMode ? `Single-Page mode active — Facebook Page ${pageIds[0]}` : "Multi-Page mode active" };
   }
   const resolved = await resolveFacebookPageTokenAccess(fallback.token, pageIds, "secret");
-  return { connection: fallback, ...resolved, userCredentialSource: "none", d1CredentialType: storedType || "none" };
+  return { connection: fallback, ...resolved, userCredentialSource: "none", d1CredentialType: storedType || "none", singlePageMode, statusMessage: singlePageMode ? `Single-Page mode active — Facebook Page ${pageIds[0]}` : "Multi-Page mode active" };
 }
 
 async function resolveFacebookPageAccess(token, pageIds, tokenSource = "unknown", includeContext = false) {
@@ -562,7 +572,8 @@ async function facebookPreflight(env) {
     type: clean(connection.debug?.type, 40),
     expiresAt: Number.isFinite(connection.debug?.expires_at) ? new Date(connection.debug.expires_at * 1000).toISOString() : "",
   };
-  const missingPermissions = FACEBOOK_REQUIRED_SCOPES.filter((scope) => !permissions.includes(scope));
+  const requiredPermissions = facebookContext.singlePageMode ? ["pages_manage_posts"] : FACEBOOK_REQUIRED_SCOPES;
+  const missingPermissions = requiredPermissions.filter((scope) => !permissions.includes(scope));
   if (missingPermissions.length > 0) {
     return {
       ok: false,
@@ -585,7 +596,7 @@ async function facebookPreflight(env) {
     diagnostic: entry.diagnostic || null,
   }]));
   const accessiblePageIds = pageAccess.filter((entry) => entry.ok).map((entry) => entry.pageId);
-  return { ok: accessiblePageIds.length > 0, pageId, pageIds, accessiblePageIds, pages, permissions, tokenStatus, tokenSource: connection.source, userCredentialSource: facebookContext.userCredentialSource, accountsRequest: facebookContext.accountsRequest, d1CredentialType: facebookContext.d1CredentialType, api: "Facebook Pages", id: accessiblePageIds[0] || "", error: accessiblePageIds.length ? "" : "No configured Facebook Pages are accessible with the selected credential." };
+  return { ok: accessiblePageIds.length > 0, pageId, pageIds, accessiblePageIds, pages, permissions, requiredPermissions, tokenStatus, tokenSource: connection.source, userCredentialSource: facebookContext.userCredentialSource, accountsRequest: facebookContext.accountsRequest, d1CredentialType: facebookContext.d1CredentialType, singlePageMode: facebookContext.singlePageMode === true, statusMessage: facebookContext.statusMessage || "", api: "Facebook Pages", id: accessiblePageIds[0] || "", error: accessiblePageIds.length ? "" : "No configured Facebook Pages are accessible with the selected credential." };
 }
 
 async function metaDiagnostics(env) {
@@ -603,6 +614,8 @@ async function metaDiagnostics(env) {
       pageIds: configuredFacebookPageIds(env),
       tokenValidated: facebook.ok,
       tokenSource: facebook.source || "none",
+      singlePageMode: facebookContext.singlePageMode === true,
+      statusMessage: facebookContext.statusMessage || "",
       userCredentialSource: facebookContext.userCredentialSource || "none",
       d1CredentialType: facebookContext.d1CredentialType || "unknown",
       accountsRequest: facebookContext.accountsRequest || { ok: false, attempted: false },

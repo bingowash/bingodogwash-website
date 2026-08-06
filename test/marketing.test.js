@@ -412,7 +412,7 @@ test("Meta preflight distinguishes identity, permission, and network failures sa
   } finally { globalThis.fetch = originalFetch; }
 });
 
-test("Facebook preflight validates the configured Page ID on Facebook Graph only", async () => {
+test("Facebook single-Page preflight validates only the primary Page without /me/accounts", async () => {
   const originalFetch = globalThis.fetch; const urls = [];
   globalThis.fetch = async (url) => {
     urls.push(String(url));
@@ -428,8 +428,12 @@ test("Facebook preflight validates the configured Page ID on Facebook Graph only
     assert.equal(result.tokenStatus.valid, true);
     assert.equal(result.tokenStatus.type, "PAGE");
     assert.equal(result.pageId, "1264938680034651");
+    assert.equal(result.singlePageMode, true);
+    assert.equal(result.statusMessage, "Single-Page mode active — Facebook Page 1264938680034651");
+    assert.deepEqual(result.requiredPermissions, ["pages_manage_posts"]);
     assert.equal(urls.some((url) => url.includes("/debug_token")), true);
     assert.equal(urls.some((url) => url.includes("/me?")), true);
+    assert.equal(urls.some((url) => url.includes("/me/accounts")), false);
   } finally { globalThis.fetch = originalFetch; }
 });
 
@@ -481,6 +485,32 @@ test("Facebook page configuration preserves the legacy ID and supports multiple 
     META_PAGE_ID: "1264938680034651",
     META_PAGE_IDS: "1264938680034651,61592339597666, 61590905394658",
   }), ["1264938680034651", "61592339597666", "61590905394658"]);
+});
+
+test("production configuration enables only the confirmed primary Facebook Page", () => {
+  const config = JSON.parse(readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8"));
+  assert.equal(config.vars.META_PAGE_ID, "1264938680034651");
+  assert.equal(config.vars.META_PAGE_IDS, "1264938680034651");
+  assert.equal(config.vars.META_PAGE_IDS.includes("61592339597666"), false);
+  assert.equal(config.vars.META_PAGE_IDS.includes("61590905394658"), false);
+});
+
+test("single-Page publishing sends one post only to the confirmed primary Page", async () => {
+  const originalFetch = globalThis.fetch;
+  const urls = [];
+  globalThis.fetch = async (url) => { urls.push(String(url)); return Response.json({ id: "primary-post" }); };
+  const db = { prepare: () => ({ bind: () => ({ run: async () => ({ success: true }) }) }) };
+  try {
+    const result = await marketingTestHelpers.publishFacebookPages({}, db, "post-id", [
+      { ok: true, pageId: "1264938680034651", token: "P".repeat(50), tokenSource: "secret:page_token" },
+    ], { image: "https://example.com/dog.jpg" }, "caption", "https://bingodogwash.com/api/marketing/track?campaign=test", "secret");
+    assert.equal(result.status, "success");
+    assert.deepEqual(result.succeededPages, ["1264938680034651"]);
+    assert.equal(urls.length, 1);
+    assert.match(urls[0], /\/1264938680034651\/photos/);
+    assert.equal(urls[0].includes("61592339597666"), false);
+    assert.equal(urls[0].includes("61590905394658"), false);
+  } finally { globalThis.fetch = originalFetch; }
 });
 
 test("Facebook multi-page publishing continues after a page fails and reports each page", async () => {
