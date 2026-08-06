@@ -36,7 +36,7 @@ export async function handleMarketingRequest(request, env, url = new URL(request
   if (request.method === "GET" && url.pathname === ADMIN_PATH) return dashboard(env);
   if (request.method !== "POST") return json({ ok: false, error: "Method not allowed." }, 405);
 
-  if (url.pathname === `${ADMIN_PATH}/test`) return publishingDisabled(env) ? publishingDisabledResponse() : json(await runMarketingAutomation(env, { trigger: "test" }));
+  if (url.pathname === `${ADMIN_PATH}/test`) return publishingDisabled(env) ? publishingDisabledResponse() : json(await runMarketingAutomation(env, { trigger: "test", allowWhilePaused: true }));
   if (url.pathname === `${ADMIN_PATH}/oauth/start`) return oauthStart(request, env, url);
   if (url.pathname === `${ADMIN_PATH}/preflight`) return preflight(env);
   if (url.pathname === `${ADMIN_PATH}/diagnostics`) return json(await metaDiagnostics(env));
@@ -79,7 +79,7 @@ export async function runMarketingAutomation(env, options = {}) {
   const db = env.GIFT_CARD_DB;
   const settings = await getSettings(env);
 
-  if (!settings?.enabled) {
+  if (!settings?.enabled && !options.allowWhilePaused) {
     return { ok: true, status: "paused", skipped: "paused" };
   }
   const product = await selectNextProduct(db);

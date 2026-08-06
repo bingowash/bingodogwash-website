@@ -804,10 +804,12 @@ test("pause and resume admin actions update only the enabled setting", async () 
   response = await handleMarketingRequest(request("resume"), { ADMIN_API_TOKEN: "test-token", GIFT_CARD_DB: db }); assert.equal(response.status, 200); assert.equal((await response.json()).settings.enabled, true);
 });
 
-test("test-post admin action remains blocked while paused", async () => {
-  const db = { prepare: () => ({ first: async () => ({ enabled: 0, schedule_hour_utc: 9, schedule_minute_utc: 0 }) }) };
+test("authenticated controlled test can run while scheduling remains paused", async () => {
+  let queries = 0;
+  const db = { prepare(sql) { queries += 1; return { first: async () => sql.includes("marketing_settings") ? ({ enabled: 0, schedule_hour_utc: 9, schedule_minute_utc: 0 }) : null }; } };
   const response = await handleMarketingRequest(new Request("https://bingodogwash.com/api/admin/marketing/test", { method: "POST", headers: { Authorization: "Bearer test-token" } }), { ADMIN_API_TOKEN: "test-token", GIFT_CARD_DB: db });
-  assert.deepEqual(await response.json(), { ok: true, status: "paused", skipped: "paused" });
+  assert.deepEqual(await response.json(), { ok: false, error: "No published, in-stock products with an image and URL are available." });
+  assert.equal(queries, 2);
 });
 
 test("publishing-disabled blocks test, resume, schedule, and direct automation paths", async () => {
