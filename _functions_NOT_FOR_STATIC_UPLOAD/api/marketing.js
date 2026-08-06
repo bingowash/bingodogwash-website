@@ -37,7 +37,11 @@ export async function handleMarketingRequest(request, env, url = new URL(request
   if (request.method === "GET" && url.pathname === ADMIN_PATH) return dashboard(env);
   if (request.method !== "POST") return json({ ok: false, error: "Method not allowed." }, 405);
 
-  if (url.pathname === `${ADMIN_PATH}/test`) return publishingDisabled(env) ? publishingDisabledResponse() : json(await runMarketingAutomation(env, { trigger: "test", allowWhilePaused: true }));
+  if (url.pathname === `${ADMIN_PATH}/test`) {
+    if (publishingDisabled(env)) return publishingDisabledResponse();
+    const result = await runMarketingAutomation(env, { trigger: "test", allowWhilePaused: true });
+    return json(postingEndpointResponse(result, configuredFacebookPageIds(env)));
+  }
   if (url.pathname === `${ADMIN_PATH}/oauth/start`) return oauthStart(request, env, url);
   if (url.pathname === `${ADMIN_PATH}/preflight`) return preflight(env);
   if (url.pathname === `${ADMIN_PATH}/diagnostics`) return json(await metaDiagnostics(env));
@@ -109,8 +113,13 @@ export async function runMarketingAutomation(env, options = {}) {
       const facebookContext = await resolveFacebookPublishingContext(env, facebookPageIds);
       const connection = facebookContext.connection;
       if (!connection.ok) {
-        await savePlatformResult(db, postId, platform, "failed", "", 0, connection.error);
-        results.facebook = { ok: false, error: connection.error, attempts: 0, tokenSource: connection.source || "none", diagnostic: connection.diagnostic };
+        const pages = {};
+        for (const pageId of facebookPageIds) {
+          pages[pageId] = { ok: false, error: connection.error, attempts: 0 };
+          await savePlatformResult(db, postId, `facebook:${pageId}`, "failed", "", 0, connection.error);
+          console.error(JSON.stringify({ event: "facebook_page_publish_result", pageId, success: false, facebookPostId: "", error: connection.error, timestamp: new Date().toISOString() }));
+        }
+        results.facebook = { ok: false, status: "failed", pages, error: connection.error, attempts: 0 };
         continue;
       }
       const pageAccess = facebookContext.pageAccess;
@@ -1117,6 +1126,22 @@ function trackedDestination(value) { try { const tracker = new URL(value, "https
 function redirectPage(destination) { const safeDestination = escapeHtml(destination); const scriptDestination = JSON.stringify(destination).replace(/</g, "\\u003c"); return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="1;url=${safeDestination}"><title>Bingo Dog Wash</title></head><body><main style="font:18px system-ui;text-align:center;padding:15vh 1rem"><p>Taking you to your selected product...</p><p><a href="${safeDestination}">Continue</a></p></main><script>setTimeout(function(){location.replace(${scriptDestination})},300)</script></body></html>`, { status: 200, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } }); }
 function escapeHtml(value) { return String(value).replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]); }
 function configuredFacebookPageIds(env) { const values = configured(env.META_PAGE_IDS) ? env.META_PAGE_IDS.split(",") : []; if (configured(env.META_PAGE_ID)) values.unshift(env.META_PAGE_ID); return [...new Set(values.map((value) => String(value).trim()).filter(Boolean))]; }
+function postingEndpointResponse(result, pageIds) {
+  if (!result?.platforms) return result;
+  const pages = result?.platforms?.facebook?.pages || {};
+  const facebook = Object.fromEntries(pageIds.map((pageId) => {
+    const page = pages[pageId] || {};
+    const response = { success: page.ok === true };
+    if (page.id) response.postId = page.id;
+    if (page.error) response.error = page.error;
+    return [pageId, response];
+  }));
+  const instagramResult = result?.platforms?.instagram || {};
+  const instagram = { success: instagramResult.ok === true };
+  if (instagramResult.id) instagram.postId = instagramResult.id;
+  if (instagramResult.error) instagram.error = instagramResult.error;
+  return { facebook, instagram };
+}
 function absoluteImage(value) { return new URL(value, "https://bingodogwash.com/").toString(); }
 function priceLabel(product) { return Number.isFinite(product.price) ? new Intl.NumberFormat("en-GB", { style: "currency", currency: product.currency || "GBP" }).format(product.price / 100) : "See product page"; }
 function benefit(product) { const text = clean(product.description, 180).replace(/[.!?]+$/, ""); return text ? text.charAt(0).toLowerCase() + text.slice(1) : `everyday ${clean(product.category || "dog care", 60).toLowerCase()}`; }
@@ -1128,4 +1153,4 @@ function clean(value, max = 500) { return String(value || "").replace(/\s+/g, " 
 async function readJson(request) { try { return await request.json(); } catch { return null; } }
 function json(body, status = 200) { return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" } }); }
 
-export const marketingTestHelpers = { campaignUrl, trackedDestination, nextRunAt, isScheduledSlot, scheduleSlotKey, hash, benefit, metaAccessToken, resolveMetaConnection, resolveFacebookPublishingContext, resolveFacebookPageAccess, publishWithRetry, publishFacebook, publishInstagram, waitForInstagramMedia, publishFacebookPages, validateInstagramImage, selectInstagramProduct, configuredFacebookPageIds, redirectPage, instagramPreflight, facebookPreflight, publishingDisabled };
+export const marketingTestHelpers = { campaignUrl, trackedDestination, nextRunAt, isScheduledSlot, scheduleSlotKey, hash, benefit, metaAccessToken, resolveMetaConnection, resolveFacebookPublishingContext, resolveFacebookPageAccess, publishWithRetry, publishFacebook, publishInstagram, waitForInstagramMedia, publishFacebookPages, validateInstagramImage, selectInstagramProduct, configuredFacebookPageIds, postingEndpointResponse, redirectPage, instagramPreflight, facebookPreflight, publishingDisabled };

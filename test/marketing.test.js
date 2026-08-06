@@ -501,12 +501,41 @@ test("Facebook page configuration preserves the legacy ID and supports multiple 
   }), ["1264938680034651", "61592339597666", "61590905394658"]);
 });
 
-test("production configuration enables only the confirmed primary Facebook Page", () => {
+test("production configuration enables only the connected Facebook Page", () => {
   const config = JSON.parse(readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8"));
   assert.equal(config.vars.META_PAGE_ID, "1264938680034651");
   assert.equal(config.vars.META_PAGE_IDS, "1264938680034651");
-  assert.equal(config.vars.META_PAGE_IDS.includes("61592339597666"), false);
-  assert.equal(config.vars.META_PAGE_IDS.includes("61590905394658"), false);
+});
+
+test("posting endpoint response reports each Facebook Page separately without token metadata", () => {
+  const response = marketingTestHelpers.postingEndpointResponse({ platforms: {
+    facebook: { pages: {
+      "61592339597666": { ok: true, id: "facebook-post-new", tokenSource: "d1:me/accounts" },
+      "61590905394658": { ok: false, error: "Page rejected the post", diagnostic: { private: true } },
+    } },
+    instagram: { ok: true, id: "instagram-post" },
+  } }, ["61592339597666", "61590905394658"]);
+  assert.deepEqual(response, {
+    facebook: {
+      "61592339597666": { success: true, postId: "facebook-post-new" },
+      "61590905394658": { success: false, error: "Page rejected the post" },
+    },
+    instagram: { success: true, postId: "instagram-post" },
+  });
+});
+
+test("posting endpoint response reports a credential failure against every configured Facebook Page", () => {
+  const response = marketingTestHelpers.postingEndpointResponse({ platforms: {
+    facebook: { ok: false, pages: {
+      "61592339597666": { ok: false, error: "Meta connection expired" },
+      "61590905394658": { ok: false, error: "Meta connection expired" },
+    } },
+    instagram: { ok: true },
+  } }, ["61592339597666", "61590905394658"]);
+  assert.deepEqual(response.facebook, {
+    "61592339597666": { success: false, error: "Meta connection expired" },
+    "61590905394658": { success: false, error: "Meta connection expired" },
+  });
 });
 
 test("single-Page publishing sends one post only to the confirmed primary Page", async () => {
