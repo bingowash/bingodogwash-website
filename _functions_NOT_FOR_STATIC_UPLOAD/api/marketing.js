@@ -429,7 +429,31 @@ async function publishFacebook(env, image, caption, link, token) {
 async function publishInstagram(env, image, caption, token) {
   const context = { accountId: String(env.META_INSTAGRAM_USER_ID || ""), tokenSource: env.META_TOKEN_SOURCE || "unknown" };
   const create = await graphPost(INSTAGRAM_GRAPH_ORIGIN, `${env.META_INSTAGRAM_USER_ID}/media`, new URLSearchParams({ image_url: absoluteImage(image), caption, access_token: token }), "media_create", context);
+  await waitForInstagramMedia(env, create, token, context);
   return graphPost(INSTAGRAM_GRAPH_ORIGIN, `${env.META_INSTAGRAM_USER_ID}/media_publish`, new URLSearchParams({ creation_id: create, access_token: token }), "media_publish", context);
+}
+
+async function waitForInstagramMedia(env, creationId, token, context) {
+  const configuredAttempts = Number(env.INSTAGRAM_MEDIA_STATUS_ATTEMPTS);
+  const configuredDelay = Number(env.INSTAGRAM_MEDIA_STATUS_DELAY_MS);
+  const attempts = Number.isFinite(configuredAttempts) ? Math.min(20, Math.max(1, Math.trunc(configuredAttempts))) : 10;
+  const delayMs = Number.isFinite(configuredDelay) ? Math.min(10000, Math.max(0, Math.trunc(configuredDelay))) : 1500;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const media = await graphGet(INSTAGRAM_GRAPH_ORIGIN, creationId, { fields: "status_code,status" }, token, "media_status", context);
+    const statusCode = String(media?.status_code || "").trim().toUpperCase();
+    if (statusCode === "FINISHED" || statusCode === "PUBLISHED") return;
+    if (statusCode === "ERROR" || statusCode === "EXPIRED") {
+      const diagnostic = { ...metaDiagnostic("media_status", 200, null, "media_processing_failed", context, "after_graph_response", INSTAGRAM_GRAPH_ORIGIN, creationId), mediaStatusCode: statusCode };
+      logMetaDiagnostic(diagnostic);
+      throw publishingError(`Instagram media processing ${statusCode.toLowerCase()}.`, false, diagnostic);
+    }
+    if (attempt < attempts && delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+
+  const diagnostic = { ...metaDiagnostic("media_status", 200, null, "media_processing_timeout", context, "after_graph_response", INSTAGRAM_GRAPH_ORIGIN, creationId), mediaStatusCode: "IN_PROGRESS" };
+  logMetaDiagnostic(diagnostic);
+  throw publishingError("Instagram media is still processing. Try again shortly.", true, diagnostic);
 }
 
 async function graphPost(origin, path, body, operation = "", context = {}) {
@@ -1088,4 +1112,4 @@ function clean(value, max = 500) { return String(value || "").replace(/\s+/g, " 
 async function readJson(request) { try { return await request.json(); } catch { return null; } }
 function json(body, status = 200) { return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" } }); }
 
-export const marketingTestHelpers = { campaignUrl, trackedDestination, nextRunAt, hash, benefit, metaAccessToken, resolveMetaConnection, resolveFacebookPublishingContext, resolveFacebookPageAccess, publishWithRetry, publishFacebook, publishInstagram, publishFacebookPages, validateInstagramImage, selectInstagramProduct, configuredFacebookPageIds, redirectPage, instagramPreflight, facebookPreflight, publishingDisabled };
+export const marketingTestHelpers = { campaignUrl, trackedDestination, nextRunAt, hash, benefit, metaAccessToken, resolveMetaConnection, resolveFacebookPublishingContext, resolveFacebookPageAccess, publishWithRetry, publishFacebook, publishInstagram, waitForInstagramMedia, publishFacebookPages, validateInstagramImage, selectInstagramProduct, configuredFacebookPageIds, redirectPage, instagramPreflight, facebookPreflight, publishingDisabled };

@@ -598,10 +598,56 @@ test("Instagram preflight can pass while a later media publish fails for a non-t
 test("successful Instagram publishing returns the published media ID", async () => {
   const originalFetch = globalThis.fetch;
   let requests = 0;
-  globalThis.fetch = async () => { requests += 1; return Response.json({ id: requests === 1 ? "container-id" : "instagram-post-id" }); };
+  globalThis.fetch = async (_url, options = {}) => {
+    requests += 1;
+    if (options.method !== "POST") return Response.json({ id: "container-id", status_code: "FINISHED" });
+    return Response.json({ id: requests === 1 ? "container-id" : "instagram-post-id" });
+  };
   try {
     assert.equal(await marketingTestHelpers.publishInstagram({ META_INSTAGRAM_USER_ID: "instagram-id" }, "https://example.com/image.jpg", "caption", "I".repeat(50)), "instagram-post-id");
-    assert.equal(requests, 2);
+    assert.equal(requests, 3);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("Instagram waits for its media container to finish before publishing", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  let statusChecks = 0;
+  globalThis.fetch = async (url, options = {}) => {
+    const pathname = new URL(url).pathname;
+    calls.push({ pathname, method: options.method || "GET" });
+    if (pathname.endsWith("/media")) return Response.json({ id: "container-id" });
+    if (pathname.endsWith("/container-id")) {
+      statusChecks += 1;
+      return Response.json({ id: "container-id", status_code: statusChecks === 1 ? "IN_PROGRESS" : "FINISHED" });
+    }
+    if (pathname.endsWith("/media_publish")) return Response.json({ id: "instagram-post-id" });
+    throw new Error(`Unexpected Instagram request: ${pathname}`);
+  };
+  try {
+    const result = await marketingTestHelpers.publishInstagram({
+      META_INSTAGRAM_USER_ID: "instagram-id",
+      INSTAGRAM_MEDIA_STATUS_DELAY_MS: "0",
+    }, "https://example.com/image.jpg", "caption", "I".repeat(50));
+    assert.equal(result, "instagram-post-id");
+    assert.equal(statusChecks, 2);
+    assert.deepEqual(calls.map((call) => call.pathname.split("/").pop()), ["media", "container-id", "container-id", "media_publish"]);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("Instagram does not publish a media container that processing rejected", async () => {
+  const originalFetch = globalThis.fetch;
+  let publishCalled = false;
+  globalThis.fetch = async (url) => {
+    const pathname = new URL(url).pathname;
+    if (pathname.endsWith("/media")) return Response.json({ id: "container-id" });
+    if (pathname.endsWith("/container-id")) return Response.json({ id: "container-id", status_code: "ERROR" });
+    if (pathname.endsWith("/media_publish")) publishCalled = true;
+    return Response.json({ id: "unexpected" });
+  };
+  try {
+    await assert.rejects(marketingTestHelpers.publishInstagram({ META_INSTAGRAM_USER_ID: "instagram-id" }, "https://example.com/image.jpg", "caption", "I".repeat(50)), /processing error/);
+    assert.equal(publishCalled, false);
   } finally { globalThis.fetch = originalFetch; }
 });
 
@@ -758,9 +804,9 @@ test("Instagram diagnostics distinguish publish, network, non-JSON, malformed, a
     let requests = 0;
     globalThis.fetch = async () => {
       requests += 1;
-      return requests === 1
-        ? Response.json({ id: "container-id" })
-        : new Response(JSON.stringify({ error: { code: 10, error_subcode: 2207001, message: "private provider message" } }), { status: 403 });
+      if (requests === 1) return Response.json({ id: "container-id" });
+      if (requests === 2) return Response.json({ id: "container-id", status_code: "FINISHED" });
+      return new Response(JSON.stringify({ error: { code: 10, error_subcode: 2207001, message: "private provider message" } }), { status: 403 });
     };
     await assert.rejects(marketingTestHelpers.publishInstagram({ META_INSTAGRAM_USER_ID: "private-id" }, "/image.jpg", "caption", "S".repeat(50)), /permission/);
     const publishDiagnostic = logs.pop();
