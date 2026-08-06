@@ -84,6 +84,77 @@ test("authenticated Stripe reporting exposes status and aggregates without secre
   assert.equal(JSON.stringify(body).includes("whsec_private"), false);
 });
 
+test("AI drafting remains admin-only and never invokes AI without authorisation", async () => {
+  let called = false;
+  const response = await worker.fetch(new Request("https://bingodogwash.com/api/admin/ai-drafts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: "Dog shampoo", description: "Gentle everyday dog shampoo." }),
+  }), {
+    ADMIN_API_TOKEN: "admin-token",
+    AI: { async run() { called = true; return {}; } },
+  });
+  assert.equal(response.status, 401);
+  assert.equal(called, false);
+});
+
+test("AI drafting accepts product facts and returns editable non-publishing fields", async () => {
+  let requestInput;
+  const response = await worker.fetch(new Request("https://bingodogwash.com/api/admin/ai-drafts", {
+    method: "POST",
+    headers: { Authorization: "Bearer admin-token", "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: "Bingo Gentle Shampoo",
+      category: "Dog grooming",
+      price: "£12.99",
+      description: "A gentle shampoo for routine dog washing.",
+      tone: "friendly",
+    }),
+  }), {
+    ADMIN_API_TOKEN: "admin-token",
+    MARKETING_AI_MODEL: "test-model",
+    AI: {
+      async run(model, input) {
+        assert.equal(model, "test-model");
+        requestInput = input;
+        return { response: JSON.stringify({
+          productDescription: "A gentle shampoo for routine dog washing.",
+          socialCaption: "Make wash day feel simple with Bingo Gentle Shampoo.",
+          emailSubject: "A gentle choice for wash day",
+          emailPreview: "Discover a straightforward shampoo for routine dog washing.",
+        }) };
+      },
+    },
+  });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.ok, true);
+  assert.equal(body.saved, false);
+  assert.equal(body.publishable, false);
+  assert.equal(body.draft.emailSubject, "A gentle choice for wash day");
+  assert.equal(requestInput.messages.some((message) => message.content.includes("customer")), false);
+  assert.equal(JSON.stringify(body).includes("admin-token"), false);
+  assert.equal(JSON.stringify(body).includes("test-model"), false);
+});
+
+test("AI drafting rejects unsupported methods and invalid model output", async () => {
+  const getResponse = await worker.fetch(new Request("https://bingodogwash.com/api/admin/ai-drafts", {
+    headers: { Authorization: "Bearer admin-token" },
+  }), { ADMIN_API_TOKEN: "admin-token", AI: { async run() { return {}; } } });
+  assert.equal(getResponse.status, 405);
+
+  const invalidResponse = await worker.fetch(new Request("https://bingodogwash.com/api/admin/ai-drafts", {
+    method: "POST",
+    headers: { Authorization: "Bearer admin-token", "Content-Type": "application/json" },
+    body: JSON.stringify({ name: "Dog shampoo", description: "Gentle routine shampoo." }),
+  }), {
+    ADMIN_API_TOKEN: "admin-token",
+    AI: { async run() { return { response: "not valid json" }; } },
+  });
+  assert.equal(invalidResponse.status, 502);
+  assert.deepEqual(await invalidResponse.json(), { ok: false, error: "AI returned an invalid draft. Please try again." });
+});
+
 const topDogCompetitionRow = {
   id: "top-dog-2026",
   slug: "top-dog-2026",

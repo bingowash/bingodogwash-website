@@ -53,6 +53,7 @@ const pages = [
   "/about.html",
   "/account.html",
   "/admin/",
+  "/admin/ai-drafts.html",
   "/admin/competition.html",
   "/admin/gift-cards.html",
   "/admin/stripe.html",

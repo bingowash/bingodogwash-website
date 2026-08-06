@@ -1,0 +1,5 @@
+.ai-drafts-layout { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: 22px; align-items: start; }
+.ai-drafts-form, .ai-drafts-results { display: grid; gap: 16px; }
+.ai-drafts-results textarea, .ai-drafts-results input { width: 100%; }
+.ai-drafts-results [data-ai-output] { background: #fbfdff; }
+@media (max-width: 860px) { .ai-drafts-layout { grid-template-columns: 1fr; } }

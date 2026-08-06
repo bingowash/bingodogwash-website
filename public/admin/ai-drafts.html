@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Drafting Assistant | Bingo Dog Wash Admin</title>
+  <meta name="description" content="Protected drafting assistant for Bingo Dog Wash product and campaign copy.">
+  <meta name="robots" content="noindex,nofollow">
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/admin/admin-shell.css">
+  <link rel="stylesheet" href="/admin/ai-drafts.css">
+</head>
+<body>
+  <header class="site-header"><nav class="nav"><a class="brand" href="/admin/" aria-label="Admin home"><img class="brand-logo" src="/images/bingo-dog-wash-logo.optimized.png" alt="Bingo Dog Wash" width="132" height="132"></a><button class="menu-toggle" type="button">Menu</button><div class="nav-links"></div></nav></header>
+  <main class="container ai-drafts-admin">
+    <section class="page-title">
+      <span class="eyebrow">Draft only</span>
+      <h1>AI drafting assistant</h1>
+      <p>Create editable marketing copy from product facts. Nothing is saved or published automatically.</p>
+    </section>
+
+    <section class="admin-toolbar">
+      <div><span class="eyebrow">Authentication</span><h2>Admin access</h2><p class="small-note">Uses the existing admin token. AI prompts never include customer, payment or booking data.</p></div>
+      <form class="form admin-token-form" data-ai-token-form><label>Admin token<input name="token" type="password" autocomplete="current-password" required></label><button class="btn btn-primary" type="submit">Unlock drafting</button><p class="small-note" data-ai-message aria-live="polite"></p></form>
+    </section>
+
+    <section class="ai-drafts-layout" data-ai-workspace hidden>
+      <form class="card form ai-drafts-form" data-ai-draft-form>
+        <div><span class="eyebrow">Product facts</span><h2>Create a draft</h2><p>Only enter public product information. Required fields are marked.</p></div>
+        <label>Product name *<input name="name" maxlength="160" required></label>
+        <label>Category<input name="category" maxlength="100"></label>
+        <label>Price or price wording<input name="price" maxlength="40" placeholder="For example: £12.99 or Enquire for price"></label>
+        <label>Product description *<textarea name="description" maxlength="1800" rows="7" required></textarea></label>
+        <label>Audience<input name="audience" maxlength="240" placeholder="For example: dog owners looking for gentle grooming products"></label>
+        <label>Public product URL<input name="url" type="url" maxlength="300" placeholder="https://bingodogwash.com/product?id=..."></label>
+        <label>Tone<select name="tone"><option value="friendly">Friendly</option><option value="professional">Professional</option><option value="playful">Playful</option></select></label>
+        <button class="btn btn-secondary" type="submit">Generate editable drafts</button>
+      </form>
+
+      <section class="card ai-drafts-results" aria-labelledby="ai-results-title">
+        <span class="eyebrow">Human approval required</span><h2 id="ai-results-title">Draft results</h2>
+        <p class="small-note" data-ai-result-status>No draft generated yet.</p>
+        <label>Product description<textarea data-ai-output="productDescription" rows="6"></textarea></label>
+        <label>Social caption<textarea data-ai-output="socialCaption" rows="9"></textarea></label>
+        <label>Email subject<input data-ai-output="emailSubject" maxlength="70"></label>
+        <label>Email preview<textarea data-ai-output="emailPreview" rows="4"></textarea></label>
+        <div class="button-row"><button class="btn btn-light" type="button" data-ai-copy="productDescription">Copy description</button><button class="btn btn-light" type="button" data-ai-copy="socialCaption">Copy caption</button></div>
+        <p class="small-note"><strong>Draft only:</strong> review every claim before copying it into another tool. This page cannot publish.</p>
+      </section>
+    </section>
+  </main>
+  <script src="/admin/admin-shell.js?v=20260807" defer></script><script src="/site.js?v=20260806-admin-shell" defer></script><script src="/admin/ai-drafts.js?v=20260807" defer></script>
+</body>
+</html>

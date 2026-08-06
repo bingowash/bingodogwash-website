@@ -31,6 +31,7 @@ const BOOKINGS_PENDING_PATH = "/api/bookings/pending";
 const BOOKINGS_CHECKOUT_PATH = "/api/bookings/checkout";
 const ADMIN_BOOKINGS_PATH = "/api/admin/bookings";
 const ADMIN_STRIPE_PATH = "/api/admin/stripe";
+const ADMIN_AI_DRAFTS_PATH = "/api/admin/ai-drafts";
 const GIVEAWAY_CHECKOUT_PATH = "/api/giveaway/checkout";
 const ADMIN_GIVEAWAY_PATH = "/api/admin/giveaway-entries";
 const ADMIN_GIVEAWAY_FEED_PATH = "/api/giveaway/admin-feed";
@@ -403,6 +404,10 @@ function handleRequest(request) {
 
   if (url.pathname === ADMIN_STRIPE_PATH) {
     return handleAdminStripe(request);
+  }
+
+  if (url.pathname === ADMIN_AI_DRAFTS_PATH) {
+    return handleAdminAiDrafts(request);
   }
 
   if (url.pathname === GIVEAWAY_CHECKOUT_PATH) {
@@ -4194,6 +4199,89 @@ async function readJson(request) {
     return await request.json();
   } catch {
     return null;
+  }
+}
+
+async function handleAdminAiDrafts(request) {
+  if (!(await isAdminRequest(request))) {
+    return corsResponse(request, { ok: false, error: "Admin authorisation required." }, 401);
+  }
+  if (request.method !== "POST") {
+    return corsResponse(request, { ok: false, error: "Method not allowed." }, 405);
+  }
+
+  const contentLength = Number(request.headers.get("Content-Length") || 0);
+  if (contentLength > 12000) {
+    return corsResponse(request, { ok: false, error: "Draft request is too large." }, 413);
+  }
+
+  const input = await readJson(request);
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return corsResponse(request, { ok: false, error: "Enter valid product details." }, 400);
+  }
+
+  const product = {
+    name: cleanText(input.name, 160),
+    category: cleanText(input.category, 100),
+    price: cleanText(input.price, 40),
+    description: cleanMultilineText(input.description, 1800),
+    audience: cleanText(input.audience, 240),
+    url: safeUrl(input.url),
+  };
+  const tone = ["friendly", "professional", "playful"].includes(input.tone) ? input.tone : "friendly";
+  if (!product.name || !product.description) {
+    return corsResponse(request, { ok: false, error: "Product name and description are required." }, 400);
+  }
+
+  const ai = envValue("AI");
+  if (!ai?.run) {
+    return corsResponse(request, { ok: false, error: "AI drafting is not configured." }, 503);
+  }
+
+  try {
+    const model = envText("MARKETING_AI_MODEL") || "@cf/meta/llama-3.1-8b-instruct-fp8-fast";
+    const result = await ai.run(model, {
+      messages: [
+        {
+          role: "system",
+          content: "You draft UK English marketing copy for Bingo Dog Wash. Use only supplied facts. Never invent claims, discounts, reviews, availability, delivery promises, health benefits, or prices. Return only valid JSON with string fields productDescription, socialCaption, emailSubject, and emailPreview. Keep the product description under 500 characters, social caption under 700 characters, email subject under 70 characters, and email preview under 180 characters."
+        },
+        {
+          role: "user",
+          content: JSON.stringify({ product, tone })
+        }
+      ],
+      max_tokens: 520,
+      temperature: 0.6,
+    });
+    const raw = cleanMultilineText(result?.response || result?.result?.response, 5000)
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/\s*```$/i, "");
+    let generated;
+    try {
+      generated = JSON.parse(raw);
+    } catch {
+      return corsResponse(request, { ok: false, error: "AI returned an invalid draft. Please try again." }, 502);
+    }
+    const draft = {
+      productDescription: cleanMultilineText(generated?.productDescription, 500),
+      socialCaption: cleanMultilineText(generated?.socialCaption, 700),
+      emailSubject: cleanText(generated?.emailSubject, 70),
+      emailPreview: cleanMultilineText(generated?.emailPreview, 180),
+    };
+    if (!draft.productDescription || !draft.socialCaption) {
+      return corsResponse(request, { ok: false, error: "AI returned an incomplete draft. Please try again." }, 502);
+    }
+    return corsResponse(request, {
+      ok: true,
+      draft,
+      generatedAt: new Date().toISOString(),
+      saved: false,
+      publishable: false,
+    });
+  } catch (error) {
+    logExternalError("Admin AI draft failed", { error });
+    return corsResponse(request, { ok: false, error: "AI drafting is temporarily unavailable." }, 502);
   }
 }
 

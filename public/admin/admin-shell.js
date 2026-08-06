@@ -5,6 +5,7 @@ const adminDestinations = [
   { href: "/admin/professionals.html", label: "Professionals" },
   { href: "/admin/competition.html", label: "Competition" },
   { href: "/admin/marketing.html", label: "Marketing" },
+  { href: "/admin/ai-drafts.html", label: "AI Drafts" },
   { href: "https://bingodogwash.com/", label: "Public Site", external: true }
 ];
 
