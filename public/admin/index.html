@@ -6,7 +6,7 @@
   <title>Admin Dashboard | Bingo Dog Wash</title>
   <meta name="description" content="Private Bingo Dog Wash administration dashboard for site, commerce and community operations.">
   <meta name="robots" content="noindex,nofollow">
-<link rel="icon" href="/favicon.ico" sizes="any"><link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="stylesheet" href="/styles.css">
+<link rel="icon" href="/favicon.ico" sizes="any"><link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="stylesheet" href="/styles.css"><link rel="stylesheet" href="/admin/admin-shell.css">
 </head>
 <body>
   <header class="site-header">
@@ -30,7 +30,16 @@
       <p>Manage the Bingo Dog Wash homepage, public pages, products, payments and community tools from one place.</p>
     </section>
 
-    <section class="admin-public-panel">
+    <nav class="admin-control-grid" aria-label="Control centre tools">
+      <a class="admin-control-card" href="/admin/stripe.html"><div><span>Commerce</span><h2>Payments</h2></div><p>Read-only Stripe health and payment reporting.</p></a>
+      <a class="admin-control-card" href="/admin/gift-cards.html"><div><span>Commerce</span><h2>Gift cards</h2></div><p>Search, redeem and manage customer gift cards.</p></a>
+      <a class="admin-control-card" href="/admin/professionals.html"><div><span>Community</span><h2>Professionals</h2></div><p>Review applications, members and enquiries.</p></a>
+      <a class="admin-control-card" href="/admin/competition.html"><div><span>Community</span><h2>Competition</h2></div><p>Manage entries, photos, payments and winners.</p></a>
+      <a class="admin-control-card" href="/admin/marketing.html"><div><span>Publishing</span><h2>Marketing</h2></div><p>Review schedules, connections and posting results.</p></a>
+      <a class="admin-control-card" href="#website-operations"><div><span>Website</span><h2>Site operations</h2></div><p>Continue to product, booking and page controls.</p></a>
+    </nav>
+
+    <section class="admin-public-panel" id="website-operations">
       <div>
         <span class="eyebrow">Live site shortcuts</span>
         <h2>Public preview</h2>
@@ -209,6 +218,7 @@
     </section>
   </main>
 
+  <script src="/admin/admin-shell.js?v=20260806" defer></script>
   <script src="/site.js?v=20260729-view-public-fix" defer></script>
 </body>
 </html>

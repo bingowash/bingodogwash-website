@@ -228,6 +228,14 @@ for (const path of pages) {
       await expect(menuToggle).toHaveAttribute("aria-expanded", "false");
     }
 
+    if (path.startsWith("/admin/") || path === "/admin") {
+      const adminNavigation = page.locator('#admin-primary-navigation[aria-label="Admin sections"]');
+      await expect(adminNavigation).toHaveCount(1);
+      await expect(adminNavigation.getByRole("link", { name: "Overview", exact: true, includeHidden: true })).toHaveAttribute("href", "/admin/");
+      await expect(adminNavigation.getByRole("link", { name: "Payments", exact: true, includeHidden: true })).toHaveAttribute("href", "/admin/stripe.html");
+      await expect(adminNavigation.getByRole("link", { name: "Marketing", exact: true, includeHidden: true })).toHaveAttribute("href", "/admin/marketing.html");
+    }
+
     expect(
       browserErrors,
       `${path} produced browser errors:\n${browserErrors.join("\n")}`

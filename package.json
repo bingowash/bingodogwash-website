@@ -1,9 +1,9 @@
 {
   "type": "module",
   "scripts": {
-    "lint": "node --check _functions_NOT_FOR_STATIC_UPLOAD/api/worker.js && node --check _functions_NOT_FOR_STATIC_UPLOAD/api/competition.js && node --check public/site.js && node --check public/admin/stripe.js && node --check public/competition.js && node --check public/competition-sharing.js",
+    "lint": "node --check _functions_NOT_FOR_STATIC_UPLOAD/api/worker.js && node --check _functions_NOT_FOR_STATIC_UPLOAD/api/competition.js && node --check public/site.js && node --check public/admin/admin-shell.js && node --check public/admin/stripe.js && node --check public/competition.js && node --check public/competition-sharing.js",
     "test": "node --test",
-    "typecheck": "node --check _functions_NOT_FOR_STATIC_UPLOAD/api/worker.js && node --check _functions_NOT_FOR_STATIC_UPLOAD/api/competition.js && node --check public/site.js && node --check public/admin/stripe.js && node --check public/competition.js && node --check public/competition-sharing.js && node --check scripts/import-avasam-images.js && node --check scripts/import-avasam-images1.js",
+    "typecheck": "node --check _functions_NOT_FOR_STATIC_UPLOAD/api/worker.js && node --check _functions_NOT_FOR_STATIC_UPLOAD/api/competition.js && node --check public/site.js && node --check public/admin/admin-shell.js && node --check public/admin/stripe.js && node --check public/competition.js && node --check public/competition-sharing.js && node --check scripts/import-avasam-images.js && node --check scripts/import-avasam-images1.js",
     "deploy:dry-run": "wrangler deploy --dry-run --env=\"\"",
     "deploy:staging:dry-run": "wrangler deploy --dry-run --env=staging",
     "deploy": "wrangler deploy --env=\"\"",
