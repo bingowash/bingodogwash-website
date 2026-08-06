@@ -13,15 +13,6 @@ const tokenMessages = {
   configuration: "Marketing service is not configured.",
   unavailable: "Marketing service is currently unavailable.",
 };
-const safePreflightMessages = new Set([
-  "Meta access token is not configured.",
-  "Meta connection has expired or is invalid. Reconnect Meta in server settings.",
-  "Meta account connection is incomplete.",
-  "Meta connection does not have permission to publish.",
-  "Meta service is temporarily unavailable.",
-  "Instagram identity verified, but publishing permission cannot be confirmed without a controlled test post.",
-]);
-const preflightFallback = "The marketing request could not be completed.";
 
 function safeError(message, status = 0) {
   const error = new Error(message);
@@ -36,20 +27,6 @@ function validateToken(value) {
   return trimmed;
 }
 
-function safePreflightResult(data) {
-  const platform = (value) => ({
-    ok: value?.ok === true,
-    error: value?.ok === true ? "Connection verified." : (safePreflightMessages.has(value?.error) ? value.error : preflightFallback),
-  });
-  return {
-    ok: data?.ok === true,
-    paused: data?.paused === true,
-    publishingAttempted: data?.publishingAttempted === true,
-    facebook: platform(data?.facebook),
-    instagram: platform(data?.instagram),
-  };
-}
-
 async function call(path = "", options = {}) {
   let response;
   try {
@@ -61,7 +38,9 @@ async function call(path = "", options = {}) {
   if (response.status === 401) throw safeError(tokenMessages.incorrect, 401);
   if (response.status === 403) throw safeError(tokenMessages.forbidden, 403);
   if (response.status === 503) throw safeError(tokenMessages.configuration, 503);
-  if (response.status === 422 && path === "/preflight") return safePreflightResult(data);
+  // Preflight diagnostics are sanitized by the Worker and intentionally include
+  // per-Page discovery details. Preserve that structure for troubleshooting.
+  if (response.status === 422 && path === "/preflight") return data;
   if (!response.ok) throw safeError(response.status >= 500 ? tokenMessages.unavailable : (data.error || "The marketing request could not be completed."), response.status);
   return data;
 }
