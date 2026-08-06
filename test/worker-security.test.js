@@ -34,6 +34,56 @@ test("admin hostname root serves the consolidated admin dashboard", async () => 
   assert.equal(assetPath, "/admin/index.html");
 });
 
+test("Stripe reporting remains admin-only without changing public payment routes", async () => {
+  let queried = false;
+  const db = { prepare() { queried = true; throw new Error("unauthorised request must not query payments"); } };
+  const response = await worker.fetch(new Request("https://bingodogwash.com/api/admin/stripe"), {
+    ADMIN_API_TOKEN: "admin-token",
+    GIFT_CARD_DB: db,
+  });
+  assert.equal(response.status, 401);
+  assert.equal(queried, false);
+});
+
+test("authenticated Stripe reporting exposes status and aggregates without secrets", async () => {
+  const db = {
+    prepare(sql) {
+      return {
+        async first() {
+          assert.match(sql, /wash_count/);
+          return {
+            wash_count: 1, wash_total: 1000,
+            gift_card_count: 2, gift_card_total: 3000,
+            giveaway_count: 1, giveaway_total: 200,
+            competition_count: 1, competition_total: 500,
+            last_webhook_at: "2026-08-06T04:00:00.000Z",
+          };
+        },
+        async all() {
+          assert.match(sql, /Unified|UNION ALL/i);
+          return { results: [{ source: "Dog wash", reference: "BDW-1", customer: "Customer", amount: 1000, currency: "GBP", status: "paid", created_at: "2026-08-06T04:00:00.000Z" }] };
+        },
+      };
+    },
+  };
+  const response = await worker.fetch(new Request("https://bingodogwash.com/api/admin/stripe", {
+    headers: { Authorization: "Bearer admin-token" },
+  }), {
+    ADMIN_API_TOKEN: "admin-token",
+    STRIPE_SECRET_KEY: "sk_live_private",
+    STRIPE_WEBHOOK_SECRET: "whsec_private",
+    GIFT_CARD_DB: db,
+  });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.totals.count, 5);
+  assert.equal(body.totals.amount, 4700);
+  assert.equal(body.connection.secretKeyConfigured, true);
+  assert.equal(body.connection.webhookSecretConfigured, true);
+  assert.equal(JSON.stringify(body).includes("sk_live_private"), false);
+  assert.equal(JSON.stringify(body).includes("whsec_private"), false);
+});
+
 const topDogCompetitionRow = {
   id: "top-dog-2026",
   slug: "top-dog-2026",

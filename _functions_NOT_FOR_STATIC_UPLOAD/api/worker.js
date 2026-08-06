@@ -30,6 +30,7 @@ const ADMIN_PROFESSIONALS_PATH = "/api/admin/professionals";
 const BOOKINGS_PENDING_PATH = "/api/bookings/pending";
 const BOOKINGS_CHECKOUT_PATH = "/api/bookings/checkout";
 const ADMIN_BOOKINGS_PATH = "/api/admin/bookings";
+const ADMIN_STRIPE_PATH = "/api/admin/stripe";
 const GIVEAWAY_CHECKOUT_PATH = "/api/giveaway/checkout";
 const ADMIN_GIVEAWAY_PATH = "/api/admin/giveaway-entries";
 const ADMIN_GIVEAWAY_FEED_PATH = "/api/giveaway/admin-feed";
@@ -398,6 +399,10 @@ function handleRequest(request) {
 
   if (url.pathname === ADMIN_BOOKINGS_PATH) {
     return handleAdminWashBookings(request, url);
+  }
+
+  if (url.pathname === ADMIN_STRIPE_PATH) {
+    return handleAdminStripe(request);
   }
 
   if (url.pathname === GIVEAWAY_CHECKOUT_PATH) {
@@ -1917,6 +1922,81 @@ async function handleAdminWashBookings(request, url) {
   }));
 
   return corsResponse(request, { ok: true, bookings });
+}
+
+async function handleAdminStripe(request) {
+  if (!(await isAdminRequest(request))) {
+    return corsResponse(request, { ok: false, error: "Admin authorisation required." }, 401);
+  }
+  if (request.method !== "GET") {
+    return corsResponse(request, { ok: false, error: "Method not allowed." }, 405);
+  }
+  if (!giftCardDb()) {
+    return corsResponse(request, { ok: false, error: "Payments database is not configured." }, 503);
+  }
+
+  const summary = await giftCardDb().prepare(`SELECT
+    (SELECT COUNT(*) FROM wash_bookings WHERE LOWER(COALESCE(stripe_payment_status, '')) = 'paid' OR LOWER(status) = 'paid') AS wash_count,
+    (SELECT COALESCE(SUM(amount), 0) FROM wash_bookings WHERE LOWER(COALESCE(stripe_payment_status, '')) = 'paid' OR LOWER(status) = 'paid') AS wash_total,
+    (SELECT COUNT(*) FROM gift_cards) AS gift_card_count,
+    (SELECT COALESCE(SUM(original_amount), 0) FROM gift_cards) AS gift_card_total,
+    (SELECT COUNT(*) FROM giveaway_entries WHERE LOWER(payment_status) = 'paid') AS giveaway_count,
+    (SELECT COALESCE(SUM(amount), 0) FROM giveaway_entries WHERE LOWER(payment_status) = 'paid') AS giveaway_total,
+    (SELECT COUNT(*) FROM competition_entries WHERE LOWER(payment_status) = 'paid') AS competition_count,
+    (SELECT COALESCE(SUM(amount), 0) FROM competition_entries WHERE LOWER(payment_status) = 'paid') AS competition_total,
+    (SELECT MAX(created_at) FROM gift_card_events WHERE stripe_event_id IS NOT NULL) AS last_webhook_at`).first();
+
+  const recentResult = await giftCardDb().prepare(`SELECT source, reference, customer, amount, currency, status, created_at
+    FROM (
+      SELECT 'Dog wash' AS source, booking_reference AS reference, customer_name AS customer,
+        amount, currency, COALESCE(stripe_payment_status, status) AS status, created_at
+      FROM wash_bookings WHERE stripe_checkout_session_id IS NOT NULL
+      UNION ALL
+      SELECT 'Gift card' AS source, code AS reference, recipient_name AS customer,
+        original_amount AS amount, currency, status, created_at
+      FROM gift_cards
+      UNION ALL
+      SELECT 'Giveaway' AS source, 'Entry ' || entry_number AS reference,
+        TRIM(first_name || ' ' || last_name) AS customer, amount, currency, payment_status AS status, created_at
+      FROM giveaway_entries
+      UNION ALL
+      SELECT 'Competition' AS source, 'Entry ' || entry_number AS reference, dog_name AS customer,
+        amount, 'GBP' AS currency, payment_status AS status, created_at
+      FROM competition_entries WHERE stripe_checkout_session_id IS NOT NULL
+    ) ORDER BY created_at DESC LIMIT 50`).all();
+
+  const money = (value) => Number(value || 0);
+  const totals = {
+    wash: { count: Number(summary?.wash_count || 0), amount: money(summary?.wash_total) },
+    giftCards: { count: Number(summary?.gift_card_count || 0), amount: money(summary?.gift_card_total) },
+    giveaway: { count: Number(summary?.giveaway_count || 0), amount: money(summary?.giveaway_total) },
+    competition: { count: Number(summary?.competition_count || 0), amount: money(summary?.competition_total) },
+  };
+
+  return corsResponse(request, {
+    ok: true,
+    connection: {
+      secretKeyConfigured: configured(envText("STRIPE_SECRET_KEY")),
+      webhookSecretConfigured: configured(envText("STRIPE_WEBHOOK_SECRET")),
+      webhookPath: STRIPE_WEBHOOK_PATH,
+      lastWebhookAt: summary?.last_webhook_at || "",
+    },
+    totals: {
+      ...totals,
+      count: Object.values(totals).reduce((total, item) => total + item.count, 0),
+      amount: Object.values(totals).reduce((total, item) => total + item.amount, 0),
+      currency: "GBP",
+    },
+    recent: (recentResult.results || []).map((row) => ({
+      source: row.source,
+      reference: row.reference,
+      customer: row.customer,
+      amount: Number(row.amount || 0),
+      currency: row.currency || "GBP",
+      status: row.status || "Unknown",
+      createdAt: row.created_at,
+    })),
+  });
 }
 
 function normalizeGiveawayInput(input = {}) {

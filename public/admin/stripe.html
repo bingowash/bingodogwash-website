@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Stripe &amp; Payments | Bingo Dog Wash Admin</title>
+  <meta name="description" content="Private payment reporting and Stripe connection status for Bingo Dog Wash.">
+  <meta name="robots" content="noindex,nofollow">
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <nav class="nav">
+      <a class="brand" href="/admin/" aria-label="Admin home"><img class="brand-logo" src="/images/bingo-dog-wash-logo.optimized.png" alt="Bingo Self-Service Dog Wash" width="132" height="132" decoding="async"></a>
+      <button class="menu-toggle" type="button">Menu</button>
+      <div class="nav-links">
+        <a href="https://bingodogwash.com/">Public Site</a>
+        <a href="/admin/">Admin dashboard</a>
+        <a class="active" href="/admin/stripe.html">Stripe &amp; Payments</a>
+        <a href="/admin/gift-cards.html">Gift Cards</a>
+        <a href="/admin/competition.html">Competition</a>
+      </div>
+    </nav>
+  </header>
+
+  <main class="container">
+    <section class="page-title">
+      <span class="eyebrow">Admin</span>
+      <h1>Stripe &amp; Payments</h1>
+      <p>Read-only reporting for customer payments. Public checkout and the verified Stripe webhook remain unchanged.</p>
+    </section>
+
+    <section class="admin-toolbar">
+      <div>
+        <span class="eyebrow">Authentication</span>
+        <h2>Admin access</h2>
+        <p class="small-note">Enter the existing admin API token. Stripe keys are never displayed.</p>
+      </div>
+      <form class="form admin-token-form" data-stripe-admin-token-form>
+        <label>Admin token<input name="token" type="password" autocomplete="current-password" required></label>
+        <button class="btn btn-primary" type="submit">Unlock payments</button>
+        <p class="small-note" data-stripe-admin-message></p>
+      </form>
+    </section>
+
+    <section data-stripe-admin-panel hidden>
+      <section class="grid grid-4" data-stripe-summary></section>
+
+      <section class="card">
+        <div class="section-head">
+          <div>
+            <span class="eyebrow">Connection health</span>
+            <h2>Stripe server configuration</h2>
+            <p>Only configuration status is shown. Secret values remain protected in Cloudflare.</p>
+          </div>
+          <button class="btn btn-light" type="button" data-stripe-refresh>Refresh</button>
+        </div>
+        <div class="dashboard-list" data-stripe-health></div>
+      </section>
+
+      <section class="card">
+        <div class="section-head">
+          <div>
+            <span class="eyebrow">Unified ledger</span>
+            <h2>Recent Stripe-backed payments</h2>
+            <p>Wash bookings, gift cards, giveaway entries and competition entries in one read-only view.</p>
+          </div>
+        </div>
+        <div class="admin-giveaway-table-wrap" data-stripe-recent></div>
+      </section>
+
+      <section class="card">
+        <div class="section-head"><div><span class="eyebrow">Existing controls</span><h2>Payment operations</h2></div></div>
+        <div class="admin-public-links">
+          <a class="btn btn-light" href="/admin/gift-cards.html">Manage gift cards</a>
+          <a class="btn btn-light" href="/admin/#giveaway-entries">View giveaway entries</a>
+          <a class="btn btn-light" href="/admin/competition.html">Manage competition payments</a>
+          <a class="btn btn-secondary" href="https://dashboard.stripe.com/" target="_blank" rel="noopener">Open Stripe Dashboard</a>
+        </div>
+        <p class="small-note">Checkout availability, prices, refunds and webhook settings are intentionally not changed from this page.</p>
+      </section>
+    </section>
+  </main>
+  <script src="/admin/stripe.js?v=20260806-admin-payments" defer></script>
+</body>
+</html>

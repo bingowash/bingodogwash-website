@@ -171,6 +171,14 @@
 			"zone_name": "bingodogwash.com"
 		},
 		{
+			"pattern": "bingodogwash.com/api/admin/stripe*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "admin.bingodogwash.com/api/admin/stripe*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
 			"pattern": "bingodogwash.com/api/marketing/track*",
 			"zone_name": "bingodogwash.com"
 		}

@@ -55,6 +55,7 @@ const pages = [
   "/admin/",
   "/admin/competition.html",
   "/admin/gift-cards.html",
+  "/admin/stripe.html",
   "/admin/marketing.html",
   "/admin/professionals.html",
   "/admin-competition.html",
