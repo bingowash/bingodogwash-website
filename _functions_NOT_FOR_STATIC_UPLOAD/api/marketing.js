@@ -8,6 +8,7 @@ const INSTAGRAM_PERMISSION_UNCONFIRMED = "Instagram identity verified, but publi
 const FACEBOOK_REQUIRED_SCOPES = ["pages_manage_posts", "pages_read_engagement", "pages_show_list"];
 const FACEBOOK_TOKEN_EXPIRED = "Facebook connection expired. Reconnect Meta account.";
 const MAX_RETRIES = 3;
+const MARKETING_INTERVAL_HOURS = 4;
 const MIN_META_TOKEN_LENGTH = 40;
 const META_ERROR = {
   missing: "Meta access token is not configured.",
@@ -66,12 +67,10 @@ export async function runMarketingSchedule(event, env) {
   const settings = await getSettings(env);
   if (!settings || !settings.enabled) return { ok: true, skipped: "paused" };
   const now = new Date(event?.scheduledTime || Date.now());
-  const date = now.toISOString().slice(0, 10);
-  if (settings.last_run_date === date) return { ok: true, skipped: "already-posted-today" };
-  if (now.getUTCHours() !== settings.schedule_hour_utc || now.getUTCMinutes() < settings.schedule_minute_utc || now.getUTCMinutes() >= settings.schedule_minute_utc + 15) {
-    return { ok: true, skipped: "outside-schedule" };
-  }
-  return runMarketingAutomation(env, { trigger: "scheduled" });
+  if (!isScheduledSlot(settings, now)) return { ok: true, skipped: "outside-schedule" };
+  const slot = scheduleSlotKey(settings, now);
+  if (settings.last_run_date === slot) return { ok: true, skipped: "already-posted-this-slot" };
+  return runMarketingAutomation(env, { trigger: "scheduled", scheduledAt: now });
 }
 
 export async function runMarketingAutomation(env, options = {}) {
@@ -147,8 +146,10 @@ export async function runMarketingAutomation(env, options = {}) {
   const error = Object.values(results).filter((result) => !result.ok).map((result) => result.error).join(" | ");
   await finishPost(db, postId, status, error, results);
   if (status !== "failed" && options.trigger === "scheduled") {
+    const currentSettings = await getSettings(env);
+    const scheduledAt = options.scheduledAt instanceof Date ? options.scheduledAt : new Date(now);
     await db.prepare("UPDATE marketing_settings SET last_run_date = ?, next_run_at = ?, updated_at = ? WHERE id = 'primary'")
-      .bind(now.slice(0, 10), nextRunAt(await getSettings(env), new Date(now)), now).run();
+      .bind(scheduleSlotKey(currentSettings, scheduledAt), nextRunAt(currentSettings, new Date(now)), now).run();
   }
   return { ok: status !== "failed", status, postId, product: product.name, caption, platforms: results };
 }
@@ -1085,8 +1086,23 @@ async function updateSettings(env, values) {
   return json({ ok: true, settings: shapeSettings(await getSettings(env)) });
 }
 
-function nextRunAt(settings, from) { const next = new Date(from); next.setUTCSeconds(0, 0); next.setUTCHours(settings.schedule_hour_utc, settings.schedule_minute_utc, 0, 0); if (next <= from) next.setUTCDate(next.getUTCDate() + 1); return next.toISOString(); }
-function shapeSettings(row) { return { enabled: Boolean(row?.enabled), hourUtc: row?.schedule_hour_utc ?? 9, minuteUtc: row?.schedule_minute_utc ?? 0, lastRunDate: row?.last_run_date || "", nextRunAt: row?.next_run_at || "" }; }
+function nextRunAt(settings, from) {
+  const next = new Date(from);
+  next.setUTCSeconds(0, 0);
+  next.setUTCHours(settings.schedule_hour_utc, settings.schedule_minute_utc, 0, 0);
+  while (next <= from) next.setUTCHours(next.getUTCHours() + MARKETING_INTERVAL_HOURS);
+  return next.toISOString();
+}
+function isScheduledSlot(settings, date) {
+  const hourOffset = (date.getUTCHours() - Number(settings.schedule_hour_utc) + 24) % MARKETING_INTERVAL_HOURS;
+  return hourOffset === 0 && date.getUTCMinutes() >= Number(settings.schedule_minute_utc) && date.getUTCMinutes() < Number(settings.schedule_minute_utc) + 15;
+}
+function scheduleSlotKey(settings, date) {
+  const slot = new Date(date);
+  slot.setUTCMinutes(Number(settings.schedule_minute_utc), 0, 0);
+  return slot.toISOString().slice(0, 16);
+}
+function shapeSettings(row) { return { enabled: Boolean(row?.enabled), hourUtc: row?.schedule_hour_utc ?? 9, minuteUtc: row?.schedule_minute_utc ?? 0, intervalHours: MARKETING_INTERVAL_HOURS, lastRunDate: row?.last_run_date || "", nextRunAt: row?.next_run_at || "" }; }
 function logMarketingSettings(event, details = {}) {
   console.error(JSON.stringify({ event, ...details }));
 }
@@ -1112,4 +1128,4 @@ function clean(value, max = 500) { return String(value || "").replace(/\s+/g, " 
 async function readJson(request) { try { return await request.json(); } catch { return null; } }
 function json(body, status = 200) { return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" } }); }
 
-export const marketingTestHelpers = { campaignUrl, trackedDestination, nextRunAt, hash, benefit, metaAccessToken, resolveMetaConnection, resolveFacebookPublishingContext, resolveFacebookPageAccess, publishWithRetry, publishFacebook, publishInstagram, waitForInstagramMedia, publishFacebookPages, validateInstagramImage, selectInstagramProduct, configuredFacebookPageIds, redirectPage, instagramPreflight, facebookPreflight, publishingDisabled };
+export const marketingTestHelpers = { campaignUrl, trackedDestination, nextRunAt, isScheduledSlot, scheduleSlotKey, hash, benefit, metaAccessToken, resolveMetaConnection, resolveFacebookPublishingContext, resolveFacebookPageAccess, publishWithRetry, publishFacebook, publishInstagram, waitForInstagramMedia, publishFacebookPages, validateInstagramImage, selectInstagramProduct, configuredFacebookPageIds, redirectPage, instagramPreflight, facebookPreflight, publishingDisabled };

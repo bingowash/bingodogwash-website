@@ -234,11 +234,25 @@ test("campaign links record a click before preserving product destination and UT
   assert.equal(destination.searchParams.get("utm_campaign"), "campaign-123");
 });
 
-test("next marketing run advances to tomorrow after today's posting time", () => {
+test("next marketing run advances to the next four-hour slot", () => {
   assert.equal(
     marketingTestHelpers.nextRunAt({ schedule_hour_utc: 9, schedule_minute_utc: 15 }, new Date("2026-07-31T10:00:00Z")),
-    "2026-08-01T09:15:00.000Z"
+    "2026-07-31T13:15:00.000Z"
   );
+  assert.equal(
+    marketingTestHelpers.nextRunAt({ schedule_hour_utc: 4, schedule_minute_utc: 15 }, new Date("2026-07-31T21:00:00Z")),
+    "2026-08-01T00:15:00.000Z"
+  );
+});
+
+test("four-hour schedule recognises each slot and creates a per-slot duplicate key", () => {
+  const settings = { schedule_hour_utc: 4, schedule_minute_utc: 15 };
+  for (const hour of [0, 4, 8, 12, 16, 20]) {
+    const date = new Date(`2026-08-06T${String(hour).padStart(2, "0")}:15:00Z`);
+    assert.equal(marketingTestHelpers.isScheduledSlot(settings, date), true);
+  }
+  assert.equal(marketingTestHelpers.isScheduledSlot(settings, new Date("2026-08-06T06:15:00Z")), false);
+  assert.equal(marketingTestHelpers.scheduleSlotKey(settings, new Date("2026-08-06T08:19:30Z")), "2026-08-06T08:15");
 });
 
 test("marketing admin API rejects requests without the existing admin token", async () => {
