@@ -7,6 +7,10 @@ const ALLOWED_ORIGINS = new Set([
   "https://www.bingodogwash.com",
   "https://admin.bingodogwash.com",
 ]);
+const ADMIN_AI_DRAFTS_ORIGINS = new Set([
+  "https://bingodogwash.com",
+  "https://admin.bingodogwash.com",
+]);
 
 const PRICE_ID = "price_1TplhKRvgV7zITZBn7OylVwF";
 const EBAY_ACCOUNT_DELETION_PATH = "/api/ebay-account-deletion";
@@ -356,6 +360,12 @@ function handleRequest(request) {
   const url = new URL(request.url);
 
   if (request.method === "OPTIONS") {
+    if (url.pathname === ADMIN_AI_DRAFTS_PATH) {
+      const origin = request.headers.get("Origin") || "";
+      return ADMIN_AI_DRAFTS_ORIGINS.has(origin)
+        ? aiDraftCorsResponse(request, null, 204)
+        : aiDraftCorsResponse(request, { ok: false, error: "Origin is not allowed." }, 403);
+    }
     return corsResponse(request, null, 204);
   }
 
@@ -4203,21 +4213,25 @@ async function readJson(request) {
 }
 
 async function handleAdminAiDrafts(request) {
+  const origin = request.headers.get("Origin") || "";
+  if (origin && !ADMIN_AI_DRAFTS_ORIGINS.has(origin)) {
+    return aiDraftCorsResponse(request, { ok: false, error: "Origin is not allowed." }, 403);
+  }
   if (!(await isAdminRequest(request))) {
-    return corsResponse(request, { ok: false, error: "Admin authorisation required." }, 401);
+    return aiDraftCorsResponse(request, { ok: false, error: "Admin authorisation required." }, 401);
   }
   if (request.method !== "POST") {
-    return corsResponse(request, { ok: false, error: "Method not allowed." }, 405);
+    return aiDraftCorsResponse(request, { ok: false, error: "Method not allowed." }, 405);
   }
 
   const contentLength = Number(request.headers.get("Content-Length") || 0);
   if (contentLength > 12000) {
-    return corsResponse(request, { ok: false, error: "Draft request is too large." }, 413);
+    return aiDraftCorsResponse(request, { ok: false, error: "Draft request is too large." }, 413);
   }
 
   const input = await readJson(request);
   if (!input || typeof input !== "object" || Array.isArray(input)) {
-    return corsResponse(request, { ok: false, error: "Enter valid product details." }, 400);
+    return aiDraftCorsResponse(request, { ok: false, error: "Enter valid product details." }, 400);
   }
 
   const product = {
@@ -4230,12 +4244,12 @@ async function handleAdminAiDrafts(request) {
   };
   const tone = ["friendly", "professional", "playful"].includes(input.tone) ? input.tone : "friendly";
   if (!product.name || !product.description) {
-    return corsResponse(request, { ok: false, error: "Product name and description are required." }, 400);
+    return aiDraftCorsResponse(request, { ok: false, error: "Product name and description are required." }, 400);
   }
 
   const ai = envValue("AI");
   if (!ai?.run) {
-    return corsResponse(request, { ok: false, error: "AI drafting is not configured." }, 503);
+    return aiDraftCorsResponse(request, { ok: false, error: "AI drafting is not configured." }, 503);
   }
 
   try {
@@ -4261,7 +4275,7 @@ async function handleAdminAiDrafts(request) {
     try {
       generated = JSON.parse(raw);
     } catch {
-      return corsResponse(request, { ok: false, error: "AI returned an invalid draft. Please try again." }, 502);
+      return aiDraftCorsResponse(request, { ok: false, error: "AI returned an invalid draft. Please try again." }, 502);
     }
     const draft = {
       productDescription: cleanMultilineText(generated?.productDescription, 500),
@@ -4270,9 +4284,9 @@ async function handleAdminAiDrafts(request) {
       emailPreview: cleanMultilineText(generated?.emailPreview, 180),
     };
     if (!draft.productDescription || !draft.socialCaption) {
-      return corsResponse(request, { ok: false, error: "AI returned an incomplete draft. Please try again." }, 502);
+      return aiDraftCorsResponse(request, { ok: false, error: "AI returned an incomplete draft. Please try again." }, 502);
     }
-    return corsResponse(request, {
+    return aiDraftCorsResponse(request, {
       ok: true,
       draft,
       generatedAt: new Date().toISOString(),
@@ -4281,7 +4295,7 @@ async function handleAdminAiDrafts(request) {
     });
   } catch (error) {
     logExternalError("Admin AI draft failed", { error });
-    return corsResponse(request, { ok: false, error: "AI drafting is temporarily unavailable." }, 502);
+    return aiDraftCorsResponse(request, { ok: false, error: "AI drafting is temporarily unavailable." }, 502);
   }
 }
 
@@ -4675,6 +4689,27 @@ function corsResponse(request, body, status = 200) {
       ...headers,
       "Content-Type": "application/json; charset=utf-8",
     },
+  });
+}
+
+function aiDraftCorsResponse(request, body, status = 200) {
+  const origin = request.headers.get("Origin") || "";
+  const headers = {
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type, Accept, X-Admin-Token",
+    "Access-Control-Max-Age": "86400",
+    "Cache-Control": "no-store",
+    Vary: "Origin",
+  };
+
+  if (ADMIN_AI_DRAFTS_ORIGINS.has(origin)) {
+    headers["Access-Control-Allow-Origin"] = origin;
+  }
+
+  if (body === null) return new Response(null, { status, headers });
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...headers, "Content-Type": "application/json; charset=utf-8" },
   });
 }
 

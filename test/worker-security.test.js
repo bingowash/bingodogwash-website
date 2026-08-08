@@ -98,6 +98,60 @@ test("AI drafting remains admin-only and never invokes AI without authorisation"
   assert.equal(called, false);
 });
 
+test("AI drafting preflight reflects each trusted origin and required headers", async () => {
+  for (const origin of ["https://bingodogwash.com", "https://admin.bingodogwash.com"]) {
+    const response = await worker.fetch(new Request("https://bingodogwash.com/api/admin/ai-drafts", {
+      method: "OPTIONS",
+      headers: {
+        Origin: origin,
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "authorization, content-type, accept",
+      },
+    }), { ADMIN_API_TOKEN: "admin-token" });
+
+    assert.equal(response.status, 204);
+    assert.equal(response.headers.get("Access-Control-Allow-Origin"), origin);
+    assert.equal(response.headers.get("Access-Control-Allow-Methods"), "POST, OPTIONS");
+    assert.match(response.headers.get("Access-Control-Allow-Headers"), /Authorization/);
+    assert.match(response.headers.get("Access-Control-Allow-Headers"), /Content-Type/);
+    assert.match(response.headers.get("Access-Control-Allow-Headers"), /Accept/);
+    assert.match(response.headers.get("Access-Control-Allow-Headers"), /X-Admin-Token/);
+  }
+});
+
+test("AI drafting rejects an unapproved origin before invoking AI", async () => {
+  let called = false;
+  const preflight = await worker.fetch(new Request("https://bingodogwash.com/api/admin/ai-drafts", {
+    method: "OPTIONS",
+    headers: {
+      Origin: "https://example.com",
+      "Access-Control-Request-Method": "POST",
+      "Access-Control-Request-Headers": "authorization, content-type",
+    },
+  }), { ADMIN_API_TOKEN: "admin-token" });
+
+  assert.equal(preflight.status, 403);
+  assert.equal(preflight.headers.has("Access-Control-Allow-Origin"), false);
+
+  const response = await worker.fetch(new Request("https://bingodogwash.com/api/admin/ai-drafts", {
+    method: "POST",
+    headers: {
+      Origin: "https://example.com",
+      Authorization: "Bearer admin-token",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ name: "Dog shampoo", description: "Gentle everyday dog shampoo." }),
+  }), {
+    ADMIN_API_TOKEN: "admin-token",
+    AI: { async run() { called = true; return {}; } },
+  });
+
+  assert.equal(response.status, 403);
+  assert.equal(response.headers.has("Access-Control-Allow-Origin"), false);
+  assert.equal(called, false);
+  assert.equal(JSON.stringify(await response.json()).includes("admin-token"), false);
+});
+
 test("AI drafting accepts product facts and returns editable non-publishing fields", async () => {
   let requestInput;
   const response = await worker.fetch(new Request("https://bingodogwash.com/api/admin/ai-drafts", {
