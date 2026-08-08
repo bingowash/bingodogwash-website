@@ -4,3 +4,4 @@ Bingo Dog Wash is a modern self-service dog wash platform that combines professi
 
 This repository contains the source code, assets, and documentation for the official Bingo Dog Wash website.
 
+<!-- Cloudflare deployment trigger -->
