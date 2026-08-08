@@ -245,8 +245,8 @@
 			"d1_databases": [
 				{
 					"binding": "GIFT_CARD_DB",
-					"database_name": "bingo-gift-cards",
-					"database_id": "89a7dff7-4161-4250-b085-10a7f3d69b18",
+					"database_name": "bingo-gift-cards-staging",
+					"database_id": "0ab03fe9-608e-413f-9e90-db40ad40f92a",
 					"migrations_dir": "./migrations"
 				}
 			],
