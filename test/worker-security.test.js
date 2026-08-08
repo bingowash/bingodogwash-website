@@ -191,6 +191,40 @@ test("AI drafting accepts product facts and returns editable non-publishing fiel
   assert.equal(JSON.stringify(body).includes("test-model"), false);
 });
 
+test("AI drafting decodes HTML entities as plain editable text", async () => {
+  let prompt;
+  const response = await worker.fetch(new Request("https://bingodogwash.com/api/admin/ai-drafts", {
+    method: "POST",
+    headers: { Authorization: "Bearer admin-token", "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: "3/8&quot; ribbon",
+      description: "A black &amp; white lead for dogs.",
+    }),
+  }), {
+    ADMIN_API_TOKEN: "admin-token",
+    AI: {
+      async run(_model, input) {
+        prompt = input.messages.at(-1).content;
+        return { response: JSON.stringify({
+          productDescription: "A 3/8&quot; black &amp; white ribbon.",
+          socialCaption: "Smart &amp; practical.",
+          emailSubject: "A 3/8&#34; ribbon",
+          emailPreview: "Black &#38; white style.",
+        }) };
+      },
+    },
+  });
+
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(JSON.parse(prompt).product.name, '3/8" ribbon');
+  assert.equal(JSON.parse(prompt).product.description, "A black & white lead for dogs.");
+  assert.equal(body.draft.productDescription, 'A 3/8" black & white ribbon.');
+  assert.equal(body.draft.socialCaption, "Smart & practical.");
+  assert.equal(body.draft.emailSubject, 'A 3/8" ribbon');
+  assert.equal(body.draft.emailPreview, "Black & white style.");
+});
+
 test("AI drafting rejects unsupported methods and invalid model output", async () => {
   const getResponse = await worker.fetch(new Request("https://bingodogwash.com/api/admin/ai-drafts", {
     headers: { Authorization: "Bearer admin-token" },
@@ -207,6 +241,41 @@ test("AI drafting rejects unsupported methods and invalid model output", async (
   });
   assert.equal(invalidResponse.status, 502);
   assert.deepEqual(await invalidResponse.json(), { ok: false, error: "AI returned an invalid draft. Please try again." });
+});
+
+test("AI product distribution requires admin authorisation and explicit confirmation", async () => {
+  const unauthorised = await worker.fetch(new Request("https://bingodogwash.com/api/admin/ai-distribution", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ confirmed: true }),
+  }), { ADMIN_API_TOKEN: "admin-token" });
+  assert.equal(unauthorised.status, 401);
+
+  const unconfirmed = await worker.fetch(new Request("https://bingodogwash.com/api/admin/ai-distribution", {
+    method: "POST",
+    headers: { Authorization: "Bearer admin-token", "Content-Type": "application/json" },
+    body: JSON.stringify({ confirmed: false }),
+  }), { ADMIN_API_TOKEN: "admin-token" });
+  assert.equal(unconfirmed.status, 400);
+  assert.deepEqual(await unconfirmed.json(), { ok: false, error: "Distribution must be reviewed and confirmed." });
+});
+
+test("AI generation remains draft-only and distribution is a separate endpoint", async () => {
+  let aiCalls = 0;
+  const response = await worker.fetch(new Request("https://bingodogwash.com/api/admin/ai-drafts", {
+    method: "POST",
+    headers: { Authorization: "Bearer admin-token", "Content-Type": "application/json" },
+    body: JSON.stringify({ name: "Dog ribbon", description: "A decorative ribbon for dogs." }),
+  }), {
+    ADMIN_API_TOKEN: "admin-token",
+    AI: { async run() { aiCalls += 1; return { response: JSON.stringify({ productDescription: "A decorative ribbon for dogs.", socialCaption: "A decorative finishing touch." }) }; } },
+    GIFT_CARD_DB: { prepare() { throw new Error("Generation must not access distribution storage."); } },
+  });
+  assert.equal(response.status, 200);
+  assert.equal(aiCalls, 1);
+  const body = await response.json();
+  assert.equal(body.saved, false);
+  assert.equal(body.publishable, false);
 });
 
 const topDogCompetitionRow = {

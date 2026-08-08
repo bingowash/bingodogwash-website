@@ -3,53 +3,88 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>AI Drafting Assistant | Bingo Dog Wash Admin</title>
-  <meta name="description" content="Protected drafting assistant for Bingo Dog Wash product and campaign copy.">
+  <title>AI Product &amp; Distribution Centre | Bingo Dog Wash Admin</title>
+  <meta name="description" content="Protected AI product content and distribution workspace for Bingo Dog Wash.">
   <meta name="robots" content="noindex,nofollow">
   <link rel="icon" href="/favicon.ico" sizes="any">
   <link rel="stylesheet" href="/styles.css">
   <link rel="stylesheet" href="/admin/admin-shell.css">
-  <link rel="stylesheet" href="/admin/ai-drafts.css">
+  <link rel="stylesheet" href="/admin/ai-drafts.css?v=20260809-centre">
 </head>
 <body>
   <header class="site-header"><nav class="nav"><a class="brand" href="/admin/" aria-label="Admin home"><img class="brand-logo" src="/images/bingo-dog-wash-logo.optimized.png" alt="Bingo Dog Wash" width="132" height="132"></a><button class="menu-toggle" type="button">Menu</button><div class="nav-links"></div></nav></header>
-  <main class="container ai-drafts-admin">
-    <section class="page-title">
-      <span class="eyebrow">Draft only</span>
-      <h1>AI drafting assistant</h1>
-      <p>Create editable marketing copy from product facts. Nothing is saved or published automatically.</p>
+  <main class="container ai-centre">
+    <section class="page-title ai-hero"><span class="eyebrow">Product → AI Content → Review → Choose Channels → Distribute</span><h1>AI Product &amp; Distribution Centre</h1><p>Create, optimise and distribute product content from one place.</p></section>
+
+    <section class="admin-toolbar ai-auth-card">
+      <div><span class="eyebrow">Protected workspace</span><h2>Admin access</h2><p class="small-note">Your existing admin token stays in this browser session. Product prompts never include customer, booking or payment data.</p></div>
+      <form class="form admin-token-form" data-ai-token-form><label>Admin token<input name="token" type="password" autocomplete="current-password" required></label><button class="btn btn-primary" type="submit">Unlock centre</button><p class="small-note" data-ai-message aria-live="polite"></p></form>
     </section>
 
-    <section class="admin-toolbar">
-      <div><span class="eyebrow">Authentication</span><h2>Admin access</h2><p class="small-note">Uses the existing admin token. AI prompts never include customer, payment or booking data.</p></div>
-      <form class="form admin-token-form" data-ai-token-form><label>Admin token<input name="token" type="password" autocomplete="current-password" required></label><button class="btn btn-primary" type="submit">Unlock drafting</button><p class="small-note" data-ai-message aria-live="polite"></p></form>
-    </section>
-
-    <section class="ai-drafts-layout" data-ai-workspace hidden>
-      <form class="card form ai-drafts-form" data-ai-draft-form>
-        <div><span class="eyebrow">Product facts</span><h2>Create a draft</h2><p>Only enter public product information. Required fields are marked.</p></div>
-        <label>Product name *<input name="name" maxlength="160" required></label>
-        <label>Category<input name="category" maxlength="100"></label>
-        <label>Price or price wording<input name="price" maxlength="40" placeholder="For example: £12.99 or Enquire for price"></label>
-        <label>Product description *<textarea name="description" maxlength="1800" rows="7" required></textarea></label>
-        <label>Audience<input name="audience" maxlength="240" placeholder="For example: dog owners looking for gentle grooming products"></label>
-        <label>Public product URL<input name="url" type="url" maxlength="300" placeholder="https://bingodogwash.com/product?id=..."></label>
-        <label>Tone<select name="tone"><option value="friendly">Friendly</option><option value="professional">Professional</option><option value="playful">Playful</option></select></label>
-        <button class="btn btn-secondary" type="submit">Generate editable drafts</button>
-      </form>
-
-      <section class="card ai-drafts-results" aria-labelledby="ai-results-title">
-        <span class="eyebrow">Human approval required</span><h2 id="ai-results-title">Draft results</h2>
-        <p class="small-note" data-ai-result-status>No draft generated yet.</p>
-        <label>Product description<textarea data-ai-output="productDescription" rows="6"></textarea></label>
-        <label>Social caption<textarea data-ai-output="socialCaption" rows="9"></textarea></label>
-        <label>Email subject<input data-ai-output="emailSubject" maxlength="70"></label>
-        <label>Email preview<textarea data-ai-output="emailPreview" rows="4"></textarea></label>
-        <div class="button-row"><button class="btn btn-light" type="button" data-ai-copy="productDescription">Copy description</button><button class="btn btn-light" type="button" data-ai-copy="socialCaption">Copy caption</button></div>
-        <p class="small-note"><strong>Draft only:</strong> review every claim before copying it into another tool. This page cannot publish.</p>
+    <div data-ai-workspace hidden>
+      <section class="card ai-section" aria-labelledby="select-product-title">
+        <div class="ai-section-heading"><div><span class="ai-step">1</span><h2 id="select-product-title">Select Product</h2><p>Load an existing shop product without creating a duplicate, or enter one manually.</p></div><button class="btn btn-light" type="button" data-ai-clear>Clear</button></div>
+        <div class="product-source-grid">
+          <div class="product-browser">
+            <label>Search shop products<input type="search" data-product-search placeholder="Search by product name, category or supplier"></label>
+            <label>Existing product<select data-product-select><option value="">Manual product</option></select></label>
+            <label>Paste product URL<input type="url" data-product-url-search placeholder="https://bingodogwash.com/product?id=..."></label>
+            <p class="small-note" data-product-status aria-live="polite">Unlock the centre to load available products.</p>
+          </div>
+          <div class="product-image-card">
+            <img data-product-image alt="Selected product preview" src="/images/bingo-dog-wash-logo.optimized.png">
+            <label class="btn btn-light upload-button">Change image<input type="file" accept="image/png,image/jpeg,image/webp" data-image-upload></label>
+            <p class="small-note">A local preview is not uploaded. Use a public image URL before distribution.</p>
+          </div>
+        </div>
       </section>
-    </section>
+
+      <section class="ai-work-grid">
+        <form class="card form ai-product-form" data-ai-draft-form>
+          <div class="ai-section-heading"><div><span class="ai-step">2</span><h2>Product Information</h2><p>Only provide public, verified product facts.</p></div></div>
+          <input type="hidden" name="id"><input type="hidden" name="source">
+          <label>Product name *<input name="name" maxlength="160" required></label>
+          <div class="two-fields"><label>Category<input name="category" maxlength="100"></label><label>SKU<input name="sku" maxlength="80"></label></div>
+          <label>Price or price wording<input name="price" maxlength="40" placeholder="For example: £12.99"></label>
+          <label>Original product description *<textarea name="description" maxlength="1800" rows="7" required></textarea></label>
+          <label>Target audience<input name="audience" maxlength="240" placeholder="Dog owners and dog lovers"></label>
+          <label>Public product URL<input name="url" type="url" maxlength="300"></label>
+          <label>Public image URL<input name="image" type="url" maxlength="500" data-image-url></label>
+          <div class="two-fields"><label>Tone<select name="tone"><option value="friendly">Friendly</option><option value="professional">Professional</option><option value="fun">Fun</option><option value="luxury">Luxury</option><option value="promotional">Promotional</option><option value="informative">Informative</option></select></label><label>Primary objective<select name="objective"><option value="sell">Sell product</option><option value="awareness">Generate awareness</option><option value="engagement">Social engagement</option><option value="traffic">Website traffic</option><option value="email">Email promotion</option><option value="marketplace">Marketplace listing</option></select></label></div>
+          <button class="btn btn-primary ai-generate" type="submit">✨ Generate AI Content</button>
+          <p class="small-note ai-generation-status" data-ai-result-status aria-live="polite">Generating content never publishes anything.</p>
+        </form>
+
+        <section class="card ai-results" aria-labelledby="results-title">
+          <div class="ai-section-heading"><div><span class="ai-step">3</span><h2 id="results-title">Review AI Content</h2><p>Edit every claim before distribution.</p></div><button class="btn btn-light" type="button" data-save-draft>Save Draft</button></div>
+          <div class="content-card-grid" data-content-cards></div>
+        </section>
+      </section>
+
+      <section class="card ai-section" aria-labelledby="channels-title">
+        <div class="ai-section-heading"><div><span class="ai-step">4</span><h2 id="channels-title">Choose Distribution Channels</h2><p>Connection state comes from the existing system. Credentials are never returned to this page.</p></div><button class="btn btn-light" type="button" data-refresh-channels>Refresh status</button></div>
+        <div class="channel-grid" data-channel-grid></div>
+        <div class="facebook-pages" data-facebook-pages hidden><h3>Facebook Pages</h3><div data-facebook-page-options></div></div>
+      </section>
+
+      <section class="card ai-section distribution-preview" aria-labelledby="preview-title">
+        <div class="ai-section-heading"><div><span class="ai-step">5</span><h2 id="preview-title">Preview Distribution</h2><p>Channel text stays independent. Editing Instagram will not overwrite Facebook.</p></div></div>
+        <div class="preview-grid" data-channel-previews></div>
+        <div class="button-row"><button class="btn btn-light" type="button" data-save-draft>Save Draft</button><button class="btn btn-secondary" type="button" data-preview-distribution>Preview Distribution</button><button class="btn btn-primary" type="button" data-distribute>🚀 Distribute Product</button></div>
+        <p class="small-note"><strong>Human approval required:</strong> generation and saving remain draft-only. Publishing requires the confirmation dialog.</p>
+      </section>
+
+      <section class="card ai-section" data-distribution-results hidden><h2>Distribution Results</h2><div class="result-list" data-result-list aria-live="polite"></div></section>
+
+      <section class="history-grid">
+        <section class="card ai-section"><div class="ai-section-heading"><div><h2>Recent AI Product Drafts</h2><p>Saved in this protected browser for now.</p></div></div><div class="history-list" data-draft-history></div></section>
+        <section class="card ai-section"><div class="ai-section-heading"><div><h2>Distribution History</h2><p>Per-channel outcomes; no credentials are stored.</p></div></div><div class="history-list" data-distribution-history></div></section>
+      </section>
+    </div>
   </main>
-  <script src="/admin/admin-shell.js?v=20260807" defer></script><script src="/site.js?v=20260806-admin-shell" defer></script><script src="/admin/ai-drafts.js?v=20260807" defer></script>
+
+  <dialog class="distribution-dialog" data-distribution-dialog aria-labelledby="confirm-title"><form method="dialog"><button class="dialog-close" value="cancel" aria-label="Close">×</button><span class="eyebrow">Final review</span><h2 id="confirm-title">Ready to distribute?</h2><div data-confirm-summary></div><div class="preview-grid" data-confirm-previews></div><div class="button-row"><button class="btn btn-light" value="cancel">Cancel</button><button class="btn btn-primary" type="button" data-confirm-distribution>Confirm Distribution</button></div><p class="small-note" data-distribution-status aria-live="polite"></p></form></dialog>
+
+  <script src="/admin/admin-shell.js?v=20260809-ai-products" defer></script><script src="/site.js?v=20260806-admin-shell" defer></script><script src="/admin/ai-drafts.js?v=20260809-centre" defer></script>
 </body>
 </html>

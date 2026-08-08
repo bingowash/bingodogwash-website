@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { handleCompetition, processCompetitionStripeEvent } from "./competition.js";
-import { handleMarketingRequest, isMarketingPath, runMarketingSchedule } from "./marketing.js";
+import { distributePreparedProduct, handleMarketingRequest, isMarketingPath, runMarketingSchedule } from "./marketing.js";
 
 const ALLOWED_ORIGINS = new Set([
   "https://bingodogwash.com",
@@ -36,6 +36,7 @@ const BOOKINGS_CHECKOUT_PATH = "/api/bookings/checkout";
 const ADMIN_BOOKINGS_PATH = "/api/admin/bookings";
 const ADMIN_STRIPE_PATH = "/api/admin/stripe";
 const ADMIN_AI_DRAFTS_PATH = "/api/admin/ai-drafts";
+const ADMIN_AI_DISTRIBUTION_PATH = "/api/admin/ai-distribution";
 const GIVEAWAY_CHECKOUT_PATH = "/api/giveaway/checkout";
 const ADMIN_GIVEAWAY_PATH = "/api/admin/giveaway-entries";
 const ADMIN_GIVEAWAY_FEED_PATH = "/api/giveaway/admin-feed";
@@ -360,7 +361,7 @@ function handleRequest(request) {
   const url = new URL(request.url);
 
   if (request.method === "OPTIONS") {
-    if (url.pathname === ADMIN_AI_DRAFTS_PATH) {
+    if (url.pathname === ADMIN_AI_DRAFTS_PATH || url.pathname === ADMIN_AI_DISTRIBUTION_PATH) {
       const origin = request.headers.get("Origin") || "";
       return ADMIN_AI_DRAFTS_ORIGINS.has(origin)
         ? aiDraftCorsResponse(request, null, 204)
@@ -418,6 +419,10 @@ function handleRequest(request) {
 
   if (url.pathname === ADMIN_AI_DRAFTS_PATH) {
     return handleAdminAiDrafts(request);
+  }
+
+  if (url.pathname === ADMIN_AI_DISTRIBUTION_PATH) {
+    return handleAdminAiDistribution(request);
   }
 
   if (url.pathname === GIVEAWAY_CHECKOUT_PATH) {
@@ -4235,14 +4240,18 @@ async function handleAdminAiDrafts(request) {
   }
 
   const product = {
-    name: cleanText(input.name, 160),
-    category: cleanText(input.category, 100),
-    price: cleanText(input.price, 40),
-    description: cleanMultilineText(input.description, 1800),
-    audience: cleanText(input.audience, 240),
+    name: cleanText(decodeAiDraftEntities(input.name), 160),
+    category: cleanText(decodeAiDraftEntities(input.category), 100),
+    price: cleanText(decodeAiDraftEntities(input.price), 40),
+    description: cleanMultilineText(decodeAiDraftEntities(input.description), 1800),
+    audience: cleanText(decodeAiDraftEntities(input.audience), 240),
+    sku: cleanText(decodeAiDraftEntities(input.sku), 80),
+    source: cleanText(decodeAiDraftEntities(input.source), 80),
     url: safeUrl(input.url),
+    image: safeUrl(input.image),
   };
-  const tone = ["friendly", "professional", "playful"].includes(input.tone) ? input.tone : "friendly";
+  const tone = ["friendly", "professional", "fun", "luxury", "promotional", "informative", "playful"].includes(input.tone) ? input.tone : "friendly";
+  const objective = ["sell", "awareness", "engagement", "traffic", "email", "marketplace"].includes(input.objective) ? input.objective : "sell";
   if (!product.name || !product.description) {
     return aiDraftCorsResponse(request, { ok: false, error: "Product name and description are required." }, 400);
   }
@@ -4258,14 +4267,14 @@ async function handleAdminAiDrafts(request) {
       messages: [
         {
           role: "system",
-          content: "You draft UK English marketing copy for Bingo Dog Wash. Use only supplied facts. Never invent claims, discounts, reviews, availability, delivery promises, health benefits, or prices. Return only valid JSON with string fields productDescription, socialCaption, emailSubject, and emailPreview. Keep the product description under 500 characters, social caption under 700 characters, email subject under 70 characters, and email preview under 180 characters."
+          content: "You draft UK English product and channel copy for Bingo Dog Wash. Use only supplied facts. Never invent specifications, discounts, shipping terms, guarantees, stock, reviews, health benefits, supplier claims, availability, delivery promises, or prices. If a fact is missing, write around it. Return only valid JSON with string fields productDescription, shortDescription, socialCaption, facebookCaption, instagramCaption, tiktokCaption, marketplaceTitle, marketplaceDescription, seoTitle, seoDescription, emailSubject, and emailPreview. Keep SEO title under 60 characters, SEO description under 160, email subject under 70, and TikTok caption under 220."
         },
         {
           role: "user",
-          content: JSON.stringify({ product, tone })
+          content: JSON.stringify({ product, tone, objective })
         }
       ],
-      max_tokens: 520,
+      max_tokens: 1200,
       temperature: 0.6,
     });
     const raw = cleanMultilineText(result?.response || result?.result?.response, 5000)
@@ -4278,10 +4287,18 @@ async function handleAdminAiDrafts(request) {
       return aiDraftCorsResponse(request, { ok: false, error: "AI returned an invalid draft. Please try again." }, 502);
     }
     const draft = {
-      productDescription: cleanMultilineText(generated?.productDescription, 500),
-      socialCaption: cleanMultilineText(generated?.socialCaption, 700),
-      emailSubject: cleanText(generated?.emailSubject, 70),
-      emailPreview: cleanMultilineText(generated?.emailPreview, 180),
+      productDescription: cleanMultilineText(decodeAiDraftEntities(generated?.productDescription), 500),
+      shortDescription: cleanMultilineText(decodeAiDraftEntities(generated?.shortDescription), 240),
+      socialCaption: cleanMultilineText(decodeAiDraftEntities(generated?.socialCaption), 700),
+      facebookCaption: cleanMultilineText(decodeAiDraftEntities(generated?.facebookCaption), 900),
+      instagramCaption: cleanMultilineText(decodeAiDraftEntities(generated?.instagramCaption), 1200),
+      tiktokCaption: cleanMultilineText(decodeAiDraftEntities(generated?.tiktokCaption), 220),
+      marketplaceTitle: cleanText(decodeAiDraftEntities(generated?.marketplaceTitle), 140),
+      marketplaceDescription: cleanMultilineText(decodeAiDraftEntities(generated?.marketplaceDescription), 1200),
+      seoTitle: cleanText(decodeAiDraftEntities(generated?.seoTitle), 60),
+      seoDescription: cleanText(decodeAiDraftEntities(generated?.seoDescription), 160),
+      emailSubject: cleanText(decodeAiDraftEntities(generated?.emailSubject), 70),
+      emailPreview: cleanMultilineText(decodeAiDraftEntities(generated?.emailPreview), 600),
     };
     if (!draft.productDescription || !draft.socialCaption) {
       return aiDraftCorsResponse(request, { ok: false, error: "AI returned an incomplete draft. Please try again." }, 502);
@@ -4297,6 +4314,55 @@ async function handleAdminAiDrafts(request) {
     logExternalError("Admin AI draft failed", { error });
     return aiDraftCorsResponse(request, { ok: false, error: "AI drafting is temporarily unavailable." }, 502);
   }
+}
+
+async function handleAdminAiDistribution(request) {
+  const origin = request.headers.get("Origin") || "";
+  if (origin && !ADMIN_AI_DRAFTS_ORIGINS.has(origin)) return aiDraftCorsResponse(request, { ok: false, error: "Origin is not allowed." }, 403);
+  if (!(await isAdminRequest(request))) return aiDraftCorsResponse(request, { ok: false, error: "Admin authorisation required." }, 401);
+  if (request.method !== "POST") return aiDraftCorsResponse(request, { ok: false, error: "Method not allowed." }, 405);
+  const input = await readJson(request);
+  if (!input || input.confirmed !== true) return aiDraftCorsResponse(request, { ok: false, error: "Distribution must be reviewed and confirmed." }, 400);
+  const product = {
+    id: cleanText(input.product?.id, 120) || crypto.randomUUID(),
+    source: cleanText(input.product?.source, 80) || "manual",
+    name: cleanText(decodeAiDraftEntities(input.product?.name), 160),
+    description: cleanMultilineText(decodeAiDraftEntities(input.product?.description), 1800),
+    image: safeUrl(input.product?.image),
+    url: safeUrl(input.product?.url),
+  };
+  if (!product.name || !product.image || !product.url) return aiDraftCorsResponse(request, { ok: false, error: "A product name, public image and public URL are required for distribution." }, 400);
+  const channels = [...new Set((Array.isArray(input.channels) ? input.channels : []).map((value) => cleanText(value, 40)))].filter((value) => value === "facebook" || value === "instagram");
+  if (!channels.length) return aiDraftCorsResponse(request, { ok: false, error: "Choose at least one connected publishing channel." }, 400);
+  const content = {
+    facebook: cleanMultilineText(decodeAiDraftEntities(input.content?.facebook), 1200),
+    instagram: cleanMultilineText(decodeAiDraftEntities(input.content?.instagram), 1600),
+  };
+  const pageIds = (Array.isArray(input.facebookPageIds) ? input.facebookPageIds : []).map((value) => cleanText(value, 80)).filter(Boolean);
+  const result = await distributePreparedProduct(requestEnvStorage.getStore() || {}, { product, channels, content, pageIds });
+  return aiDraftCorsResponse(request, result, result.ok ? 200 : 502);
+}
+
+function decodeAiDraftEntities(value) {
+  return String(value || "").replace(/&(#(?:x[0-9a-f]+|\d+)|amp|quot|apos|lt|gt|nbsp);/gi, (entity, name) => {
+    const normalized = name.toLowerCase();
+    if (normalized === "amp") return "&";
+    if (normalized === "quot") return '"';
+    if (normalized === "apos") return "'";
+    if (normalized === "lt") return "<";
+    if (normalized === "gt") return ">";
+    if (normalized === "nbsp") return " ";
+    const codePoint = normalized.startsWith("#x")
+      ? Number.parseInt(normalized.slice(2), 16)
+      : Number.parseInt(normalized.slice(1), 10);
+    try {
+      return Number.isInteger(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff
+        ? String.fromCodePoint(codePoint)
+        : entity;
+    } catch {
+      return entity;
+    }
+  });
 }
 
 async function auditProfessional(entityType, entityId, eventType, actor, detail) {

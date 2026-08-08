@@ -163,6 +163,51 @@ export async function runMarketingAutomation(env, options = {}) {
   return { ok: status !== "failed", status, postId, product: product.name, caption, platforms: results };
 }
 
+export async function distributePreparedProduct(env, input) {
+  if (publishingDisabled(env)) return { ok: false, status: "failed", error: "Publishing is disabled in this environment.", results: {} };
+  const db = env.GIFT_CARD_DB;
+  if (!db) return { ok: false, status: "failed", error: "Marketing database unavailable.", results: {} };
+  const product = input.product;
+  const channels = input.channels || [];
+  const campaignCode = `bdw-manual-${new Date().toISOString().slice(0, 10).replaceAll("-", "")}-${crypto.randomUUID().slice(0, 8)}`;
+  const trackedUrl = campaignUrl(product.url, campaignCode);
+  const postId = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const fallbackCaption = clean(product.description, 700);
+  await db.prepare(`INSERT INTO marketing_posts
+    (id, product_source, product_id, product_name, product_url, product_image, caption, campaign_code, status, trigger_type, attempt_count, scheduled_at, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'processing', 'ai-distribution', 0, ?, ?, ?)`)
+    .bind(postId, product.source, product.id, product.name, trackedUrl, product.image, input.content.facebook || input.content.instagram || fallbackCaption, campaignCode, now, now, now).run();
+
+  const results = {};
+  if (channels.includes("facebook")) {
+    const configuredPages = configuredFacebookPageIds(env);
+    const requestedPages = input.pageIds?.length ? input.pageIds.filter((id) => configuredPages.includes(id)) : configuredPages;
+    if (!requestedPages.length) {
+      results.facebook = { ok: false, status: "failed", error: "No configured Facebook Page was selected.", attempts: 0 };
+      await savePlatformResult(db, postId, "facebook", "failed", "", 0, results.facebook.error);
+    } else {
+      const context = await resolveFacebookPublishingContext(env, requestedPages);
+      results.facebook = context.connection.ok
+        ? await publishFacebookPages(env, db, postId, context.pageAccess, product, input.content.facebook || fallbackCaption, platformCampaignUrl(trackedUrl, "facebook"), context.connection.source)
+        : { ok: false, status: "failed", error: context.connection.error, attempts: 0 };
+      if (!context.connection.ok) await savePlatformResult(db, postId, "facebook", "failed", "", 0, context.connection.error);
+    }
+  }
+  if (channels.includes("instagram")) {
+    const connection = await resolveMetaConnection(env, "instagram");
+    results.instagram = connection.ok
+      ? await publishWithRetry({ ...env, META_TOKEN_SOURCE: connection.source }, db, postId, "instagram", product, input.content.instagram || fallbackCaption, trackedUrl, connection.token)
+      : { ok: false, status: "failed", error: connection.error, attempts: 0 };
+    if (!connection.ok) await savePlatformResult(db, postId, "instagram", "failed", "", 0, connection.error);
+  }
+  const succeeded = Object.values(results).filter((result) => result.ok).length;
+  const status = succeeded === channels.length ? "success" : succeeded ? "partial" : "failed";
+  const error = Object.entries(results).filter(([, result]) => !result.ok).map(([channel, result]) => `${channel}: ${result.error || "Distribution failed."}`).join(" | ");
+  await finishPost(db, postId, status, error, results);
+  return { ok: succeeded > 0, status, postId, product: product.name, results };
+}
+
 async function selectNextProduct(db) {
   const result = await db.prepare(`SELECT
       'etsy' AS source, id, COALESCE(NULLIF(display_title, ''), title) AS name,
