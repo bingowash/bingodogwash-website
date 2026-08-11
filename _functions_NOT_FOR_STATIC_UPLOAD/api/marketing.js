@@ -34,7 +34,14 @@ export async function handleMarketingRequest(request, env, url = new URL(request
   if (!env.GIFT_CARD_DB) return json({ ok: false, error: "Marketing database unavailable." }, 503);
 
   // Allow the admin dashboard (GET). Other authenticated admin endpoints use POST.
-  if (request.method === "GET" && url.pathname === ADMIN_PATH) return dashboard(env);
+  if (request.method === "GET" && url.pathname === ADMIN_PATH) {
+    try {
+      return await dashboard(env);
+    } catch (error) {
+      console.error(JSON.stringify({ event: "marketing_dashboard_failure", category: dashboardFailureCategory(error) }));
+      return json({ ok: false, error: "Marketing status is temporarily unavailable." }, 502);
+    }
+  }
   if (request.method !== "POST") return json({ ok: false, error: "Method not allowed." }, 405);
 
   if (url.pathname === `${ADMIN_PATH}/test`) {
@@ -141,12 +148,15 @@ export async function runMarketingAutomation(env, options = {}) {
     }
     const instagramProduct = instagramSelection.product;
     const instagramUrl = campaignUrl(instagramProduct.url, campaignCode, "instagram");
-    const instagramCaption = instagramProduct.id === product.id
-      ? platformCaption(caption, trackedUrl, "instagram")
+    const generatedInstagramCaption = instagramProduct.id === product.id
+      ? caption
       : await generateCaption(env, instagramProduct, instagramUrl, campaignCode);
+    const instagramCaption = instagramFeedCaption(generatedInstagramCaption);
     results.instagram = await publishWithRetry({ ...env, META_TOKEN_SOURCE: connection.source }, db, postId, platform, instagramProduct, instagramCaption, instagramUrl, connection.token);
     results.instagram.tokenSource = connection.source;
     results.instagram.product = { id: String(instagramProduct.id), name: instagramProduct.name };
+    results.instagram.destinationUrl = instagramUrl;
+    results.instagram.destinationStrategy = "link_in_bio";
     results.instagram.rejections = instagramSelection.rejections;
   }
   const succeeded = Object.values(results).filter((result) => result.ok).length;
@@ -196,10 +206,30 @@ export async function distributePreparedProduct(env, input) {
   }
   if (channels.includes("instagram")) {
     const connection = await resolveMetaConnection(env, "instagram");
-    results.instagram = connection.ok
-      ? await publishWithRetry({ ...env, META_TOKEN_SOURCE: connection.source }, db, postId, "instagram", product, input.content.instagram || fallbackCaption, trackedUrl, connection.token)
-      : { ok: false, status: "failed", error: connection.error, attempts: 0 };
-    if (!connection.ok) await savePlatformResult(db, postId, "instagram", "failed", "", 0, connection.error);
+    if (!connection.ok) {
+      results.instagram = { ok: false, status: "failed", error: connection.error, attempts: 0 };
+      await savePlatformResult(db, postId, "instagram", "failed", "", 0, connection.error);
+    } else {
+      const selection = await selectInstagramProduct(db, product);
+      const destinationUrl = clean(input.instagramDestinationUrl || product.instagramDestinationUrl || "https://bingodogwash.com/shop", 1000);
+      if (!selection.product) {
+        const error = "Skipped — Instagram image unavailable.";
+        await savePlatformResult(db, postId, "instagram", "skipped", "", 0, error);
+        results.instagram = { ok: false, skipped: true, status: "skipped", error, attempts: 0, rejections: selection.rejections, destinationUrl, destinationStrategy: "link_in_bio" };
+      } else {
+        const instagramProduct = selection.product;
+        const selectedCaption = String(instagramProduct.id) === String(product.id)
+          ? input.content.instagram || fallbackCaption
+          : `${instagramProduct.name}. ${clean(instagramProduct.description, 500)}`;
+        results.instagram = await publishWithRetry({ ...env, META_TOKEN_SOURCE: connection.source }, db, postId, "instagram", instagramProduct, instagramFeedCaption(selectedCaption), destinationUrl, connection.token);
+        results.instagram.product = { id: String(instagramProduct.id), name: instagramProduct.name };
+        results.instagram.rejections = selection.rejections;
+        results.instagram.destinationUrl = destinationUrl;
+        results.instagram.destinationStrategy = "link_in_bio";
+        results.instagram.shoppingTags = { supported: true, applied: false, reason: "Requires an eligible connected Meta product catalogue." };
+        results.instagram.storyLinkSticker = { supported: false, destinationUrl, reason: "Reserved for a supported Instagram Stories publishing workflow." };
+      }
+    }
   }
   const succeeded = Object.values(results).filter((result) => result.ok).length;
   const status = succeeded === channels.length ? "success" : succeeded ? "partial" : "failed";
@@ -263,14 +293,16 @@ async function validateInstagramImage(image) {
   let url;
   try { url = new URL(absoluteImage(image)); } catch { return { ok: false, reason: "Invalid image URL." }; }
   if (url.protocol !== "https:" && url.protocol !== "http:") return { ok: false, reason: "Image URL is not HTTP(S)." };
+  if (url.username || url.password) return { ok: false, reason: "Authenticated image URLs are not supported." };
+  const hostname = url.hostname.toLowerCase();
+  if (hostname === "localhost" || hostname.endsWith(".localhost") || hostname === "127.0.0.1" || hostname === "::1" || hostname.endsWith(".local")) return { ok: false, reason: "Local image URLs are not publicly accessible." };
   const pathname = url.pathname.toLowerCase();
   if (/\.(pdf|zip|svg|webp|gif|bmp|tiff?|avif)(?:$|[?#])/.test(pathname)) return { ok: false, reason: "Unsupported image file type." };
   if (/(^|\/)download(?:\/|$)/.test(pathname) || /[?&](download|attachment)=/i.test(url.search)) return { ok: false, reason: "Download URLs are not accepted by Instagram." };
-  if (!/\.(jpe?g|png)$/.test(pathname)) return { ok: false, reason: "Image URL must identify a JPG, JPEG or PNG file." };
   let response;
   try {
-    response = await fetch(url, { method: "HEAD", redirect: "follow" });
-    if (!response.ok) response = await fetch(url, { method: "GET", headers: { Range: "bytes=0-0" }, redirect: "follow" });
+    response = await fetch(url, { method: "HEAD", redirect: "follow", signal: AbortSignal.timeout(5000) });
+    if (!response.ok) response = await fetch(url, { method: "GET", headers: { Range: "bytes=0-0" }, redirect: "follow", signal: AbortSignal.timeout(5000) });
   } catch {
     return { ok: false, reason: "Image URL is not publicly accessible." };
   }
@@ -278,6 +310,16 @@ async function validateInstagramImage(image) {
   const contentType = (response.headers.get("Content-Type") || "").split(";", 1)[0].trim().toLowerCase();
   if (!['image/jpeg', 'image/png'].includes(contentType)) return { ok: false, reason: contentType ? `Unsupported Content-Type: ${contentType}.` : "Image response did not include a supported Content-Type." };
   return { ok: true, contentType };
+}
+
+function instagramFeedCaption(value) {
+  const withoutUrls = String(value || "")
+    .replace(/https?:\/\/\S+/gi, "")
+    .replace(/\b(?:click|tap)\s+(?:on\s+)?(?:the\s+)?link\s+(?:below|above|here)\b[.!:]?/gi, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  const withoutFalseCta = withoutUrls.replace(/\bshop\s+now\s*[-—:]?\s*link\s+in\s+bio\s*🐾?/gi, "").trim();
+  return `${withoutFalseCta}${withoutFalseCta ? "\n\n" : ""}Shop now — link in bio 🐾`;
 }
 
 async function storedMetaConnection(db) {
@@ -485,7 +527,19 @@ async function publishInstagram(env, image, caption, token) {
   const context = { accountId: String(env.META_INSTAGRAM_USER_ID || ""), tokenSource: env.META_TOKEN_SOURCE || "unknown" };
   const create = await graphPost(INSTAGRAM_GRAPH_ORIGIN, `${env.META_INSTAGRAM_USER_ID}/media`, new URLSearchParams({ image_url: absoluteImage(image), caption, access_token: token }), "media_create", context);
   await waitForInstagramMedia(env, create, token, context);
-  return graphPost(INSTAGRAM_GRAPH_ORIGIN, `${env.META_INSTAGRAM_USER_ID}/media_publish`, new URLSearchParams({ creation_id: create, access_token: token }), "media_publish", context);
+  const configuredDelay = Number(env.INSTAGRAM_MEDIA_STATUS_DELAY_MS);
+  const retryDelayMs = Number.isFinite(configuredDelay) ? Math.min(10000, Math.max(0, Math.trunc(configuredDelay))) : 1500;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return await graphPost(INSTAGRAM_GRAPH_ORIGIN, `${env.META_INSTAGRAM_USER_ID}/media_publish`, new URLSearchParams({ creation_id: create, access_token: token }), "media_publish", context);
+    } catch (error) {
+      const mediaIdPending = /media id is not available/i.test(String(error?.message || ""));
+      if (!mediaIdPending || attempt === 3) throw error;
+      if (retryDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+      await waitForInstagramMedia({ ...env, INSTAGRAM_MEDIA_STATUS_DELAY_MS: 0 }, create, token, context);
+    }
+  }
+  throw new Error("Instagram publishing failed.");
 }
 
 async function waitForInstagramMedia(env, creationId, token, context) {
@@ -1007,6 +1061,13 @@ function safeMetaProviderMessage(value) {
     .replace(/\b[A-Za-z0-9_|-]{60,}\b/g, "[redacted]");
 }
 
+function dashboardFailureCategory(error) {
+  const message = String(error?.message || "").toLowerCase();
+  if (/d1|database|sql|table|column/.test(message)) return "database";
+  if (/fetch|network|timeout|graph|meta/.test(message)) return "upstream";
+  return "internal";
+}
+
 function safeStoredMetaError(value) {
   const message = String(value || "");
   if (!message || Object.values(META_ERROR).includes(message)) return message;
@@ -1035,21 +1096,29 @@ function publishingError(message, retryable, diagnostic = null) { const error = 
 
 async function dashboard(env) {
   const db = env.GIFT_CARD_DB;
+  const settingsRequest = Promise.resolve().then(() => getSettings(env));
+  const postsRequest = Promise.resolve().then(() => db.prepare(`SELECT marketing_posts.*,
+    (SELECT status FROM marketing_platform_results WHERE post_id = marketing_posts.id AND platform = 'tiktok' ORDER BY created_at DESC LIMIT 1) AS tiktok_status,
+    (SELECT external_post_id FROM marketing_platform_results WHERE post_id = marketing_posts.id AND platform = 'tiktok' ORDER BY created_at DESC LIMIT 1) AS tiktok_publish_id,
+    (SELECT metadata FROM marketing_platform_results WHERE post_id = marketing_posts.id AND platform = 'tiktok' ORDER BY created_at DESC LIMIT 1) AS tiktok_metadata
+    FROM marketing_posts ORDER BY created_at DESC LIMIT 50`).all());
+  const totalsRequest = Promise.resolve().then(() => db.prepare(`SELECT
+    COUNT(DISTINCT CASE WHEN status IN ('success','partial') THEN product_source || ':' || product_id END) AS products_promoted,
+    COALESCE(SUM(CASE WHEN event_type = 'click' THEN value ELSE 0 END), 0) AS clicks,
+    COALESCE(SUM(CASE WHEN event_type = 'engagement' THEN value ELSE 0 END), 0) AS engagement,
+    COALESCE(SUM(CASE WHEN event_type = 'sale' THEN value ELSE 0 END), 0) AS sales
+    FROM marketing_posts LEFT JOIN marketing_events ON marketing_events.post_id = marketing_posts.id`).first());
+  const bestRequest = Promise.resolve().then(() => db.prepare(`SELECT product_name, COUNT(DISTINCT marketing_posts.id) AS posts,
+    COALESCE(SUM(CASE WHEN event_type = 'click' THEN value ELSE 0 END), 0) AS clicks,
+    COALESCE(SUM(CASE WHEN event_type = 'engagement' THEN value ELSE 0 END), 0) AS engagement,
+    COALESCE(SUM(CASE WHEN event_type = 'sale' THEN value ELSE 0 END), 0) AS sales
+    FROM marketing_posts LEFT JOIN marketing_events ON marketing_events.post_id = marketing_posts.id
+    GROUP BY product_source, product_id, product_name ORDER BY sales DESC, clicks DESC, engagement DESC LIMIT 8`).all());
   const [settings, posts, totals, best] = await Promise.all([
-    getSettings(env),
-    db.prepare("SELECT * FROM marketing_posts ORDER BY created_at DESC LIMIT 50").all(),
-    db.prepare(`SELECT
-      COUNT(DISTINCT CASE WHEN status IN ('success','partial') THEN product_source || ':' || product_id END) AS products_promoted,
-      COALESCE(SUM(CASE WHEN event_type = 'click' THEN value ELSE 0 END), 0) AS clicks,
-      COALESCE(SUM(CASE WHEN event_type = 'engagement' THEN value ELSE 0 END), 0) AS engagement,
-      COALESCE(SUM(CASE WHEN event_type = 'sale' THEN value ELSE 0 END), 0) AS sales
-      FROM marketing_posts LEFT JOIN marketing_events ON marketing_events.post_id = marketing_posts.id`).first(),
-    db.prepare(`SELECT product_name, COUNT(DISTINCT marketing_posts.id) AS posts,
-      COALESCE(SUM(CASE WHEN event_type = 'click' THEN value ELSE 0 END), 0) AS clicks,
-      COALESCE(SUM(CASE WHEN event_type = 'engagement' THEN value ELSE 0 END), 0) AS engagement,
-      COALESCE(SUM(CASE WHEN event_type = 'sale' THEN value ELSE 0 END), 0) AS sales
-      FROM marketing_posts LEFT JOIN marketing_events ON marketing_events.post_id = marketing_posts.id
-      GROUP BY product_source, product_id, product_name ORDER BY sales DESC, clicks DESC, engagement DESC LIMIT 8`).all()
+    settingsRequest,
+    postsRequest,
+    totalsRequest,
+    bestRequest,
   ]);
   const instagramStatus = await instagramPreflight(env);
   const facebookStatus = await facebookPreflight(env);
@@ -1198,4 +1267,4 @@ function clean(value, max = 500) { return String(value || "").replace(/\s+/g, " 
 async function readJson(request) { try { return await request.json(); } catch { return null; } }
 function json(body, status = 200) { return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" } }); }
 
-export const marketingTestHelpers = { campaignUrl, trackedDestination, nextRunAt, isScheduledSlot, scheduleSlotKey, hash, benefit, metaAccessToken, resolveMetaConnection, resolveFacebookPublishingContext, resolveFacebookPageAccess, publishWithRetry, publishFacebook, publishInstagram, waitForInstagramMedia, publishFacebookPages, validateInstagramImage, selectInstagramProduct, configuredFacebookPageIds, postingEndpointResponse, redirectPage, instagramPreflight, facebookPreflight, publishingDisabled };
+export const marketingTestHelpers = { campaignUrl, trackedDestination, nextRunAt, isScheduledSlot, scheduleSlotKey, hash, benefit, metaAccessToken, resolveMetaConnection, resolveFacebookPublishingContext, resolveFacebookPageAccess, publishWithRetry, publishFacebook, publishInstagram, waitForInstagramMedia, publishFacebookPages, validateInstagramImage, selectInstagramProduct, instagramFeedCaption, configuredFacebookPageIds, postingEndpointResponse, redirectPage, instagramPreflight, facebookPreflight, publishingDisabled };

@@ -1,6 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { handleCompetition, processCompetitionStripeEvent } from "./competition.js";
 import { distributePreparedProduct, handleMarketingRequest, isMarketingPath, runMarketingSchedule } from "./marketing.js";
+import { handleTikTokRequest, isTikTokPath } from "./tiktok.js";
+import { handleDistributionChannelRequest, isDistributionChannelPath } from "./distribution-channels.js";
+import { handleBrevoWebhook, handleProspectingRequest, isBrevoWebhookPath, isProspectingPath, runProspectingSchedule } from "./prospecting.js";
 
 const ALLOWED_ORIGINS = new Set([
   "https://bingodogwash.com",
@@ -37,6 +40,7 @@ const ADMIN_BOOKINGS_PATH = "/api/admin/bookings";
 const ADMIN_STRIPE_PATH = "/api/admin/stripe";
 const ADMIN_AI_DRAFTS_PATH = "/api/admin/ai-drafts";
 const ADMIN_AI_DISTRIBUTION_PATH = "/api/admin/ai-distribution";
+const ADMIN_CATALOGUE_PATH = "/api/admin/catalogue";
 const GIVEAWAY_CHECKOUT_PATH = "/api/giveaway/checkout";
 const ADMIN_GIVEAWAY_PATH = "/api/admin/giveaway-entries";
 const ADMIN_GIVEAWAY_FEED_PATH = "/api/giveaway/admin-feed";
@@ -219,12 +223,17 @@ export default {
         return withSecurityHeaders(response, request);
       } catch (error) {
         logError("Unhandled Worker error", error, request);
-        return withSecurityHeaders(corsResponse(request, { ok: false, error: "Internal server error." }, 500), request);
+        const url = new URL(request.url);
+        const response = isProtectedAdminCorsPath(url.pathname)
+          ? adminApiCorsResponse(request, { ok: false, error: "Internal server error." }, 500)
+          : corsResponse(request, { ok: false, error: "Internal server error." }, 500);
+        return withSecurityHeaders(response, request);
       }
     });
   },
   async scheduled(event, env, ctx) {
     ctx.waitUntil(runMarketingSchedule(event, env || {}).catch((error) => logError("Marketing schedule failed", error)));
+    ctx.waitUntil(runProspectingSchedule(event, env || {}).catch((error) => logError("Prospecting schedule failed", error)));
     if (event.cron === GIFT_CARD_DELIVERY_CRON) {
       ctx.waitUntil(requestEnvStorage.run(env || {}, () => deliverDueGiftCards()));
       return;
@@ -357,15 +366,37 @@ function envText(name) {
   return typeof value === "string" ? value : "";
 }
 
-function handleRequest(request) {
+async function handleRequest(request) {
   const url = new URL(request.url);
 
+  if (isBrevoWebhookPath(url.pathname)) return handleBrevoWebhook(request, requestEnvStorage.getStore() || {});
+  if (isProspectingPath(url.pathname)) return handleProspectingRequest(request, requestEnvStorage.getStore() || {}, url);
+  if (isDistributionChannelPath(url.pathname)) return handleDistributionChannelRequest(request, requestEnvStorage.getStore() || {}, url);
+
   if (request.method === "OPTIONS") {
+    if (isTikTokPath(url.pathname)) {
+      const origin = request.headers.get("Origin") || "";
+      return ADMIN_AI_DRAFTS_ORIGINS.has(origin)
+        ? adminApiCorsResponse(request, null, 204)
+        : adminApiCorsResponse(request, { ok: false, error: "Origin is not allowed." }, 403);
+    }
+    if (url.pathname === ADMIN_CATALOGUE_PATH) {
+      const origin = request.headers.get("Origin") || "";
+      return ADMIN_AI_DRAFTS_ORIGINS.has(origin)
+        ? adminApiCorsResponse(request, null, 204)
+        : adminApiCorsResponse(request, { ok: false, error: "Origin is not allowed." }, 403);
+    }
     if (url.pathname === ADMIN_AI_DRAFTS_PATH || url.pathname === ADMIN_AI_DISTRIBUTION_PATH) {
       const origin = request.headers.get("Origin") || "";
       return ADMIN_AI_DRAFTS_ORIGINS.has(origin)
         ? aiDraftCorsResponse(request, null, 204)
         : aiDraftCorsResponse(request, { ok: false, error: "Origin is not allowed." }, 403);
+    }
+    if (url.pathname === "/api/admin/marketing" || url.pathname.startsWith("/api/admin/marketing/")) {
+      const origin = request.headers.get("Origin") || "";
+      return ADMIN_AI_DRAFTS_ORIGINS.has(origin)
+        ? adminApiCorsResponse(request, null, 204)
+        : adminApiCorsResponse(request, { ok: false, error: "Origin is not allowed." }, 403);
     }
     return corsResponse(request, null, 204);
   }
@@ -375,7 +406,20 @@ function handleRequest(request) {
   }
 
   if (isMarketingPath(url.pathname)) {
-    return handleMarketingRequest(request, requestEnvStorage.getStore() || {}, url);
+    const origin = request.headers.get("Origin") || "";
+    if (origin && !ADMIN_AI_DRAFTS_ORIGINS.has(origin)) {
+      return adminApiCorsResponse(request, { ok: false, error: "Origin is not allowed." }, 403);
+    }
+    const response = await handleMarketingRequest(request, requestEnvStorage.getStore() || {}, url);
+    return withAdminApiCors(response, request);
+  }
+
+  if (isTikTokPath(url.pathname)) {
+    const origin = request.headers.get("Origin") || "";
+    if (origin && !ADMIN_AI_DRAFTS_ORIGINS.has(origin)) {
+      return adminApiCorsResponse(request, { ok: false, error: "Origin is not allowed." }, 403);
+    }
+    return withAdminApiCors(await handleTikTokRequest(request, requestEnvStorage.getStore() || {}, url), request);
   }
 
   if (url.pathname === FEED_STATUS_PATH) {
@@ -423,6 +467,14 @@ function handleRequest(request) {
 
   if (url.pathname === ADMIN_AI_DISTRIBUTION_PATH) {
     return handleAdminAiDistribution(request);
+  }
+
+  if (url.pathname === ADMIN_CATALOGUE_PATH) {
+    const origin = request.headers.get("Origin") || "";
+    if (origin && !ADMIN_AI_DRAFTS_ORIGINS.has(origin)) {
+      return adminApiCorsResponse(request, { ok: false, error: "Origin is not allowed." }, 403);
+    }
+    return withAdminApiCors(await handleAdminCatalogue(request, url), request);
   }
 
   if (url.pathname === GIVEAWAY_CHECKOUT_PATH) {
@@ -3135,10 +3187,12 @@ function adminEtsyProductShape(product) {
   const category = product.category && !/^\d+$/.test(String(product.category))
     ? product.category
     : "Etsy Dog Products";
+  const externalListingId = cleanText(product.external_listing_id, 120);
   return {
     id: product.id,
-    externalListingId: product.external_listing_id,
+    externalListingId,
     title: product.display_title || product.title,
+    description: product.display_description || product.description || "",
     category,
     price: product.price,
     priceLabel: formatPence(product.price, product.currency),
@@ -3148,6 +3202,9 @@ function adminEtsyProductShape(product) {
     status: product.admin_status,
     publicVisibility: Boolean(product.public_visibility),
     listingUrl: product.listing_url,
+    publicUrl: product.public_visibility && externalListingId
+      ? `https://bingodogwash.com/product?id=${encodeURIComponent(`etsy-${externalListingId}`)}`
+      : "",
     image: product.primary_image,
     personalisationAvailable: Boolean(product.personalisation_available),
     syncError: product.sync_error || "",
@@ -4217,6 +4274,80 @@ async function readJson(request) {
   }
 }
 
+async function catalogueFeedData(response) {
+  if (!response?.ok) return { ok: false, products: [] };
+  return response.json().catch(() => ({ ok: false, products: [] }));
+}
+
+function absoluteCatalogueImage(value) {
+  const image = cleanUrl(value);
+  if (image) return image;
+  const relative = cleanText(value, 500).replace(/^\/+/, "");
+  return relative && !relative.includes("..") ? `https://bingodogwash.com/${relative}` : "";
+}
+
+function adminCatalogueProduct(item, source, index) {
+  const rawId = cleanText(item.id || item.sourceProductId || item.sku || item.title || item.name || `${source}-${index + 1}`, 160);
+  const id = rawId.startsWith(`${source}-`) ? rawId : `${source}-${rawId}`;
+  const name = cleanText(item.name || item.title, 180);
+  if (!name) return null;
+  const externalUrl = cleanUrl(item.externalUrl || item.itemUrl || item.listingUrl || item.publicUrl || "");
+  const publicUrl = externalUrl || (source === "avasam" ? `https://bingodogwash.com/product.html?id=${encodeURIComponent(id)}` : "");
+  const numericPrice = Number(item.price?.value ?? item.price);
+  return {
+    id,
+    sku: cleanText(item.sku || item.sourceProductId || item.externalListingId || rawId, 160),
+    source,
+    supplier: cleanText(item.supplier || item.seller || (source === "ebay" ? "eBay UK" : source === "etsy" ? "Etsy" : "Avasam"), 120),
+    name,
+    category: cleanText(item.category || (source === "ebay" ? "eBay UK Pet Products" : `${source} products`), 120),
+    price: Number.isFinite(numericPrice) ? numericPrice : null,
+    priceLabel: cleanText(item.price?.display || item.priceLabel || "", 80),
+    currency: cleanText(item.currency || item.price?.currency || "GBP", 12),
+    description: cleanText(item.description || (source === "ebay" ? `Live UK eBay listing from ${item.seller || "an eBay seller"}.` : ""), 1000),
+    image: absoluteCatalogueImage(item.image || item.imageUrl || item.primaryImage || ""),
+    publicUrl,
+    external: Boolean(externalUrl)
+  };
+}
+
+async function handleAdminCatalogue(request, url) {
+  if (!(await isAdminRequest(request))) {
+    return adminApiCorsResponse(request, { ok: false, error: "Admin authentication is required." }, 401);
+  }
+  if (request.method !== "GET") {
+    return adminApiCorsResponse(request, { ok: false, error: "Method not allowed." }, 405);
+  }
+
+  const query = cleanText(url.searchParams.get("q") || "dog products", 80);
+  const feedUrl = (pathname, params = {}) => {
+    const target = new URL(pathname, "https://bingodogwash.com");
+    Object.entries(params).forEach(([key, value]) => target.searchParams.set(key, String(value)));
+    return target;
+  };
+  const feedRequest = (target) => new Request(target, { method: "GET", headers: { Accept: "application/json" } });
+  const feeds = await Promise.allSettled([
+    handleAvasamProducts(feedRequest(feedUrl(AVASAM_PRODUCTS_PATH, { limit: 100 })), feedUrl(AVASAM_PRODUCTS_PATH, { limit: 100 })),
+    handlePublicEtsyProducts(feedRequest(feedUrl(ETSY_PRODUCTS_PATH, { q: query, limit: 50 })), feedUrl(ETSY_PRODUCTS_PATH, { q: query, limit: 50 })),
+    handleEbayProducts(feedRequest(feedUrl(EBAY_PRODUCTS_PATH, { q: query, limit: 50 })), feedUrl(EBAY_PRODUCTS_PATH, { q: query, limit: 50 }))
+  ]);
+  const sources = ["avasam", "etsy", "ebay"];
+  const products = [];
+  const sourceStatus = {};
+  for (let index = 0; index < feeds.length; index += 1) {
+    const result = feeds[index];
+    const source = sources[index];
+    const data = result.status === "fulfilled" ? await catalogueFeedData(result.value) : { ok: false, products: [] };
+    const mapped = (Array.isArray(data.products) ? data.products : [])
+      .map((item, productIndex) => adminCatalogueProduct(item, source, productIndex))
+      .filter(Boolean);
+    products.push(...mapped);
+    sourceStatus[source] = { available: Boolean(mapped.length), count: mapped.length };
+  }
+  const unique = [...new Map(products.map((product) => [`${product.source}:${product.id}`, product])).values()];
+  return adminApiCorsResponse(request, { ok: true, count: unique.length, products: unique, sources: sourceStatus });
+}
+
 async function handleAdminAiDrafts(request) {
   const origin = request.headers.get("Origin") || "";
   if (origin && !ADMIN_AI_DRAFTS_ORIGINS.has(origin)) {
@@ -4267,23 +4398,18 @@ async function handleAdminAiDrafts(request) {
       messages: [
         {
           role: "system",
-          content: "You draft UK English product and channel copy for Bingo Dog Wash. Use only supplied facts. Never invent specifications, discounts, shipping terms, guarantees, stock, reviews, health benefits, supplier claims, availability, delivery promises, or prices. If a fact is missing, write around it. Return only valid JSON with string fields productDescription, shortDescription, socialCaption, facebookCaption, instagramCaption, tiktokCaption, marketplaceTitle, marketplaceDescription, seoTitle, seoDescription, emailSubject, and emailPreview. Keep SEO title under 60 characters, SEO description under 160, email subject under 70, and TikTok caption under 220."
+          content: "You draft UK English product and channel copy for Bingo Dog Wash. Use only supplied facts. Never invent specifications, discounts, shipping terms, guarantees, stock, reviews, health benefits, supplier claims, availability, delivery promises, or prices. Instagram caption URLs are not clickable: never include a URL or say click/tap the link below; end Instagram captions with 'Shop now — link in bio 🐾'. Facebook may use the supplied product URL. Return only valid JSON with string fields productDescription, shortDescription, socialCaption, facebookCaption, instagramCaption, tiktokCaption, marketplaceTitle, marketplaceDescription, seoTitle, seoDescription, emailSubject, and emailPreview. Keep SEO title under 60 characters, SEO description under 160, email subject under 70, and TikTok caption under 220."
         },
         {
           role: "user",
           content: JSON.stringify({ product, tone, objective })
         }
       ],
-      max_tokens: 1200,
+      max_tokens: 1600,
       temperature: 0.6,
     });
-    const raw = cleanMultilineText(result?.response || result?.result?.response, 5000)
-      .replace(/^```(?:json)?\s*/i, "")
-      .replace(/\s*```$/i, "");
-    let generated;
-    try {
-      generated = JSON.parse(raw);
-    } catch {
+    const generated = parseAiDraftJson(result?.response || result?.result?.response);
+    if (!generated) {
       return aiDraftCorsResponse(request, { ok: false, error: "AI returned an invalid draft. Please try again." }, 502);
     }
     const draft = {
@@ -4316,6 +4442,20 @@ async function handleAdminAiDrafts(request) {
   }
 }
 
+function parseAiDraftJson(value) {
+  if (value && typeof value === "object" && !Array.isArray(value)) return value;
+  const raw = cleanMultilineText(value, 8000).replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  const candidate = start >= 0 && end > start ? raw.slice(start, end + 1) : raw;
+  try {
+    const parsed = JSON.parse(candidate);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 async function handleAdminAiDistribution(request) {
   const origin = request.headers.get("Origin") || "";
   if (origin && !ADMIN_AI_DRAFTS_ORIGINS.has(origin)) return aiDraftCorsResponse(request, { ok: false, error: "Origin is not allowed." }, 403);
@@ -4330,6 +4470,7 @@ async function handleAdminAiDistribution(request) {
     description: cleanMultilineText(decodeAiDraftEntities(input.product?.description), 1800),
     image: safeUrl(input.product?.image),
     url: safeUrl(input.product?.url),
+    instagramDestinationUrl: safeUrl(input.product?.instagramDestinationUrl) || "https://bingodogwash.com/shop",
   };
   if (!product.name || !product.image || !product.url) return aiDraftCorsResponse(request, { ok: false, error: "A product name, public image and public URL are required for distribution." }, 400);
   const channels = [...new Set((Array.isArray(input.channels) ? input.channels : []).map((value) => cleanText(value, 40)))].filter((value) => value === "facebook" || value === "instagram");
@@ -4777,6 +4918,35 @@ function aiDraftCorsResponse(request, body, status = 200) {
     status,
     headers: { ...headers, "Content-Type": "application/json; charset=utf-8" },
   });
+}
+
+function isProtectedAdminCorsPath(pathname) {
+  return pathname === ADMIN_AI_DRAFTS_PATH || pathname === ADMIN_AI_DISTRIBUTION_PATH || pathname === ADMIN_CATALOGUE_PATH || isTikTokPath(pathname) || isDistributionChannelPath(pathname) || isProspectingPath(pathname) || pathname === "/api/admin/marketing" || pathname.startsWith("/api/admin/marketing/");
+}
+
+function adminApiCorsHeaders(request) {
+  const origin = request.headers.get("Origin") || "";
+  const headers = {
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type, Accept, X-Admin-Token",
+    "Access-Control-Max-Age": "86400",
+    "Cache-Control": "no-store",
+    Vary: "Origin",
+  };
+  if (ADMIN_AI_DRAFTS_ORIGINS.has(origin)) headers["Access-Control-Allow-Origin"] = origin;
+  return headers;
+}
+
+function adminApiCorsResponse(request, body, status = 200) {
+  const headers = adminApiCorsHeaders(request);
+  if (body === null) return new Response(null, { status, headers });
+  return new Response(JSON.stringify(body), { status, headers: { ...headers, "Content-Type": "application/json; charset=utf-8" } });
+}
+
+function withAdminApiCors(response, request) {
+  const wrapped = new Response(response.body, response);
+  for (const [name, value] of Object.entries(adminApiCorsHeaders(request))) wrapped.headers.set(name, value);
+  return wrapped;
 }
 
 export {

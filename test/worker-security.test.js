@@ -152,6 +152,117 @@ test("AI drafting rejects an unapproved origin before invoking AI", async () => 
   assert.equal(JSON.stringify(await response.json()).includes("admin-token"), false);
 });
 
+test("protected admin catalogue exposes existing feed products without creating records", async () => {
+  const origin = "https://admin.bingodogwash.com";
+  const preflight = await worker.fetch(new Request("https://admin.bingodogwash.com/api/admin/catalogue", {
+    method: "OPTIONS",
+    headers: { Origin: origin, "Access-Control-Request-Method": "GET", "Access-Control-Request-Headers": "authorization, content-type" },
+  }), { ADMIN_API_TOKEN: "admin-token" });
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.headers.get("Access-Control-Allow-Origin"), origin);
+  assert.match(preflight.headers.get("Access-Control-Allow-Methods"), /GET/);
+
+  const unauthorised = await worker.fetch(new Request("https://admin.bingodogwash.com/api/admin/catalogue", { headers: { Origin: origin } }), {
+    ADMIN_API_TOKEN: "admin-token",
+  });
+  assert.equal(unauthorised.status, 401);
+  assert.equal(unauthorised.headers.get("Access-Control-Allow-Origin"), origin);
+
+  let databaseWrites = 0;
+  const response = await worker.fetch(new Request("https://admin.bingodogwash.com/api/admin/catalogue", {
+    headers: { Origin: origin, Authorization: "Bearer admin-token" },
+  }), {
+    ADMIN_API_TOKEN: "admin-token",
+    ETSY_FEATURE_ENABLED: "false",
+    GIFT_CARD_DB: { prepare() { databaseWrites += 1; throw new Error("catalogue fallback must not query or mutate D1"); } },
+  });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("Access-Control-Allow-Origin"), origin);
+  const body = await response.json();
+  assert.equal(body.ok, true);
+  assert.ok(body.count >= 6);
+  assert.equal(databaseWrites, 0);
+  const collar = body.products.find((product) => product.name === "Adjustable Blue Dog Collar");
+  assert.equal(collar.source, "avasam");
+  assert.equal(collar.supplier, "Avasam");
+  assert.equal(collar.price, 7.99);
+  assert.match(collar.publicUrl, /^https:\/\/bingodogwash\.com\/product\.html\?id=avasam-/);
+  assert.equal(collar.publicUrl.includes("undefined"), false);
+});
+
+test("admin catalogue rejects untrusted origins without wildcard CORS", async () => {
+  const response = await worker.fetch(new Request("https://admin.bingodogwash.com/api/admin/catalogue", {
+    headers: { Origin: "https://unapproved.example", Authorization: "Bearer admin-token" },
+  }), { ADMIN_API_TOKEN: "admin-token" });
+  assert.equal(response.status, 403);
+  assert.equal(response.headers.has("Access-Control-Allow-Origin"), false);
+});
+
+function marketingStatusDatabase() {
+  return {
+    prepare(sql) {
+      return {
+        first: async () => sql.includes("marketing_settings")
+          ? { enabled: 0, schedule_hour_utc: 9, schedule_minute_utc: 0, last_run_date: "", next_run_at: "" }
+          : sql.includes("marketing_connections")
+            ? null
+            : { products_promoted: 0, clicks: 0, engagement: 0, sales: 0 },
+        all: async () => ({ results: [] }),
+      };
+    },
+  };
+}
+
+test("marketing admin CORS covers preflight, success, authentication and server errors", async () => {
+  const origin = "https://admin.bingodogwash.com";
+  const preflight = await worker.fetch(new Request("https://bingodogwash.com/api/admin/marketing", {
+    method: "OPTIONS",
+    headers: { Origin: origin, "Access-Control-Request-Method": "GET", "Access-Control-Request-Headers": "authorization, content-type" },
+  }), {});
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.headers.get("Access-Control-Allow-Origin"), origin);
+  assert.notEqual(preflight.headers.get("Access-Control-Allow-Origin"), "*");
+  assert.match(preflight.headers.get("Access-Control-Allow-Methods"), /GET/);
+  assert.match(preflight.headers.get("Access-Control-Allow-Headers"), /Authorization/);
+
+  const unauthorised = await worker.fetch(new Request("https://bingodogwash.com/api/admin/marketing", { headers: { Origin: origin } }), {
+    ADMIN_API_TOKEN: "admin-token",
+    GIFT_CARD_DB: marketingStatusDatabase(),
+  });
+  assert.equal(unauthorised.status, 401);
+  assert.equal(unauthorised.headers.get("Access-Control-Allow-Origin"), origin);
+
+  const successful = await worker.fetch(new Request("https://bingodogwash.com/api/admin/marketing", { headers: { Origin: origin, Authorization: "Bearer admin-token" } }), {
+    ADMIN_API_TOKEN: "admin-token",
+    GIFT_CARD_DB: marketingStatusDatabase(),
+  });
+  assert.equal(successful.status, 200);
+  assert.equal(successful.headers.get("Access-Control-Allow-Origin"), origin);
+  assert.equal((await successful.json()).ok, true);
+
+  const failed = await worker.fetch(new Request("https://bingodogwash.com/api/admin/marketing", { headers: { Origin: origin, Authorization: "Bearer admin-token" } }), {
+    ADMIN_API_TOKEN: "admin-token",
+    GIFT_CARD_DB: { prepare() { throw new Error("database unavailable"); } },
+  });
+  assert.equal(failed.status, 502);
+  assert.equal(failed.headers.get("Access-Control-Allow-Origin"), origin);
+  assert.deepEqual(await failed.json(), { ok: false, error: "Marketing status is temporarily unavailable." });
+});
+
+test("marketing admin CORS rejects unapproved origins without a wildcard", async () => {
+  let queried = false;
+  const response = await worker.fetch(new Request("https://bingodogwash.com/api/admin/marketing", {
+    headers: { Origin: "https://unapproved.example", Authorization: "Bearer admin-token" },
+  }), {
+    ADMIN_API_TOKEN: "admin-token",
+    GIFT_CARD_DB: { prepare() { queried = true; throw new Error("must not query"); } },
+  });
+  assert.equal(response.status, 403);
+  assert.equal(response.headers.has("Access-Control-Allow-Origin"), false);
+  assert.notEqual(response.headers.get("Access-Control-Allow-Origin"), "*");
+  assert.equal(queried, false);
+});
+
 test("AI drafting accepts product facts and returns editable non-publishing fields", async () => {
   let requestInput;
   const response = await worker.fetch(new Request("https://bingodogwash.com/api/admin/ai-drafts", {
@@ -233,14 +344,28 @@ test("AI drafting rejects unsupported methods and invalid model output", async (
 
   const invalidResponse = await worker.fetch(new Request("https://bingodogwash.com/api/admin/ai-drafts", {
     method: "POST",
-    headers: { Authorization: "Bearer admin-token", "Content-Type": "application/json" },
+    headers: { Origin: "https://admin.bingodogwash.com", Authorization: "Bearer admin-token", "Content-Type": "application/json" },
     body: JSON.stringify({ name: "Dog shampoo", description: "Gentle routine shampoo." }),
   }), {
     ADMIN_API_TOKEN: "admin-token",
     AI: { async run() { return { response: "not valid json" }; } },
   });
   assert.equal(invalidResponse.status, 502);
+  assert.equal(invalidResponse.headers.get("Access-Control-Allow-Origin"), "https://admin.bingodogwash.com");
   assert.deepEqual(await invalidResponse.json(), { ok: false, error: "AI returned an invalid draft. Please try again." });
+});
+
+test("AI drafting accepts a JSON object wrapped in model commentary", async () => {
+  const response = await worker.fetch(new Request("https://bingodogwash.com/api/admin/ai-drafts", {
+    method: "POST",
+    headers: { Authorization: "Bearer admin-token", "Content-Type": "application/json" },
+    body: JSON.stringify({ name: "Dog bow", description: "A decorative bow for dogs." }),
+  }), {
+    ADMIN_API_TOKEN: "admin-token",
+    AI: { async run() { return { response: 'Draft follows:\n```json\n{"productDescription":"A decorative bow for dogs.","socialCaption":"A decorative finishing touch for dogs."}\n```' }; } },
+  });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).draft.productDescription, "A decorative bow for dogs.");
 });
 
 test("AI product distribution requires admin authorisation and explicit confirmation", async () => {

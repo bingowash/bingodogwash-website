@@ -9,7 +9,7 @@
   <link rel="icon" href="/favicon.ico" sizes="any">
   <link rel="stylesheet" href="/styles.css">
   <link rel="stylesheet" href="/admin/admin-shell.css">
-  <link rel="stylesheet" href="/admin/ai-drafts.css?v=20260809-centre">
+  <link rel="stylesheet" href="/admin/ai-drafts.css?v=20260809-channel-checkbox-fix">
 </head>
 <body>
   <header class="site-header"><nav class="nav"><a class="brand" href="/admin/" aria-label="Admin home"><img class="brand-logo" src="/images/bingo-dog-wash-logo.optimized.png" alt="Bingo Dog Wash" width="132" height="132"></a><button class="menu-toggle" type="button">Menu</button><div class="nav-links"></div></nav></header>
@@ -30,6 +30,7 @@
             <label>Existing product<select data-product-select><option value="">Manual product</option></select></label>
             <label>Paste product URL<input type="url" data-product-url-search placeholder="https://bingodogwash.com/product?id=..."></label>
             <p class="small-note" data-product-status aria-live="polite">Unlock the centre to load available products.</p>
+            <button class="btn btn-light" type="button" data-product-retry hidden>Retry loading shop products</button>
           </div>
           <div class="product-image-card">
             <img data-product-image alt="Selected product preview" src="/images/bingo-dog-wash-logo.optimized.png">
@@ -50,6 +51,9 @@
           <label>Target audience<input name="audience" maxlength="240" placeholder="Dog owners and dog lovers"></label>
           <label>Public product URL<input name="url" type="url" maxlength="300"></label>
           <label>Public image URL<input name="image" type="url" maxlength="500" data-image-url></label>
+          <label>TikTok campaign video<input name="tiktokVideo" type="file" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm" data-tiktok-video><span class="small-note">Required only when TikTok is selected. The video is uploaded as a private draft for completion in TikTok; it is never posted directly.</span></label>
+          <div class="instagram-readiness"><strong data-instagram-readiness>Image problem ⚠️</strong><button class="btn btn-light" type="button" data-retry-instagram-image>Retry image</button></div>
+          <label>Instagram destination URL<input name="instagramDestinationUrl" type="url" maxlength="500" value="https://bingodogwash.com/shop"><span class="small-note">Feed posts use “link in bio”. The URL stays with the distribution record for shopping tags and future Story Link Stickers.</span></label>
           <div class="two-fields"><label>Tone<select name="tone"><option value="friendly">Friendly</option><option value="professional">Professional</option><option value="fun">Fun</option><option value="luxury">Luxury</option><option value="promotional">Promotional</option><option value="informative">Informative</option></select></label><label>Primary objective<select name="objective"><option value="sell">Sell product</option><option value="awareness">Generate awareness</option><option value="engagement">Social engagement</option><option value="traffic">Website traffic</option><option value="email">Email promotion</option><option value="marketplace">Marketplace listing</option></select></label></div>
           <button class="btn btn-primary ai-generate" type="submit">✨ Generate AI Content</button>
           <p class="small-note ai-generation-status" data-ai-result-status aria-live="polite">Generating content never publishes anything.</p>
@@ -76,6 +80,14 @@
 
       <section class="card ai-section" data-distribution-results hidden><h2>Distribution Results</h2><div class="result-list" data-result-list aria-live="polite"></div></section>
 
+      <section class="card ai-section prospecting-panel" aria-labelledby="prospecting-title">
+        <div class="ai-section-heading"><div><span class="eyebrow">Draft queue only</span><h2 id="prospecting-title">Nightly AI Customer Finder</h2><p>Approved B2B sources, compliance gates, product matching and human-reviewed outreach drafts. Nightly prospecting and all sending are disabled by default.</p></div><div class="button-row"><button class="btn btn-light" type="button" data-prospecting-refresh>Refresh</button><button class="btn btn-secondary" type="button" data-prospecting-run>Run manually</button></div></div>
+        <div class="prospecting-stats" data-prospecting-stats></div>
+        <div class="prospecting-filters"><label>Status<select data-prospecting-status><option value="">All</option><option value="new">New</option><option value="blocked">Blocked</option><option value="suppressed">Suppressed</option></select></label><label>Subscriber type<select data-prospecting-subscriber><option value="">All</option><option value="corporate">Corporate</option><option value="individual">Individual</option><option value="unknown">Unknown</option></select></label></div>
+        <div class="prospecting-table-wrap"><table class="prospecting-table"><thead><tr><th>Business</th><th>Type / location</th><th>Match</th><th>Email / source</th><th>Subscriber / LIA</th><th>Compliance</th><th>Status</th><th>Actions</th></tr></thead><tbody data-prospecting-rows><tr><td colspan="8">Unlock the centre to load prospecting status.</td></tr></tbody></table></div>
+        <p class="small-note" data-prospecting-message aria-live="polite">No prospecting action has run.</p>
+      </section>
+
       <section class="history-grid">
         <section class="card ai-section"><div class="ai-section-heading"><div><h2>Recent AI Product Drafts</h2><p>Saved in this protected browser for now.</p></div></div><div class="history-list" data-draft-history></div></section>
         <section class="card ai-section"><div class="ai-section-heading"><div><h2>Distribution History</h2><p>Per-channel outcomes; no credentials are stored.</p></div></div><div class="history-list" data-distribution-history></div></section>
@@ -85,6 +97,6 @@
 
   <dialog class="distribution-dialog" data-distribution-dialog aria-labelledby="confirm-title"><form method="dialog"><button class="dialog-close" value="cancel" aria-label="Close">×</button><span class="eyebrow">Final review</span><h2 id="confirm-title">Ready to distribute?</h2><div data-confirm-summary></div><div class="preview-grid" data-confirm-previews></div><div class="button-row"><button class="btn btn-light" value="cancel">Cancel</button><button class="btn btn-primary" type="button" data-confirm-distribution>Confirm Distribution</button></div><p class="small-note" data-distribution-status aria-live="polite"></p></form></dialog>
 
-  <script src="/admin/admin-shell.js?v=20260809-ai-products" defer></script><script src="/site.js?v=20260806-admin-shell" defer></script><script src="/admin/ai-drafts.js?v=20260809-centre" defer></script>
+  <script src="/admin/admin-shell.js?v=20260809-ai-products" defer></script><script src="/site.js?v=20260806-admin-shell" defer></script><script src="/admin/ai-drafts.js?v=20260809-instagram-links" defer></script>
 </body>
 </html>

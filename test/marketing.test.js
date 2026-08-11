@@ -652,6 +652,42 @@ test("successful Instagram publishing returns the published media ID", async () 
   } finally { globalThis.fetch = originalFetch; }
 });
 
+test("Instagram retries a temporarily unavailable media ID without recreating the container", async () => {
+  const originalFetch = globalThis.fetch;
+  let creates = 0;
+  let publishes = 0;
+  let statusChecks = 0;
+  globalThis.fetch = async (url) => {
+    const pathname = new URL(url).pathname;
+    if (pathname.endsWith("/media")) {
+      creates += 1;
+      return Response.json({ id: "container-id" });
+    }
+    if (pathname.endsWith("/container-id")) {
+      statusChecks += 1;
+      return Response.json({ id: "container-id", status_code: "FINISHED" });
+    }
+    if (pathname.endsWith("/media_publish")) {
+      publishes += 1;
+      if (publishes === 1) {
+        return new Response(JSON.stringify({ error: { code: 9007, type: "OAuthException", message: "Media ID is not available" } }), { status: 400 });
+      }
+      return Response.json({ id: "instagram-post-id" });
+    }
+    throw new Error(`Unexpected Instagram request: ${pathname}`);
+  };
+  try {
+    const result = await marketingTestHelpers.publishInstagram({
+      META_INSTAGRAM_USER_ID: "instagram-id",
+      INSTAGRAM_MEDIA_STATUS_DELAY_MS: "0",
+    }, "https://example.com/image.jpg", "caption", "I".repeat(50));
+    assert.equal(result, "instagram-post-id");
+    assert.equal(creates, 1);
+    assert.equal(publishes, 2);
+    assert.equal(statusChecks, 2);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 test("Instagram waits for its media container to finish before publishing", async () => {
   const originalFetch = globalThis.fetch;
   const calls = [];
@@ -763,6 +799,72 @@ test("Instagram image validation rejects unsupported files and accepts public JP
   globalThis.fetch = async () => new Response(null, { status: 200, headers: { "Content-Type": "image/jpeg" } });
   try {
     assert.deepEqual(await marketingTestHelpers.validateInstagramImage("https://example.com/photo.jpg"), { ok: true, contentType: "image/jpeg" });
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("Instagram feed captions use link in bio and never pretend caption URLs are clickable", () => {
+  const caption = marketingTestHelpers.instagramFeedCaption("Lovely dog shampoo. Click the link below! https://bingodogwash.com/product?id=1");
+  assert.equal(caption.includes("http"), false);
+  assert.doesNotMatch(caption, /click the link below/i);
+  assert.match(caption, /Shop now — link in bio 🐾$/);
+});
+
+test("Instagram image validation rejects local, forbidden, missing, timed-out and non-image resources", async () => {
+  assert.match((await marketingTestHelpers.validateInstagramImage("blob:https://bingodogwash.com/id")).reason, /HTTP/);
+  assert.match((await marketingTestHelpers.validateInstagramImage("http://localhost/photo.jpg")).reason, /Local/);
+  assert.match((await marketingTestHelpers.validateInstagramImage("https://example.com/photo.webp")).reason, /Unsupported/);
+  const originalFetch = globalThis.fetch;
+  try {
+    for (const status of [403, 404]) {
+      globalThis.fetch = async () => new Response(null, { status });
+      assert.match((await marketingTestHelpers.validateInstagramImage("https://example.com/photo.jpg")).reason, new RegExp(String(status)));
+    }
+    globalThis.fetch = async () => { throw new DOMException("Timed out", "TimeoutError"); };
+    assert.match((await marketingTestHelpers.validateInstagramImage("https://example.com/photo.jpg")).reason, /publicly accessible/);
+    globalThis.fetch = async () => new Response("not an image", { status: 200, headers: { "Content-Type": "text/html" } });
+    assert.match((await marketingTestHelpers.validateInstagramImage("https://example.com/photo.jpg")).reason, /Unsupported Content-Type/);
+    globalThis.fetch = async () => new Response(null, { status: 200, headers: { "Content-Type": "image/gif" } });
+    assert.match((await marketingTestHelpers.validateInstagramImage("https://example.com/photo.gif.jpg")).reason, /Unsupported Content-Type/);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("Instagram product selection skips unique failed products and records the successful fallback", async () => {
+  const preferred = { id: "first", name: "First", image: "https://example.com/first.jpg" };
+  const rows = [
+    { id: "first", name: "Duplicate first", image: "https://example.com/first.jpg" },
+    { id: "second", name: "Second", image: "https://example.com/second.jpg" },
+    { id: "third", name: "Third", image: "https://example.com/third.png" },
+  ];
+  const db = { prepare: () => ({ all: async () => ({ results: rows }) }) };
+  const originalFetch = globalThis.fetch;
+  const checked = [];
+  globalThis.fetch = async (url) => {
+    checked.push(String(url));
+    if (String(url).includes("third.png")) return new Response(null, { status: 200, headers: { "Content-Type": "image/png" } });
+    return new Response(null, { status: 404 });
+  };
+  try {
+    const selection = await marketingTestHelpers.selectInstagramProduct(db, preferred);
+    assert.equal(selection.product.id, "third");
+    assert.deepEqual(selection.rejections.map((item) => item.productId), ["first", "second"]);
+    assert.equal(checked.filter((url) => url.includes("first.jpg")).length, 2);
+    assert.equal(checked.filter((url) => url.includes("second.jpg")).length, 2);
+    assert.equal(checked.filter((url) => url.includes("third.png")).length, 1);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("Instagram product selection terminates when every unique product image fails", async () => {
+  const preferred = { id: "first", name: "First", image: "https://example.com/first.jpg" };
+  const rows = Array.from({ length: 5 }, (_, index) => ({ id: `fallback-${index}`, name: `Fallback ${index}`, image: `https://example.com/${index}.jpg` }));
+  const db = { prepare: () => ({ all: async () => ({ results: rows }) }) };
+  const originalFetch = globalThis.fetch;
+  let requests = 0;
+  globalThis.fetch = async () => { requests += 1; return new Response(null, { status: 404 }); };
+  try {
+    const selection = await marketingTestHelpers.selectInstagramProduct(db, preferred);
+    assert.equal(selection.product, null);
+    assert.equal(selection.rejections.length, 6);
+    assert.equal(requests, 12);
   } finally { globalThis.fetch = originalFetch; }
 });
 
@@ -980,5 +1082,39 @@ test("platform-specific failure produces a partial result with separated APIs an
     assert.equal(result.status, "partial"); assert.equal(result.platforms.facebook.ok, true); assert.equal(result.platforms.instagram.ok, false); assert.equal(result.platforms.instagram.attempts, 1);
     assert.equal(urls.some((url) => url.includes("graph.facebook.com/v25.0/1264938680034651/photos")), true);
     assert.equal(urls.some((url) => url.includes("graph.instagram.com/v26.0/27879594505014566/media")), true);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("Facebook publishing remains successful when every Instagram image candidate is unavailable", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const value = String(url);
+    if (value === "https://bingodogwash.com/broken.jpg") return new Response(null, { status: 404 });
+    if (value.includes("/debug_token")) return Response.json({ data: { is_valid: true, type: "USER", scopes: ["pages_manage_posts", "pages_read_engagement", "pages_show_list"] } });
+    if (value.includes("/me/accounts")) return Response.json({ data: [{ id: "page-id", access_token: "P".repeat(50) }] });
+    if (value.includes("graph.instagram.com/v26.0/me")) return Response.json({ id: "instagram-id", username: "bingo", account_type: "BUSINESS" });
+    if (value.includes("graph.facebook.com")) return Response.json({ id: "facebook-post-id" });
+    throw new Error(`Unexpected request: ${value}`);
+  };
+  const product = { source: "etsy", id: "broken-product", name: "Broken image product", description: "Product description", price: 999, currency: "GBP", category: "Grooming", stock: 2, url: "https://bingodogwash.com/product.html?id=broken-product", image: "https://bingodogwash.com/broken.jpg" };
+  const db = { prepare(sql) { return {
+    first: async () => sql.includes("marketing_settings") ? { enabled: 1, schedule_hour_utc: 9, schedule_minute_utc: 0 } : product,
+    all: async () => ({ results: [] }),
+    bind: () => ({ run: async () => ({ success: true }) }),
+  }; } };
+  try {
+    const result = await runMarketingAutomation({
+      GIFT_CARD_DB: db,
+      META_PAGE_ID: "page-id",
+      META_PAGE_ACCESS_TOKEN: "F".repeat(50),
+      META_INSTAGRAM_USER_ID: "instagram-id",
+      META_INSTAGRAM_USERNAME: "bingo",
+      INSTAGRAM_ACCESS_TOKEN: "I".repeat(50),
+    }, { trigger: "test" });
+    assert.equal(result.status, "partial");
+    assert.equal(result.platforms.facebook.ok, true);
+    assert.equal(result.platforms.instagram.ok, false);
+    assert.equal(result.platforms.instagram.skipped, true);
+    assert.equal(result.platforms.instagram.rejections[0].productId, "broken-product");
   } finally { globalThis.fetch = originalFetch; }
 });

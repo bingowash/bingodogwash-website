@@ -1,4 +1,5 @@
 const api = "/api/admin/marketing";
+const tiktokApi = "/api/tiktok";
 let token = "";
 let state = null;
 let oauthCallbackResult = null;
@@ -45,12 +46,43 @@ async function call(path = "", options = {}) {
   return data;
 }
 
+async function callTikTok(path, options = {}) {
+  const response = await fetch(tiktokApi + path, { ...options, headers: { Authorization: `Bearer ${token}`, "Content-Type":"application/json", ...(options.headers || {}) } });
+  const data = await response.json().catch(() => ({ ok: false, error: `TikTok API returned HTTP ${response.status}.` }));
+  if (response.status === 401) throw safeError(tokenMessages.incorrect, 401);
+  if (!response.ok) throw safeError(data.error || "The TikTok request could not be completed.", response.status);
+  return data;
+}
+
+async function refreshTikTokStatus() {
+  const result = await callTikTok("/status");
+  const accounts = result.tiktok?.accounts || {};
+  for (const role of ["creator", "marketing"]) {
+    const account = accounts[role] || {};
+    const identity = account.username ? `@${account.username}` : account.displayName || "Account name unavailable";
+    const scopes = Array.isArray(account.scopesAvailable) && account.scopesAvailable.length ? account.scopesAvailable.join(", ") : "none granted";
+    const directPost = role === "marketing" ? ` Direct Post: ${result.tiktok?.directPostEnabled ? account.directPostReady ? "ready" : "enabled but awaiting video.publish" : "disabled"}.` : "";
+    qs(`[data-tiktok-${role}-status]`).textContent = `${account.connected ? "Connected" : "Disconnected"} · ${identity}. Token present: ${account.tokenPresent ? "yes" : "no"}. Scopes: ${scopes}.${directPost}`;
+  }
+  return result;
+}
+
 function showResponse(value, isError = false) {
   const panel = qs("[data-marketing-response]"); panel.hidden = false; panel.classList.toggle("is-error", isError); panel.textContent = JSON.stringify(value, null, 2);
 }
 
 function showOAuthCallbackStatus() {
   const params = new URLSearchParams(window.location.search);
+  const tiktok = params.get("tiktok");
+  if (tiktok) {
+    const messages = { success: "TikTok connected. Unlock marketing controls to verify the connection.", invalid_state: "TikTok connection state was invalid or already used. Start again.", missing_code: "TikTok did not return an authorization code.", provider_error: "TikTok authorisation was cancelled or rejected.", token_exchange_failed: "TikTok connection failed during token exchange.", server_error: "TikTok OAuth is not fully configured on the server." };
+    const message = messages[tiktok] || "TikTok connection did not complete.";
+    qs("[data-marketing-message]").textContent = message;
+    oauthCallbackResult = { ok: tiktok === "success", provider: "tiktok", result: tiktok, message };
+    showResponse(oauthCallbackResult, tiktok !== "success");
+    history.replaceState({}, "", window.location.pathname);
+    return;
+  }
   const oauth = params.get("oauth");
   if (!oauth) return;
   const providerHttpStatus = Number(params.get("httpStatus") || 0) || null;
@@ -101,6 +133,11 @@ function formatUtcDate(value) {
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")} ${String(date.getUTCHours()).padStart(2, "0")}:${String(date.getUTCMinutes()).padStart(2, "0")} UTC`;
 }
 
+function tiktokAccountLabel(post) {
+  try { return JSON.parse(post.tiktok_metadata || "{}").accountRole === "marketing" ? "TikTok Marketing" : "TikTok Creator"; }
+  catch { return "TikTok"; }
+}
+
 async function runOnce(key, button, task) {
   if (pending.has(key)) return;
   pending.add(key); const original = button?.textContent || "";
@@ -110,7 +147,7 @@ async function runOnce(key, button, task) {
   finally { pending.delete(key); if (button) { button.disabled = false; button.removeAttribute("aria-busy"); button.textContent = original; } }
 }
 
-async function refresh() { state = await call(); render(); return state; }
+async function refresh() { state = await call(); render(); await refreshTikTokStatus(); return state; }
 function render() {
   qs("[data-marketing-dashboard]").hidden = false;
   const a = state.analytics || {}; const settings = state.settings || {};
@@ -137,7 +174,7 @@ function render() {
   }).join("") : Object.entries(state.connectedPlatforms || {}).map(([name,connected]) => `<span class="platform-pill ${connected ? "connected" : ""}">${connected ? "Configured" : "Not configured"}: ${escapeHtml(name)}</span>`).join("");
   const best = a.bestProducts || []; const max = Math.max(1,...best.map((item) => Number(item.clicks)+Number(item.engagement)+Number(item.sales)*5));
   qs("[data-marketing-chart]").innerHTML = best.length ? best.map((item) => { const score=Number(item.clicks)+Number(item.engagement)+Number(item.sales)*5; return `<div class="marketing-bar"><strong>${escapeHtml(item.product_name)}</strong><div class="marketing-bar-track"><div class="marketing-bar-fill" style="width:${Math.max(3,score/max*100)}%"></div></div><span>${item.clicks} clicks · ${item.sales} sales</span></div>`; }).join("") : "<p>No campaign activity yet.</p>";
-  qs("[data-marketing-history]").innerHTML = `<table class="marketing-table"><thead><tr><th>Date</th><th>Product</th><th>Status</th><th>Platforms</th><th>Caption / error</th></tr></thead><tbody>${(state.history || []).map((post) => `<tr><td>${escapeHtml(new Date(post.created_at).toLocaleString())}</td><td>${escapeHtml(post.product_name)}</td><td class="status-${escapeHtml(post.status)}">${escapeHtml(post.status)}</td><td>${post.facebook_post_id ? "Facebook ✓ " : ""}${post.instagram_post_id ? "Instagram ✓" : ""}</td><td><small>${escapeHtml(post.error_message || post.caption)}</small></td></tr>`).join("") || '<tr><td colspan="5">No posts yet.</td></tr>'}</tbody></table>`;
+  qs("[data-marketing-history]").innerHTML = `<table class="marketing-table"><thead><tr><th>Date</th><th>Product</th><th>Status</th><th>Platforms</th><th>Caption / error</th></tr></thead><tbody>${(state.history || []).map((post) => `<tr><td>${escapeHtml(new Date(post.created_at).toLocaleString())}</td><td>${escapeHtml(post.product_name)}</td><td class="status-${escapeHtml(post.status)}">${escapeHtml(post.status)}</td><td>${post.facebook_post_id ? "Facebook ✓ " : ""}${post.instagram_post_id ? "Instagram ✓ " : ""}${post.tiktok_status || String(post.trigger_type || "").includes("tiktok") ? `${tiktokAccountLabel(post)} ${post.tiktok_status === "success" || post.status === "success" ? "draft ✓" : "draft failed"}${post.tiktok_publish_id ? ` · ID ${escapeHtml(post.tiktok_publish_id)}` : ""}` : ""}</td><td><small>${escapeHtml(post.error_message || post.caption)}</small></td></tr>`).join("") || '<tr><td colspan="5">No posts yet.</td></tr>'}</tbody></table>`;
 }
 
 const unlockForm = qs("[data-marketing-unlock]");
@@ -167,7 +204,22 @@ document.addEventListener("click", (event) => {
     });
     return;
   }
+  if (action === "tiktok-connect") {
+    runOnce(`action:${action}`, button, async () => {
+      const role = button.dataset.accountRole || "creator";
+      const result = await callTikTok(`/connect?accountRole=${encodeURIComponent(role)}`);
+      if (!result?.url || !result.url.startsWith("https://www.tiktok.com/")) throw safeError("TikTok connection could not be started.");
+      window.location.assign(result.url);
+    });
+    return;
+  }
+  if (action === "tiktok-refresh") {
+    const role = button.dataset.accountRole || "creator";
+    runOnce(`action:${action}:${role}`, button, async () => { const result = await callTikTok(`/refresh?accountRole=${encodeURIComponent(role)}`, { method:"POST", body:"{}" }); showResponse(result); await refreshTikTokStatus(); });
+    return;
+  }
   runOnce(`action:${action}`, button, async () => { const result = await call(`/${action}`, {method:"POST",body:"{}"}); showResponse(result); await refresh(); qs("[data-marketing-message]").textContent = `${action} completed.`; });
 });
 qs("[data-marketing-schedule]").addEventListener("submit", (event) => { event.preventDefault(); const button = event.currentTarget.querySelector("button"); runOnce("schedule", button, async () => { const values=Object.fromEntries(new FormData(event.currentTarget)); const result = await call("/schedule",{method:"POST",body:JSON.stringify({hourUtc:Number(values.hourUtc),minuteUtc:Number(values.minuteUtc)})}); showResponse(result); await refresh(); qs("[data-marketing-message]").textContent="Schedule updated."; }); });
+qs("[data-tiktok-draft-test]").addEventListener("submit", (event) => { event.preventDefault(); const form=event.currentTarget; const button=form.querySelector("button"); runOnce("tiktok-draft-test", button, async () => { const file=form.elements.video.files?.[0]; if(!file)throw safeError("Select a video before testing TikTok draft upload.",400); const allowed=new Map([["video/mp4",".mp4"],["video/quicktime",".mov"],["video/webm",".webm"]]); const extension=allowed.get(file.type); if(!extension||!file.name.toLowerCase().endsWith(extension))throw safeError("Unsupported video type. Choose an MP4, MOV or WebM file whose extension matches its format.",415); if(file.size>64*1024*1024)throw safeError("Test videos must be 64 MB or smaller.",413); const response=await fetch(`${tiktokApi}/draft?filename=${encodeURIComponent(file.name)}`,{method:"POST",headers:{Authorization:`Bearer ${token}`,"Content-Type":file.type},body:file}); const result=await response.json().catch(()=>({ok:false,error:`TikTok API returned HTTP ${response.status}.`})); if(!response.ok||!result.ok){showResponse(result,true);qs("[data-marketing-message]").textContent=result.error||"TikTok draft upload failed.";await refresh();return;} showResponse(result); qs("[data-marketing-message]").textContent=result.message; form.reset(); await refresh(); }); });
 showOAuthCallbackStatus();
