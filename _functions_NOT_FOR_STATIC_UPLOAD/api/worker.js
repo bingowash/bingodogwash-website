@@ -233,7 +233,11 @@ export default {
   },
   async scheduled(event, env, ctx) {
     ctx.waitUntil(runMarketingSchedule(event, env || {}).catch((error) => logError("Marketing schedule failed", error)));
-    ctx.waitUntil(runProspectingSchedule(event, env || {}).catch((error) => logError("Prospecting schedule failed", error)));
+    const prospectingEnabled = /^(1|true|yes|on)$/i.test(String(env?.AI_PROSPECTING_ENABLED || "").trim());
+    const catalogue = event.cron === "0 2 * * *" && prospectingEnabled
+      ? requestEnvStorage.run(env || {}, () => loadProspectingCatalogue())
+      : Promise.resolve([]);
+    ctx.waitUntil(catalogue.then((products) => runProspectingSchedule(event, env || {}, { products })).catch((error) => logError("Prospecting schedule failed", error)));
     if (event.cron === GIFT_CARD_DELIVERY_CRON) {
       ctx.waitUntil(requestEnvStorage.run(env || {}, () => deliverDueGiftCards()));
       return;
@@ -4311,15 +4315,7 @@ function adminCatalogueProduct(item, source, index) {
   };
 }
 
-async function handleAdminCatalogue(request, url) {
-  if (!(await isAdminRequest(request))) {
-    return adminApiCorsResponse(request, { ok: false, error: "Admin authentication is required." }, 401);
-  }
-  if (request.method !== "GET") {
-    return adminApiCorsResponse(request, { ok: false, error: "Method not allowed." }, 405);
-  }
-
-  const query = cleanText(url.searchParams.get("q") || "dog products", 80);
+async function loadProspectingCatalogue(query="dog products") {
   const feedUrl = (pathname, params = {}) => {
     const target = new URL(pathname, "https://bingodogwash.com");
     Object.entries(params).forEach(([key, value]) => target.searchParams.set(key, String(value)));
@@ -4345,6 +4341,19 @@ async function handleAdminCatalogue(request, url) {
     sourceStatus[source] = { available: Boolean(mapped.length), count: mapped.length };
   }
   const unique = [...new Map(products.map((product) => [`${product.source}:${product.id}`, product])).values()];
+  return unique;
+}
+
+async function handleAdminCatalogue(request, url) {
+  if (!(await isAdminRequest(request))) {
+    return adminApiCorsResponse(request, { ok: false, error: "Admin authentication is required." }, 401);
+  }
+  if (request.method !== "GET") {
+    return adminApiCorsResponse(request, { ok: false, error: "Method not allowed." }, 405);
+  }
+  const query = cleanText(url.searchParams.get("q") || "dog products", 80);
+  const unique = await loadProspectingCatalogue(query);
+  const sourceStatus = Object.fromEntries(["avasam","etsy","ebay"].map((source)=>{const count=unique.filter((product)=>product.source===source).length;return [source,{available:Boolean(count),count}];}));
   return adminApiCorsResponse(request, { ok: true, count: unique.length, products: unique, sources: sourceStatus });
 }
 
