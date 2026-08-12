@@ -374,7 +374,7 @@ async function handleRequest(request) {
   const url = new URL(request.url);
 
   if (isBrevoWebhookPath(url.pathname)) return handleBrevoWebhook(request, requestEnvStorage.getStore() || {});
-  if (isProspectingPath(url.pathname)) return handleProspectingRequest(request, requestEnvStorage.getStore() || {}, url);
+  if (isProspectingPath(url.pathname)) return handleProspectingRequest(request, requestEnvStorage.getStore() || {}, url, { loadProducts: loadProspectingCatalogue });
   if (isDistributionChannelPath(url.pathname)) return handleDistributionChannelRequest(request, requestEnvStorage.getStore() || {}, url);
 
   if (request.method === "OPTIONS") {

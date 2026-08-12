@@ -17,7 +17,7 @@ export async function handleBrevoWebhook(request, env) {
 
 async function processBrevoEvent(event,env){const type=clean(event?.event,40).toLowerCase();const email=emailValue(event?.email);if(!email)return false;const now=new Date().toISOString();const eventDate=clean(event?.date,40)||now;const messageId=clean(event?.["message-id"]||event?.messageId,200);const raw=JSON.stringify(event).slice(0,10000);await env.GIFT_CARD_DB.prepare("INSERT INTO outreach_message_events (id,email,event_type,event_date,provider,provider_message_id,raw_payload,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),email,type,eventDate,"brevo",messageId,raw,now).run();if(!new Set(["unsubscribed","hardbounce","blocked","spam","invalid"]).has(type))return false;await env.GIFT_CARD_DB.prepare("INSERT INTO suppression_list (id,email,domain,reason,created_at) VALUES (?,?,?,?,?) ON CONFLICT(email,domain) DO UPDATE SET reason=excluded.reason,created_at=excluded.created_at").bind(crypto.randomUUID(),email,domainOf(`https://${email.split("@")[1]}`),`brevo:${type}`,eventDate).run();await env.GIFT_CARD_DB.prepare("UPDATE outreach_messages SET status='suppressed',failure_reason=?,updated_at=? WHERE prospect_id IN (SELECT id FROM prospects WHERE email=?) AND status IN ('draft','approved','queued')").bind(`Brevo ${type}`,now,email).run();if(messageId)await env.GIFT_CARD_DB.prepare("UPDATE outreach_messages SET status='suppressed',failure_reason=?,updated_at=? WHERE provider='brevo' AND provider_message_id=?").bind(`Brevo ${type}`,now,messageId).run();await env.GIFT_CARD_DB.prepare("UPDATE prospects SET status='suppressed',compliance_status='suppressed',updated_at=? WHERE email=?").bind(now,email).run();return true;}
 
-export async function handleProspectingRequest(request, env, url = new URL(request.url)) {
+export async function handleProspectingRequest(request, env, url = new URL(request.url), options={}) {
   if (!(await isAdmin(request, env))) return json({ok:false,error:"Admin authorisation required."},401);
   if (request.method === "GET" && url.pathname === BASE) return dashboard(env, url);
   if (request.method !== "POST") return json({ok:false,error:"Method not allowed."},405);
@@ -25,7 +25,11 @@ export async function handleProspectingRequest(request, env, url = new URL(reque
   if (action === "run") {
     if (!enabled(env.AI_PROSPECTING_ENABLED)) return json({ok:false,error:"AI prospecting is disabled."},409);
     const input = await safeJson(request);
-    return json(await runProspecting(env, {trigger:"manual", products:input.products}), 200);
+    const submittedProducts=Array.isArray(input?.products)
+      ?input.products.filter(product=>product&&typeof product==="object"&&!Array.isArray(product))
+      :[];
+    const products=submittedProducts.length?submittedProducts:(typeof options.loadProducts==="function"?await options.loadProducts():[]);
+    return json(await runProspecting(env, {trigger:"manual", products}), 200);
   }
   if (action === "purge") return json({ok:true,...await purgeExpiredProspects(env.GIFT_CARD_DB)},200);
   const match = action.match(/^messages\/([^/]+)\/(approve|reject|send)$/);
