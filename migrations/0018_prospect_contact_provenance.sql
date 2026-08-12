@@ -1,0 +1,2 @@
+ALTER TABLE prospects ADD COLUMN website TEXT NOT NULL DEFAULT '';
+ALTER TABLE prospects ADD COLUMN contact_page_url TEXT NOT NULL DEFAULT '';
