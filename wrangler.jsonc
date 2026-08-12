@@ -264,6 +264,11 @@
 	"env": {
 		"staging": {
 			"name": "public-staging",
+			"secrets": {
+				"required": [
+					"ADMIN_API_TOKEN"
+				]
+			},
 			"observability": {
 				"enabled": true,
 				"head_sampling_rate": 1
@@ -277,7 +282,20 @@
 				"AI_PROSPECTING_MIN_SCORE": "55",
 				"AI_PROSPECTING_AI_ESTIMATED_COST_GBP": "0.01",
 				"ETSY_FEATURE_ENABLED": "false",
-				"ETSY_SYNC_ENABLED": "false"
+				"ETSY_SYNC_ENABLED": "false",
+				"MARKETING_AI_MODEL": "@cf/meta/llama-3.1-8b-instruct-fp8-fast",
+				"META_INSTAGRAM_USER_ID": "",
+				"META_INSTAGRAM_USERNAME": "",
+				"META_PAGE_ID": "",
+				"META_PAGE_IDS": "",
+				"META_REDIRECT_URI": "https://staging.bingodogwash.com/api/admin/marketing/oauth/callback",
+				"META_APP_ID": "",
+				"TIKTOK_REDIRECT_URI": "https://staging.bingodogwash.com/api/tiktok/callback",
+				"TIKTOK_OAUTH_ENVIRONMENT": "sandbox",
+				"TIKTOK_DIRECT_POST_ENABLED": "false"
+			},
+			"ai": {
+				"binding": "AI"
 			},
 			"routes": [
 				{
