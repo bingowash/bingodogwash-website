@@ -10,7 +10,7 @@ test("AI product centre loads, drafts, reviews and confirms distribution safely"
   await page.route("**/api/admin/marketing", (route) => { expect(new URL(route.request().url()).origin).toBe("http://localhost:3000"); return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, connectedPlatforms: { facebook: true, instagram: true }, platformStatus: { facebook: { ok: true, accessiblePageIds: ["page-1", "page-2"] }, instagram: { ok: true } } }) }); });
   await page.route("**/api/tiktok/status", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, tiktok: { connected: true, scopesAvailable: ["user.info.basic", "video.upload"], directPostEnabled: false } }) }));
   await page.route("**/api/admin/distribution-channels", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, channels: { email: { status:"draft_only", label:"Draft only", ready:false, missing:["AI_EMAIL_FROM"] }, googleMerchant: { status:"configuration_error", label:"Configuration error", ready:false, missing:["GOOGLE_MERCHANT_CLIENT_ID"] }, ebay: { status:"draft_only", label:"Draft only", ready:false, missing:["eBay seller OAuth/Inventory connector"] } } }) }));
-  await page.route("**/api/admin/prospecting?*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok:true, capability:{prospectingEnabled:false,sendingEnabled:false,campaignProvider:"brevo",campaignProviderReady:false}, stats:{shown:1,lastRun:null}, prospects:[{id:"prospect-1",business_name:"Dog Grooming Ltd",business_type:"dog groomer",location:"London",domain:"dogs.example",email:"info@dogs.example",subscriber_type:"corporate",lia_basis_recorded:0,source:"companies_house",compliance_status:"lia_required",status:"new",message_id:"message-1",message_status:"approved"}] }) }));
+  await page.route("**/api/admin/prospecting?*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok:true, capability:{prospectingEnabled:false,sendingEnabled:false,campaignProvider:"brevo",campaignProviderReady:false}, stats:{shown:2,lastRun:null}, prospects:[{id:"prospect-1",business_name:"Dog Grooming Ltd",business_type:"dog groomer",location:"London",domain:"dogs.example",email:"info@dogs.example",subscriber_type:"corporate",lia_basis_recorded:0,source:"google_places",google_place_id:"ChIJ-test-place-id",compliance_status:"lia_required",status:"new",message_id:"message-1",message_status:"approved"},{id:"prospect-2",business_name:"Historic Pet Shop",business_type:"pet shop",location:"Kent",domain:"historic.example",email:"",subscriber_type:"unknown",lia_basis_recorded:0,source:"business_website",google_place_id:null,compliance_status:"missing_public_email",status:"new"}] }) }));
   await page.route("**/api/tiktok/draft?*", async (route) => { tiktokDraftCalls += 1; expect(route.request().method()).toBe("POST"); expect(route.request().url()).toContain("context=ai-distribution"); expect(route.request().postDataBuffer()?.length).toBe(4); return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, draftUploaded: true, publishId: "tiktok-draft-1", message: "TikTok draft uploaded." }) }); });
   await page.route("**/api/admin/ai-drafts", async (route) => {
     generationCalls += 1;
@@ -42,9 +42,18 @@ test("AI product centre loads, drafts, reviews and confirms distribution safely"
   await expect(page.locator('[data-channel="ebay"] + strong + span')).toHaveText("Draft only");
   await expect(page.getByRole("heading", { name: "Nightly AI Customer Finder" })).toBeVisible();
   await expect(page.locator("[data-prospecting-rows]")).toContainText("Dog Grooming Ltd");
+  await expect(page.locator("[data-prospecting-rows]")).toContainText("google_places");
+  await expect(page.locator("[data-prospecting-rows]")).toContainText("Place ID: ChIJ-test-place-id");
+  await expect(page.locator("[data-prospecting-rows]")).toContainText("Historic Pet Shop");
+  await expect(page.locator("[data-prospecting-rows]")).toContainText("business_website");
+  await expect(page.locator("[data-prospecting-rows]")).not.toContainText("Place ID not available");
   await expect(page.locator("[data-prospecting-rows]")).toContainText("LIA: not recorded");
-  await expect(page.locator("[data-prospecting-rows] button", { hasText: "Send" })).toBeDisabled();
-  await expect(page.locator("[data-prospecting-rows] button", { hasText: "Send" })).toHaveAttribute("title", /Brevo campaign sending is not ready/);
+  const prospectSendButtons = page.locator("[data-prospecting-rows] button", { hasText: "Send" });
+  await expect(prospectSendButtons).toHaveCount(2);
+  for (const sendButton of await prospectSendButtons.all()) {
+    await expect(sendButton).toBeDisabled();
+    await expect(sendButton).toHaveAttribute("title", /Brevo campaign sending is not ready/);
+  }
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator("[data-channel-grid]")).toBeVisible();
   await page.locator("[data-product-search]").fill("B012DOG");
