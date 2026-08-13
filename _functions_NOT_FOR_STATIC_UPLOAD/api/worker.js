@@ -243,7 +243,11 @@ export default {
       return;
     }
     if (flagValue(env?.ETSY_FEATURE_ENABLED) && flagValue(env?.ETSY_SYNC_ENABLED)) {
-      ctx.waitUntil(requestEnvStorage.run(env || {}, () => runEtsySync("scheduled", "scheduled")));
+      ctx.waitUntil(requestEnvStorage.run(env || {}, async () => {
+        if (await scheduledEtsySyncAllowed()) {
+          await runEtsySync("scheduled", "scheduled");
+        }
+      }));
     }
   }
 };
@@ -378,6 +382,12 @@ async function handleRequest(request) {
   if (isDistributionChannelPath(url.pathname)) return handleDistributionChannelRequest(request, requestEnvStorage.getStore() || {}, url);
 
   if (request.method === "OPTIONS") {
+    if (url.pathname === ADMIN_ETSY_PATH || url.pathname.startsWith(`${ADMIN_ETSY_PATH}/`)) {
+      const origin = request.headers.get("Origin") || "";
+      return ADMIN_AI_DRAFTS_ORIGINS.has(origin)
+        ? adminApiCorsResponse(request, null, 204)
+        : adminApiCorsResponse(request, { ok: false, error: "Origin is not allowed." }, 403);
+    }
     if (isTikTokPath(url.pathname)) {
       const origin = request.headers.get("Origin") || "";
       return ADMIN_AI_DRAFTS_ORIGINS.has(origin)
@@ -510,7 +520,11 @@ async function handleRequest(request) {
   }
 
   if (url.pathname === ADMIN_ETSY_PATH || url.pathname.startsWith(`${ADMIN_ETSY_PATH}/`)) {
-    return handleAdminEtsy(request, url);
+    const origin = request.headers.get("Origin") || "";
+    if (origin && !ADMIN_AI_DRAFTS_ORIGINS.has(origin)) {
+      return adminApiCorsResponse(request, { ok: false, error: "Origin is not allowed." }, 403);
+    }
+    return withAdminApiCors(await handleAdminEtsy(request, url), request);
   }
 
   if (url.pathname === ADMIN_PAGES_PATH || url.pathname.startsWith(`${ADMIN_PAGES_PATH}/`)) {
@@ -2621,19 +2635,29 @@ async function handlePublicEtsyProducts(request, url) {
     });
   }
 
-  const keywords = cleanText(url.searchParams.get("q") || "dog grooming", 80);
-  const limit = cleanLimit(url.searchParams.get("limit"), 24, 50);
-  const listings = await fetchEtsyMarketplaceListings(keywords, limit);
-  let hiddenListingIds = new Set();
-  if (giftCardDb()) {
-    const hidden = await giftCardDb()
-      .prepare("SELECT external_listing_id FROM etsy_products WHERE source = 'etsy' AND admin_status IN ('hidden', 'unpublished', 'archived')")
-      .all();
-    hiddenListingIds = new Set((hidden.results || []).map((row) => String(row.external_listing_id)));
+  if (!giftCardDb()) {
+    return corsResponse(request, {
+      ok: true,
+      enabled: true,
+      live: false,
+      adminControlled: true,
+      count: 0,
+      products: [],
+      note: "The approved Etsy product catalogue is unavailable."
+    });
   }
-  const products = listings
-    .map(publicEtsyMarketplaceProductShape)
-    .filter((product) => product.sourceProductId && product.name && product.externalUrl && !hiddenListingIds.has(String(product.sourceProductId)));
+
+  const keywords = cleanText(url.searchParams.get("q"), 80).toLowerCase();
+  const limit = cleanLimit(url.searchParams.get("limit"), 24, 50);
+  const result = await giftCardDb()
+    .prepare("SELECT * FROM etsy_products WHERE source = 'etsy' AND admin_status = 'published' AND public_visibility = 1 ORDER BY updated_at DESC LIMIT ?")
+    .bind(limit)
+    .all();
+  const products = (result.results || [])
+    .filter((product) => !keywords || [product.title, product.display_title, product.description, product.display_description, product.category, product.tags]
+      .some((value) => String(value || "").toLowerCase().includes(keywords)))
+    .map(publicEtsyProductShape)
+    .filter((product) => product.sourceProductId && product.name && product.externalUrl);
   return corsResponse(request, {
     ok: true,
     enabled: true,
@@ -2671,6 +2695,18 @@ async function fetchEtsyMarketplaceListings(keywords = "dog grooming", limit = 2
     if (Array.isArray(details.results) && details.results.length) listings = details.results;
   }
   return listings;
+}
+
+async function handleInternalEtsyDiscovery(request, url) {
+  if (request.method !== "GET" || !envFlag("ETSY_FEATURE_ENABLED")) {
+    return corsResponse(request, { ok: true, enabled: false, count: 0, products: [] });
+  }
+  const keywords = cleanText(url.searchParams.get("q") || "dog grooming", 80);
+  const limit = cleanLimit(url.searchParams.get("limit"), 24, 50);
+  const products = (await fetchEtsyMarketplaceListings(keywords, limit))
+    .map(publicEtsyMarketplaceProductShape)
+    .filter((product) => product.sourceProductId && product.name && product.externalUrl);
+  return corsResponse(request, { ok: true, enabled: true, internalDiscovery: true, count: products.length, products });
 }
 
 function publicEtsyMarketplaceProductShape(listing) {
@@ -2830,11 +2866,16 @@ async function adminEtsyDashboard(request) {
 
 async function adminEtsyProducts(request, url) {
   const status = cleanText(url.searchParams.get("status"), 40);
+  const externalListingId = cleanText(url.searchParams.get("externalListingId"), 120);
   const values = [];
   let where = "WHERE source = 'etsy'";
   if (status) {
     where += " AND admin_status = ?";
     values.push(status);
+  }
+  if (externalListingId) {
+    where += " AND external_listing_id = ?";
+    values.push(externalListingId);
   }
 
   const result = await giftCardDb()
@@ -2908,9 +2949,27 @@ async function adminEtsyAutomaticSync(request) {
   return corsResponse(request, { ok: true, automaticSyncEnabled: enabled });
 }
 
+async function scheduledEtsySyncAllowed() {
+  const connection = await etsyConnection();
+  if (!connection || connection.automatic_sync_enabled !== 1 || String(connection.status || "").toLowerCase() !== "connected") {
+    return false;
+  }
+  try {
+    await validEtsyAccessToken();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function adminEtsyProductAction(request, action) {
   let input = {};
   try { input = await request.json(); } catch {}
+  if (action === "import-listing") return adminEtsyImportListing(request, input);
+  if (action === "affiliate-draft") return adminEtsyAffiliateDraft(request, input);
+  if (action === "affiliate-approve") return adminEtsyAffiliateApprove(request, input);
+  if (action === "affiliate-reject") return adminEtsyAffiliateReject(request, input);
+  if (action === "affiliate-verify") return adminEtsyAffiliateVerify(request, input);
   const ids = Array.isArray(input.ids) ? input.ids.map((id) => cleanText(id, 120)).filter(Boolean) : [];
   if (!ids.length) {
     return corsResponse(request, { ok: false, error: "Select at least one Etsy product." }, 400);
@@ -2935,6 +2994,220 @@ async function adminEtsyProductAction(request, action) {
     .run();
   await auditSiteEvent(request, update.audit, "etsy_product", ids.join(","), "", update.status, "ok", "");
   return corsResponse(request, { ok: true, status: update.status, publicVisibility: Boolean(update.visibility) });
+}
+
+const ETSY_AFFILIATE_PROVIDER = "rakuten";
+const ETSY_AFFILIATE_PROGRAM = "etsy_creator_collective_uk";
+const ETSY_AFFILIATE_STOREFRONT = "Concordia Mercatura";
+const ETSY_AFFILIATE_DISCLOSURE = "We may earn a commission from qualifying purchases at no extra cost to you.";
+
+function cleanAffiliateUrl(value) {
+  try {
+    const raw = String(value || "");
+    if (raw.length > 2000) return "";
+    const url = new URL(raw);
+    if (url.protocol !== "https:" || !url.hostname || url.username || url.password) return "";
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
+function etsyListingReference(value) {
+  const raw = cleanText(value, 500);
+  if (/^\d{1,20}$/.test(raw)) return { listingId: raw, listingUrl: "" };
+  const prefixed = raw.match(/^etsy-(\d{1,20})$/i);
+  if (prefixed) return { listingId: prefixed[1], listingUrl: "" };
+  const listingUrl = cleanEtsyUrl(raw);
+  if (!listingUrl) return { listingId: "", listingUrl: "" };
+  const listingId = new URL(listingUrl).pathname.match(/\/listing\/(\d{1,20})(?:\/|$)/)?.[1] || "";
+  return listingId ? { listingId, listingUrl } : { listingId: "", listingUrl: "" };
+}
+
+async function fetchExactEtsyListing(listingId) {
+  const id = cleanText(listingId, 20);
+  if (!/^\d{1,20}$/.test(id)) throw new Error("A valid Etsy listing ID is required.");
+  const listing = await etsyApi(`/v3/application/listings/${encodeURIComponent(id)}?includes=Images,Shop`);
+  const normalized = normalizeEtsyImport(listing, listing.shop_id || listing.shopId || "");
+  if (normalized.externalListingId !== id || etsyListingIdFromUrl(normalized.listingUrl) !== id) {
+    throw new Error("Etsy returned a listing that did not match the requested product.");
+  }
+  return listing;
+}
+
+async function adminEtsyImportListing(request, input) {
+  const reference = etsyListingReference(input.listingUrl || input.listing_url || input.listingId || input.listing_id || input.id);
+  if (!reference.listingId) return corsResponse(request, { ok: false, error: "Enter a valid HTTPS Etsy listing URL or numeric listing ID." }, 400);
+  try {
+    const listing = await fetchExactEtsyListing(reference.listingId);
+    await upsertEtsyListing(listing, listing.shop_id || listing.shopId || "", reference.listingUrl);
+    const stored = await giftCardDb()
+      .prepare("SELECT * FROM etsy_products WHERE source = 'etsy' AND external_listing_id = ? LIMIT 1")
+      .bind(reference.listingId)
+      .first();
+    if (!stored) throw new Error("The Etsy listing was not stored.");
+    await auditSiteEvent(request, "etsy-exact-listing-import", "etsy_product", stored.id, "", stored.admin_status || "review", "ok", "");
+    return corsResponse(request, { ok: true, imported: true, published: false, product: adminEtsyProductShape(stored), message: "Etsy listing imported for review. No product was published." });
+  } catch (error) {
+    await auditSiteEvent(request, "etsy-exact-listing-import", "etsy_product", reference.listingId, "", "error", "error", error.message);
+    return corsResponse(request, { ok: false, error: "Etsy listing could not be imported. Affiliate review is unavailable until the product is stored." }, 502);
+  }
+}
+
+async function etsyAffiliateProduct(input) {
+  const id = cleanText(input.id || input.productId || input.externalListingId, 120);
+  if (!id) return null;
+  const externalListingId = id.startsWith("etsy-") ? id.slice(5) : id;
+  return giftCardDb()
+    .prepare("SELECT * FROM etsy_products WHERE source = 'etsy' AND (id = ? OR external_listing_id = ?) LIMIT 1")
+    .bind(id, externalListingId)
+    .first();
+}
+
+async function adminEtsyAffiliateDraft(request, input) {
+  const product = await etsyAffiliateProduct(input);
+  if (!product) return corsResponse(request, { ok: false, error: "Etsy product not found." }, 404);
+  const originalUrl = cleanEtsyUrl(input.originalListingUrl || input.original_listing_url);
+  const listingUrl = cleanEtsyUrl(product.listing_url);
+  const submittedListingId = etsyListingIdFromUrl(originalUrl);
+  const storedListingUrlId = etsyListingIdFromUrl(listingUrl);
+  const externalListingId = cleanText(product.external_listing_id, 120);
+  const affiliateUrl = cleanAffiliateUrl(input.affiliateUrl || input.affiliate_url);
+  const provider = cleanText(input.affiliateProvider || input.affiliate_provider, 40).toLowerCase();
+  const program = cleanText(input.affiliateProgram || input.affiliate_program, 80).toLowerCase();
+  const storefront = cleanText(input.affiliateStorefront || input.affiliate_storefront, 120);
+  if (!submittedListingId || !storedListingUrlId || !/^\d+$/.test(externalListingId) || submittedListingId !== storedListingUrlId || submittedListingId !== externalListingId) {
+    return corsResponse(request, { ok: false, error: "Original URL must match the product's HTTPS Etsy listing URL." }, 400);
+  }
+  if (!affiliateUrl) return corsResponse(request, { ok: false, error: "Enter a valid HTTPS affiliate URL." }, 400);
+  if (provider !== ETSY_AFFILIATE_PROVIDER || program !== ETSY_AFFILIATE_PROGRAM || storefront !== ETSY_AFFILIATE_STOREFRONT) {
+    return corsResponse(request, { ok: false, error: "Affiliate provider, program or storefront is invalid." }, 400);
+  }
+  const provenance = cleanMultilineText(input.affiliateProvenance || input.affiliate_provenance, 1000);
+  const disclosure = cleanMultilineText(input.commissionDisclosure || input.commission_disclosure, 500) || ETSY_AFFILIATE_DISCLOSURE;
+  const now = new Date().toISOString();
+  await giftCardDb().prepare(`UPDATE etsy_products SET original_listing_url = ?, affiliate_url = ?, affiliate_provider = ?, affiliate_program = ?, affiliate_storefront = ?, affiliate_provenance = ?, commission_disclosure = ?, affiliate_review_status = 'draft', affiliate_reviewed_at = NULL, affiliate_reviewed_by = NULL, affiliate_verification_status = 'unverified', affiliate_verified_url = NULL, affiliate_final_url = NULL, affiliate_destination_listing_id = NULL, affiliate_verified_at = NULL, updated_at = ? WHERE id = ? AND source = 'etsy'`)
+    .bind(originalUrl, affiliateUrl, provider, program, storefront, provenance, disclosure, now, product.id).run();
+  await auditSiteEvent(request, "etsy-affiliate-draft", "etsy_product", product.id, product.affiliate_review_status || "", "draft", "ok", "");
+  return corsResponse(request, { ok: true, id: product.id, affiliateReviewStatus: "draft", publicVisibility: Boolean(product.public_visibility), adminStatus: product.admin_status });
+}
+
+async function adminEtsyAffiliateApprove(request, input) {
+  const product = await etsyAffiliateProduct(input);
+  if (!product) return corsResponse(request, { ok: false, error: "Etsy product not found." }, 404);
+  const originalUrl = cleanEtsyUrl(product.original_listing_url);
+  const originalListingId = etsyListingIdFromUrl(originalUrl);
+  const externalListingId = cleanText(product.external_listing_id, 120);
+  const affiliateUrl = cleanAffiliateUrl(product.affiliate_url);
+  const metadataValid = product.affiliate_provider === ETSY_AFFILIATE_PROVIDER && product.affiliate_program === ETSY_AFFILIATE_PROGRAM && product.affiliate_storefront === ETSY_AFFILIATE_STOREFRONT;
+  const verificationMatches = product.affiliate_verification_status === "match" && cleanAffiliateUrl(product.affiliate_verified_url) === affiliateUrl && cleanText(product.affiliate_destination_listing_id, 120) === externalListingId;
+  if (product.affiliate_review_status !== "draft" || !originalListingId || originalListingId !== externalListingId || !affiliateUrl || !metadataValid || !verificationMatches) {
+    return corsResponse(request, { ok: false, error: "A verified MATCH for the current Etsy affiliate draft is required before approval." }, 409);
+  }
+  const now = new Date().toISOString();
+  const reviewer = adminActor(request);
+  await giftCardDb().prepare("UPDATE etsy_products SET affiliate_review_status = 'approved', affiliate_reviewed_at = ?, affiliate_reviewed_by = ?, updated_at = ? WHERE id = ? AND source = 'etsy'")
+    .bind(now, reviewer, now, product.id).run();
+  await auditSiteEvent(request, "etsy-affiliate-approve", "etsy_product", product.id, "draft", "approved", "ok", "");
+  return corsResponse(request, { ok: true, id: product.id, affiliateReviewStatus: "approved", affiliateReviewedAt: now, affiliateReviewedBy: reviewer, publicVisibility: Boolean(product.public_visibility), adminStatus: product.admin_status });
+}
+
+async function adminEtsyAffiliateReject(request, input) {
+  const product = await etsyAffiliateProduct(input);
+  if (!product) return corsResponse(request, { ok: false, error: "Etsy product not found." }, 404);
+  const now = new Date().toISOString();
+  const reviewer = adminActor(request);
+  await giftCardDb().prepare("UPDATE etsy_products SET affiliate_url = NULL, affiliate_review_status = 'rejected', affiliate_reviewed_at = ?, affiliate_reviewed_by = ?, affiliate_verification_status = 'unverified', affiliate_verified_url = NULL, affiliate_final_url = NULL, affiliate_destination_listing_id = NULL, affiliate_verified_at = NULL, updated_at = ? WHERE id = ? AND source = 'etsy'")
+    .bind(now, reviewer, now, product.id).run();
+  await auditSiteEvent(request, "etsy-affiliate-reject", "etsy_product", product.id, product.affiliate_review_status || "", "rejected", "ok", "");
+  return corsResponse(request, { ok: true, id: product.id, affiliateReviewStatus: "rejected", publicVisibility: Boolean(product.public_visibility), adminStatus: product.admin_status });
+}
+
+function etsyListingIdFromUrl(value) {
+  const url = cleanEtsyUrl(value);
+  if (!url) return "";
+  return cleanText(new URL(url).pathname.match(/\/listing\/(\d+)(?:\/|$)/)?.[1], 120);
+}
+
+function affiliateProductMatch(selectedListingId, finalUrl) {
+  const destinationListingId = etsyListingIdFromUrl(finalUrl);
+  if (!destinationListingId) return { status: "unverified", destinationListingId: "" };
+  return { status: destinationListingId === cleanText(selectedListingId, 120) ? "match" : "mismatch", destinationListingId };
+}
+
+function blockedVerificationHostname(hostname) {
+  const host = String(hostname || "").toLowerCase().replace(/\.$/, "");
+  return !host || host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal") || host === "metadata.google.internal" || host.includes(":");
+}
+
+function publicVerificationIp(value) {
+  const ip = String(value || "").toLowerCase();
+  if (ip.includes(":")) return !/^(?:::|::1|f[cd]|fe[89ab]|2001:db8)/.test(ip);
+  const parts = ip.split(".").map(Number);
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
+  const [a, b] = parts;
+  return !(a === 0 || a === 10 || a === 127 || a >= 224 || (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 0) || (a === 192 && b === 168) || (a === 198 && (b === 18 || b === 19 || b === 51)) || (a === 203 && b === 0));
+}
+
+async function assertPublicVerificationTarget(url) {
+  if (url.protocol !== "https:" || url.username || url.password || blockedVerificationHostname(url.hostname)) throw new Error("Affiliate verification target is not an allowed public HTTPS URL.");
+  const addresses = [];
+  for (const type of ["A", "AAAA"]) {
+    const dnsUrl = new URL("https://cloudflare-dns.com/dns-query");
+    dnsUrl.searchParams.set("name", url.hostname);
+    dnsUrl.searchParams.set("type", type);
+    const response = await fetch(dnsUrl, { headers: { Accept: "application/dns-json" }, redirect: "manual" });
+    if (response.status >= 300 && response.status < 400) throw new Error("Affiliate verification DNS lookup redirected unexpectedly.");
+    if (!response.ok) throw new Error("Affiliate verification DNS lookup failed.");
+    const data = await response.json().catch(() => ({}));
+    for (const answer of data.Answer || []) if (answer.type === 1 || answer.type === 28) addresses.push(String(answer.data || ""));
+  }
+  if (!addresses.length || addresses.some((address) => !publicVerificationIp(address))) throw new Error("Affiliate verification target resolved to a blocked address.");
+}
+
+async function resolveAffiliateDestination(value, maxRedirects = 5) {
+  let current = new URL(cleanAffiliateUrl(value));
+  const redirectStatuses = new Set([301, 302, 303, 307, 308]);
+  await assertPublicVerificationTarget(current);
+  for (let redirects = 0; redirects <= maxRedirects; redirects += 1) {
+    const response = await fetch(current, { method: "GET", redirect: "manual", headers: { Accept: "text/html,application/xhtml+xml" } });
+    response.body?.cancel?.();
+    if (!redirectStatuses.has(response.status)) {
+      if (response.status >= 300 && response.status < 400) throw new Error("Affiliate verification received an unsupported redirect response.");
+      return current.toString();
+    }
+    if (redirects === maxRedirects) throw new Error("Affiliate verification exceeded the redirect limit.");
+    const location = response.headers.get("Location");
+    if (!location) throw new Error("Affiliate verification redirect was missing a destination.");
+    let next;
+    try { next = new URL(location, current); }
+    catch { throw new Error("Affiliate verification redirect destination was malformed."); }
+    if (!cleanAffiliateUrl(next.toString())) throw new Error("Affiliate verification redirect was unsafe.");
+    await assertPublicVerificationTarget(next);
+    current = next;
+  }
+  throw new Error("Affiliate verification failed.");
+}
+
+async function adminEtsyAffiliateVerify(request, input) {
+  const product = await etsyAffiliateProduct(input);
+  if (!product) return corsResponse(request, { ok: false, error: "Etsy product not found." }, 404);
+  const affiliateUrl = cleanAffiliateUrl(input.affiliateUrl || input.affiliate_url || product.affiliate_url);
+  if (!affiliateUrl || product.affiliate_review_status !== "draft" || affiliateUrl !== cleanAffiliateUrl(product.affiliate_url)) return corsResponse(request, { ok: false, error: "Save a valid affiliate draft before verification." }, 409);
+  let finalUrl = "";
+  let destinationListingId = "";
+  let status = "unverified";
+  try {
+    finalUrl = await resolveAffiliateDestination(affiliateUrl);
+    ({ status, destinationListingId } = affiliateProductMatch(product.external_listing_id, finalUrl));
+  } catch (error) {
+    return corsResponse(request, { ok: false, error: cleanText(error.message || "Affiliate verification failed.", 300) }, 400);
+  }
+  const now = new Date().toISOString();
+  await giftCardDb().prepare("UPDATE etsy_products SET affiliate_verification_status = ?, affiliate_verified_url = ?, affiliate_final_url = ?, affiliate_destination_listing_id = ?, affiliate_verified_at = ?, updated_at = ? WHERE id = ? AND source = 'etsy'")
+    .bind(status, affiliateUrl, finalUrl, destinationListingId, now, now, product.id).run();
+  await auditSiteEvent(request, "etsy-affiliate-verify", "etsy_product", product.id, "", status, "ok", "");
+  return corsResponse(request, { ok: true, selectedListingId: product.external_listing_id, originalListingUrl: product.original_listing_url || product.listing_url, affiliateUrl, finalUrl, destinationListingId, verificationStatus: status, verifiedAt: now, message: status === "match" ? "Product match verified. Commission attribution still depends on the affiliate link being generated by your approved Etsy Creator Collective/Rakuten account." : "The affiliate destination did not verify as the selected Etsy product." });
 }
 
 async function runEtsySync(syncType, actor) {
@@ -2989,29 +3262,33 @@ async function runEtsySync(syncType, actor) {
   }
 }
 
-async function upsertEtsyListing(listing, shopId) {
+async function upsertEtsyListing(listing, shopId, requestedListingUrl = "") {
   const product = normalizeEtsyImport(listing, shopId);
   if (!product.externalListingId || !product.title || !product.listingUrl) {
     throw new Error("Etsy listing is missing required id, title or URL.");
   }
 
+  const requestedReference = etsyListingReference(requestedListingUrl);
+  const canonicalOriginalUrl = requestedReference.listingId === product.externalListingId ? requestedReference.listingUrl : product.listingUrl;
   const existing = await giftCardDb()
-    .prepare("SELECT id FROM etsy_products WHERE source = 'etsy' AND external_listing_id = ?")
+    .prepare("SELECT id, original_listing_url FROM etsy_products WHERE source = 'etsy' AND external_listing_id = ?")
     .bind(product.externalListingId)
     .first();
   const now = new Date().toISOString();
   if (existing) {
+    const storedOriginalUrl = cleanEtsyUrl(existing.original_listing_url);
+    const originalListingUrl = etsyListingIdFromUrl(storedOriginalUrl) === product.externalListingId ? storedOriginalUrl : canonicalOriginalUrl;
     await giftCardDb()
-      .prepare(`UPDATE etsy_products SET etsy_shop_id = ?, title = ?, description = ?, price = ?, currency = ?, quantity = ?, availability = ?, state = ?, listing_url = ?, primary_image = ?, additional_images = ?, tags = ?, category = ?, personalisation_available = ?, variations = ?, created_time = ?, updated_time = ?, last_synced_at = ?, sync_error = '', raw_source_payload = ?, updated_at = ? WHERE id = ? AND source = 'etsy'`)
-      .bind(product.shopId, product.title, product.description, product.price, product.currency, product.quantity, product.availability, product.state, product.listingUrl, product.primaryImage, product.additionalImages, product.tags, product.category, product.personalisationAvailable, product.variations, product.createdTime, product.updatedTime, now, product.raw, now, existing.id)
+      .prepare(`UPDATE etsy_products SET etsy_shop_id = ?, title = ?, description = ?, price = ?, currency = ?, quantity = ?, availability = ?, state = ?, listing_url = ?, original_listing_url = ?, primary_image = ?, additional_images = ?, tags = ?, category = ?, personalisation_available = ?, variations = ?, created_time = ?, updated_time = ?, last_synced_at = ?, sync_error = '', raw_source_payload = ?, updated_at = ? WHERE id = ? AND source = 'etsy'`)
+      .bind(product.shopId, product.title, product.description, product.price, product.currency, product.quantity, product.availability, product.state, product.listingUrl, originalListingUrl, product.primaryImage, product.additionalImages, product.tags, product.category, product.personalisationAvailable, product.variations, product.createdTime, product.updatedTime, now, product.raw, now, existing.id)
       .run();
     return "updated";
   }
 
   await giftCardDb()
-    .prepare(`INSERT INTO etsy_products (id, source, external_listing_id, etsy_shop_id, title, display_title, description, display_description, price, currency, quantity, availability, state, listing_url, primary_image, additional_images, tags, category, personalisation_available, variations, created_time, updated_time, last_synced_at, admin_status, public_visibility, sync_error, raw_source_payload, created_at, updated_at)
-      VALUES (?, 'etsy', ?, ?, ?, '', ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'published', 1, '', ?, ?, ?)`)
-    .bind(crypto.randomUUID(), product.externalListingId, product.shopId, product.title, product.description, product.price, product.currency, product.quantity, product.availability, product.state, product.listingUrl, product.primaryImage, product.additionalImages, product.tags, product.category, product.personalisationAvailable, product.variations, product.createdTime, product.updatedTime, now, product.raw, now, now)
+    .prepare(`INSERT INTO etsy_products (id, source, external_listing_id, etsy_shop_id, title, display_title, description, display_description, price, currency, quantity, availability, state, listing_url, original_listing_url, primary_image, additional_images, tags, category, personalisation_available, variations, created_time, updated_time, last_synced_at, admin_status, public_visibility, affiliate_review_status, sync_error, raw_source_payload, created_at, updated_at)
+      VALUES (?, 'etsy', ?, ?, ?, '', ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'review', 0, 'draft', '', ?, ?, ?)`)
+    .bind(crypto.randomUUID(), product.externalListingId, product.shopId, product.title, product.description, product.price, product.currency, product.quantity, product.availability, product.state, product.listingUrl, canonicalOriginalUrl, product.primaryImage, product.additionalImages, product.tags, product.category, product.personalisationAvailable, product.variations, product.createdTime, product.updatedTime, now, product.raw, now, now)
     .run();
   return "imported";
 }
@@ -3073,7 +3350,8 @@ function etsyTime(value) {
 function cleanEtsyUrl(value) {
   try {
     const url = new URL(String(value || ""));
-    return url.hostname.endsWith("etsy.com") && url.protocol === "https:" ? url.toString() : "";
+    const hostname = url.hostname.toLowerCase();
+    return (hostname === "etsy.com" || hostname.endsWith(".etsy.com")) && url.protocol === "https:" && !url.username && !url.password ? url.toString() : "";
   } catch {
     return "";
   }
@@ -3182,7 +3460,7 @@ function etsyConnectionShape(connection, counts, latestSync, syncErrors) {
     published: counts.published || 0,
     hidden: counts.hidden || 0,
     syncErrors,
-    automaticSyncEnabled: false,
+    automaticSyncEnabled: connection?.automatic_sync_enabled === 1,
     lastError: connection?.last_error || latestSync?.error_message || ""
   };
 }
@@ -3192,6 +3470,8 @@ function adminEtsyProductShape(product) {
     ? product.category
     : "Etsy Dog Products";
   const externalListingId = cleanText(product.external_listing_id, 120);
+  const originalListingUrl = cleanEtsyUrl(product.original_listing_url || product.listing_url) || cleanEtsyUrl(product.listing_url);
+  const approvedAffiliateUrl = product.affiliate_review_status === "approved" ? cleanAffiliateUrl(product.affiliate_url) : "";
   return {
     id: product.id,
     externalListingId,
@@ -3206,6 +3486,21 @@ function adminEtsyProductShape(product) {
     status: product.admin_status,
     publicVisibility: Boolean(product.public_visibility),
     listingUrl: product.listing_url,
+    externalUrl: approvedAffiliateUrl || originalListingUrl,
+    originalListingUrl,
+    affiliateUrl: product.affiliate_url || "",
+    affiliateProvider: product.affiliate_provider || ETSY_AFFILIATE_PROVIDER,
+    affiliateProgram: product.affiliate_program || ETSY_AFFILIATE_PROGRAM,
+    affiliateStorefront: product.affiliate_storefront || ETSY_AFFILIATE_STOREFRONT,
+    affiliateProvenance: product.affiliate_provenance || "",
+    commissionDisclosure: product.commission_disclosure || "",
+    affiliateReviewStatus: product.affiliate_review_status || "draft",
+    affiliateReviewedAt: product.affiliate_reviewed_at || "",
+    affiliateReviewedBy: product.affiliate_reviewed_by || "",
+    affiliateVerificationStatus: product.affiliate_verification_status || "unverified",
+    affiliateFinalUrl: product.affiliate_final_url || "",
+    affiliateDestinationListingId: product.affiliate_destination_listing_id || "",
+    affiliateVerifiedAt: product.affiliate_verified_at || "",
     publicUrl: product.public_visibility && externalListingId
       ? `https://bingodogwash.com/product?id=${encodeURIComponent(`etsy-${externalListingId}`)}`
       : "",
@@ -3217,6 +3512,9 @@ function adminEtsyProductShape(product) {
 }
 
 function publicEtsyProductShape(product) {
+  const originalUrl = cleanEtsyUrl(product.original_listing_url || product.listing_url) || cleanEtsyUrl(product.listing_url);
+  const approvedAffiliateUrl = product.affiliate_review_status === "approved" ? cleanAffiliateUrl(product.affiliate_url) : "";
+  const affiliateApproved = Boolean(approvedAffiliateUrl);
   return {
     id: `etsy-${product.external_listing_id}`,
     source: "etsy",
@@ -3228,9 +3526,14 @@ function publicEtsyProductShape(product) {
     icon: "ET",
     image: product.primary_image || "retail.jpg",
     supplier: "Etsy",
-    commission: "External checkout",
+    commission: affiliateApproved ? (product.commission_disclosure || ETSY_AFFILIATE_DISCLOSURE) : "External checkout",
     status: product.personalisation_available ? "Personalised Etsy product" : (product.availability || "External checkout"),
-    externalUrl: product.listing_url,
+    externalUrl: approvedAffiliateUrl || originalUrl,
+    originalListingUrl: originalUrl,
+    affiliateProvider: affiliateApproved ? product.affiliate_provider || "" : "",
+    affiliateStorefront: affiliateApproved ? product.affiliate_storefront || "" : "",
+    affiliateReviewStatus: product.affiliate_review_status || "draft",
+    commissionDisclosure: affiliateApproved ? (product.commission_disclosure || ETSY_AFFILIATE_DISCLOSURE) : "",
     description: product.display_description || product.description || "Etsy product.",
     personalised: Boolean(product.personalisation_available),
     paymentProvider: "Etsy"
@@ -4291,7 +4594,7 @@ function absoluteCatalogueImage(value) {
 }
 
 function adminCatalogueProduct(item, source, index) {
-  const rawId = cleanText(item.id || item.sourceProductId || item.sku || item.title || item.name || `${source}-${index + 1}`, 160);
+  const rawId = cleanText((source === "etsy" ? item.externalListingId : "") || item.id || item.sourceProductId || item.sku || item.title || item.name || `${source}-${index + 1}`, 160);
   const id = rawId.startsWith(`${source}-`) ? rawId : `${source}-${rawId}`;
   const name = cleanText(item.name || item.title, 180);
   if (!name) return null;
@@ -4311,7 +4614,21 @@ function adminCatalogueProduct(item, source, index) {
     description: cleanText(item.description || (source === "ebay" ? `Live UK eBay listing from ${item.seller || "an eBay seller"}.` : ""), 1000),
     image: absoluteCatalogueImage(item.image || item.imageUrl || item.primaryImage || ""),
     publicUrl,
-    external: Boolean(externalUrl)
+    external: Boolean(externalUrl),
+    originalListingUrl: source === "etsy" ? cleanUrl(item.originalListingUrl || item.original_listing_url || item.listingUrl || "") : "",
+    affiliateUrl: source === "etsy" ? cleanUrl(item.affiliateUrl || item.affiliate_url || "") : "",
+    affiliateProvider: source === "etsy" ? cleanText(item.affiliateProvider || item.affiliate_provider, 40) : "",
+    affiliateProgram: source === "etsy" ? cleanText(item.affiliateProgram || item.affiliate_program, 80) : "",
+    affiliateStorefront: source === "etsy" ? cleanText(item.affiliateStorefront || item.affiliate_storefront, 120) : "",
+    affiliateProvenance: source === "etsy" ? cleanText(item.affiliateProvenance || item.affiliate_provenance, 1000) : "",
+    commissionDisclosure: source === "etsy" ? cleanText(item.commissionDisclosure || item.commission_disclosure, 500) : "",
+    affiliateReviewStatus: source === "etsy" ? cleanText(item.affiliateReviewStatus || item.affiliate_review_status || "draft", 40) : "",
+    affiliateReviewedAt: source === "etsy" ? cleanText(item.affiliateReviewedAt || item.affiliate_reviewed_at, 60) : "",
+    affiliateReviewedBy: source === "etsy" ? cleanText(item.affiliateReviewedBy || item.affiliate_reviewed_by, 120) : ""
+    ,affiliateVerificationStatus: source === "etsy" ? cleanText(item.affiliateVerificationStatus || item.affiliate_verification_status || "unverified", 40) : ""
+    ,affiliateFinalUrl: source === "etsy" ? cleanUrl(item.affiliateFinalUrl || item.affiliate_final_url || "") : ""
+    ,affiliateDestinationListingId: source === "etsy" ? cleanText(item.affiliateDestinationListingId || item.affiliate_destination_listing_id, 120) : ""
+    ,affiliateVerifiedAt: source === "etsy" ? cleanText(item.affiliateVerifiedAt || item.affiliate_verified_at, 60) : ""
   };
 }
 
@@ -4324,7 +4641,7 @@ async function loadProspectingCatalogue(query="dog products") {
   const feedRequest = (target) => new Request(target, { method: "GET", headers: { Accept: "application/json" } });
   const feeds = await Promise.allSettled([
     handleAvasamProducts(feedRequest(feedUrl(AVASAM_PRODUCTS_PATH, { limit: 100 })), feedUrl(AVASAM_PRODUCTS_PATH, { limit: 100 })),
-    handlePublicEtsyProducts(feedRequest(feedUrl(ETSY_PRODUCTS_PATH, { q: query, limit: 50 })), feedUrl(ETSY_PRODUCTS_PATH, { q: query, limit: 50 })),
+    handleInternalEtsyDiscovery(feedRequest(feedUrl(ETSY_PRODUCTS_PATH, { q: query, limit: 50 })), feedUrl(ETSY_PRODUCTS_PATH, { q: query, limit: 50 })),
     handleEbayProducts(feedRequest(feedUrl(EBAY_PRODUCTS_PATH, { q: query, limit: 50 })), feedUrl(EBAY_PRODUCTS_PATH, { q: query, limit: 50 }))
   ]);
   const sources = ["avasam", "etsy", "ebay"];
@@ -4339,6 +4656,14 @@ async function loadProspectingCatalogue(query="dog products") {
       .filter(Boolean);
     products.push(...mapped);
     sourceStatus[source] = { available: Boolean(mapped.length), count: mapped.length };
+  }
+  if (flagValue(envText("ETSY_FEATURE_ENABLED")) && giftCardDb()) {
+    try {
+      const stored = await giftCardDb().prepare("SELECT * FROM etsy_products WHERE source = 'etsy' ORDER BY updated_at DESC LIMIT 200").all();
+      products.push(...(stored.results || []).map(adminEtsyProductShape).map((item, index) => adminCatalogueProduct(item, "etsy", index)).filter(Boolean));
+    } catch (error) {
+      logError("Stored Etsy catalogue unavailable", error);
+    }
   }
   const unique = [...new Map(products.map((product) => [`${product.source}:${product.id}`, product])).values()];
   return unique;
@@ -4930,7 +5255,7 @@ function aiDraftCorsResponse(request, body, status = 200) {
 }
 
 function isProtectedAdminCorsPath(pathname) {
-  return pathname === ADMIN_AI_DRAFTS_PATH || pathname === ADMIN_AI_DISTRIBUTION_PATH || pathname === ADMIN_CATALOGUE_PATH || isTikTokPath(pathname) || isDistributionChannelPath(pathname) || isProspectingPath(pathname) || pathname === "/api/admin/marketing" || pathname.startsWith("/api/admin/marketing/");
+  return pathname === ADMIN_AI_DRAFTS_PATH || pathname === ADMIN_AI_DISTRIBUTION_PATH || pathname === ADMIN_CATALOGUE_PATH || pathname === ADMIN_ETSY_PATH || pathname.startsWith(`${ADMIN_ETSY_PATH}/`) || isTikTokPath(pathname) || isDistributionChannelPath(pathname) || isProspectingPath(pathname) || pathname === "/api/admin/marketing" || pathname.startsWith("/api/admin/marketing/");
 }
 
 function adminApiCorsHeaders(request) {
@@ -4968,4 +5293,16 @@ export {
   timingSafeEqualBytes,
   verifyStripeSignature,
   withSecurityHeaders,
+};
+
+export const etsyTestHelpers = {
+  scheduledSyncAllowed: (env) => requestEnvStorage.run(env || {}, scheduledEtsySyncAllowed),
+  publicProductShape: publicEtsyProductShape,
+  cleanAffiliateUrl,
+  resolveAffiliateDestination,
+  publicVerificationIp,
+  etsyListingIdFromUrl,
+  etsyListingReference,
+  fetchExactEtsyListing: (listingId, env) => requestEnvStorage.run(env || {}, () => fetchExactEtsyListing(listingId)),
+  affiliateProductMatch,
 };

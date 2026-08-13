@@ -8,6 +8,7 @@ test("AI product centre loads, drafts, reviews and confirms distribution safely"
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.addInitScript(() => sessionStorage.setItem("bingoAdminCoreToken", "test-admin-token"));
   await page.route("**/api/admin/catalogue", (route) => { expect(new URL(route.request().url()).origin).toBe("http://localhost:3000"); return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, products: [{ id: "etsy-1", source: "etsy", externalListingId: "12345", title: "Dog Grooming Bow", description: "A 3/8&quot; ribbon bow.", category: "Accessories", price: 12.99, currency: "GBP", publicUrl: "https://bingodogwash.com/product?id=etsy-12345", image: "https://bingodogwash.com/assets/amazon-product-1.jpg" }, { id: "amazon-dog-treats", source: "amazon", sku: "B012DOG", name: "Tracked Dog Treats", category: "Treats", priceLabel: "Price on Amazon", description: "Affiliate dog treats.", publicUrl: "https://www.amazon.co.uk/dp/B012DOG?tag=bingodogwash3-21", image: "https://bingodogwash.com/assets/amazon-product-2.jpg" }] }) }); });
+  await page.route("**/api/admin/etsy/products?*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, products: [{ id: "db-etsy-1", source: "etsy", externalListingId: "12345", title: "Dog Grooming Bow", description: "A 3/8&quot; ribbon bow.", listingUrl: "https://www.etsy.com/uk/listing/12345/dog-bow", originalListingUrl: "https://www.etsy.com/uk/listing/12345/dog-bow", publicUrl: "https://bingodogwash.com/product?id=etsy-12345", image: "https://bingodogwash.com/assets/amazon-product-1.jpg", affiliateReviewStatus: "draft", affiliateVerificationStatus: "unverified" }] }) }));
   await page.route("**/api/admin/marketing", (route) => { expect(new URL(route.request().url()).origin).toBe("http://localhost:3000"); return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, connectedPlatforms: { facebook: true, instagram: true }, platformStatus: { facebook: { ok: true, accessiblePageIds: ["page-1", "page-2"] }, instagram: { ok: true } } }) }); });
   await page.route("**/api/tiktok/status", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, tiktok: { connected: true, scopesAvailable: ["user.info.basic", "video.upload"], directPostEnabled: false } }) }));
   await page.route("**/api/admin/distribution-channels", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, channels: { email: { status:"draft_only", label:"Draft only", ready:false, missing:["AI_EMAIL_FROM"] }, googleMerchant: { status:"configuration_error", label:"Configuration error", ready:false, missing:["GOOGLE_MERCHANT_CLIENT_ID"] }, ebay: { status:"draft_only", label:"Draft only", ready:false, missing:["eBay seller OAuth/Inventory connector"] } } }) }));
@@ -208,4 +209,79 @@ test("AI product centre keeps manual mode and offers catalogue retry", async ({ 
   await page.locator("[data-product-select]").selectOption("");
   await expect(page.locator('[name="name"]')).toHaveValue("");
   await expect(page.locator("[data-product-status]")).toContainText("Manual product selected");
+});
+
+test("Etsy affiliate controls save an authenticated draft without publishing", async ({ page }) => {
+  await page.addInitScript(() => sessionStorage.setItem("bingoAdminCoreToken", "test-admin-token"));
+  let affiliateBody: Record<string, unknown> | undefined;
+  let importBody: Record<string, unknown> | undefined;
+  let distributionCalls = 0;
+  await page.route("**/api/admin/catalogue", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, products: [{ id: "etsy-456", source: "etsy", externalListingId: "456", name: "Creator bow", description: "Reviewed Etsy bow.", originalListingUrl: "https://www.etsy.com/uk/listing/456/creator-bow", externalUrl: "https://www.etsy.com/uk/listing/456/creator-bow", affiliateProvider: "rakuten", affiliateProgram: "etsy_creator_collective_uk", affiliateStorefront: "Concordia Mercatura", affiliateReviewStatus: "draft" }] }) }));
+  await page.route("**/api/admin/etsy/products?*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, products: [{ id: "db-456", source: "etsy", externalListingId: "456", title: "Creator bow", description: "Reviewed Etsy bow.", listingUrl: "https://www.etsy.com/uk/listing/456/creator-bow", originalListingUrl: "https://www.etsy.com/uk/listing/456/creator-bow", affiliateProvider: "rakuten", affiliateProgram: "etsy_creator_collective_uk", affiliateStorefront: "Concordia Mercatura", affiliateReviewStatus: "draft", affiliateVerificationStatus: "unverified" }] }) }));
+  await page.route("**/api/admin/etsy/products/import-listing", async (route) => {
+    importBody = route.request().postDataJSON();
+    expect(new URL(route.request().url()).origin).toBe("http://localhost:3000");
+    expect(route.request().headers().authorization).toBe("Bearer test-admin-token");
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, imported: true, published: false, message: "Etsy listing imported for review. No product was published.", product: { id: "db-456", source: "etsy", externalListingId: "456", title: "Creator bow", description: "Reviewed Etsy bow.", listingUrl: "https://www.etsy.com/uk/listing/456/creator-bow", originalListingUrl: "https://www.etsy.com/uk/listing/456/creator-bow", affiliateProvider: "rakuten", affiliateProgram: "etsy_creator_collective_uk", affiliateStorefront: "Concordia Mercatura", affiliateReviewStatus: "draft", affiliateVerificationStatus: "unverified" } }) });
+  });
+  await page.route("**/api/admin/etsy/products/affiliate-draft", async (route) => {
+    affiliateBody = route.request().postDataJSON();
+    expect(route.request().headers().authorization).toBe("Bearer test-admin-token");
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, id: "db-456", affiliateReviewStatus: "draft", adminStatus: "review", publicVisibility: false }) });
+  });
+  await page.route("**/api/admin/ai-distribution", (route) => { distributionCalls += 1; return route.fulfill({ status: 500, body: "unexpected" }); });
+  await page.route("**/api/admin/marketing", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, platformStatus: {} }) }));
+
+  await page.goto("/admin/ai-drafts.html");
+  await expect(page.locator("[data-etsy-import]")).toBeHidden();
+  await page.locator("[data-product-url-search]").fill("https://www.etsy.com/uk/listing/456/creator-bow");
+  await expect(page.locator("[data-etsy-import]")).toBeVisible();
+  await expect(page.locator("[data-etsy-import]")).toBeEnabled();
+  await page.locator("[data-etsy-import]").click();
+  await expect(page.locator("[data-etsy-affiliate]")).toBeVisible();
+  await expect(page.locator("[data-product-status]")).toContainText("imported for review");
+  await expect(page.locator('[name="originalListingUrl"]')).toHaveValue("https://www.etsy.com/uk/listing/456/creator-bow");
+  await expect(page.locator('[name="originalListingUrl"]')).toHaveAttribute("readonly", "");
+  await expect(page.locator('[name="affiliateStorefront"]')).toHaveValue("Concordia Mercatura");
+  await page.locator('[name="affiliateUrl"]').fill("https://tracking.example.org/click?campaign=reviewed");
+  await expect(page.locator('[name="affiliateUrl"]')).toHaveValue("https://tracking.example.org/click?campaign=reviewed");
+  await page.locator('[name="affiliateProvenance"]').fill("Human supplied Rakuten reference");
+  await expect(page.getByRole("button", { name: "Save affiliate draft" })).toBeEnabled();
+  await page.getByRole("button", { name: "Save affiliate draft" }).click();
+  await expect.poll(() => affiliateBody).toBeTruthy();
+  await expect(page.locator("[data-etsy-affiliate-status]")).toContainText("draft");
+  if (!affiliateBody || affiliateBody.id !== "db-456" || affiliateBody.affiliateProvider !== "rakuten" || affiliateBody.affiliateProgram !== "etsy_creator_collective_uk" || affiliateBody.affiliateStorefront !== "Concordia Mercatura" || affiliateBody.affiliateUrl !== "https://tracking.example.org/click?campaign=reviewed") throw new Error(`Unexpected affiliate body: ${JSON.stringify(affiliateBody)}`);
+  expect(importBody).toMatchObject({ listingId: "456", listingUrl: "https://www.etsy.com/uk/listing/456/creator-bow" });
+  expect(distributionCalls).toBe(0);
+});
+
+test("Etsy import button validates URLs and Enter shares the deduplicated import handler", async ({ page }) => {
+  await page.addInitScript(() => sessionStorage.setItem("bingoAdminCoreToken", "test-admin-token"));
+  let importCalls = 0;
+  await page.route("**/api/admin/catalogue", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, products: [] }) }));
+  await page.route("**/api/admin/marketing", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, platformStatus: {} }) }));
+  await page.route("**/api/admin/etsy/products/import-listing", async (route) => {
+    importCalls += 1;
+    expect(route.request().headers().authorization).toBe("Bearer test-admin-token");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, product: { id: "db-789", source: "etsy", externalListingId: "789", title: "Imported Etsy item", listingUrl: "https://www.etsy.com/listing/789/item", originalListingUrl: "https://www.etsy.com/listing/789/item", affiliateProvider: "rakuten", affiliateProgram: "etsy_creator_collective_uk", affiliateStorefront: "Concordia Mercatura", affiliateReviewStatus: "draft", affiliateVerificationStatus: "unverified" }, message: "Etsy listing imported for review. No product was published." }) });
+  });
+  await page.goto("/admin/ai-drafts.html");
+  const input = page.locator("[data-product-url-search]");
+  const button = page.locator("[data-etsy-import]");
+  for (const invalid of ["https://example.com/listing/789/item", "http://www.etsy.com/listing/789/item", "https://www.etsy.com/search?q=dog", "https://www.etsy.com/shop/example"]) {
+    await input.fill(invalid);
+    await expect(button).toBeHidden();
+    await expect(button).toBeDisabled();
+  }
+  await input.fill("https://www.etsy.com/listing/789/item");
+  await expect(button).toBeEnabled();
+  await input.evaluate((element) => { element.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })); element.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })); });
+  await expect(button).toBeDisabled();
+  await expect(page.locator("[data-product-status]")).toContainText("imported for review");
+  expect(importCalls).toBe(1);
+  await expect(page.locator('[name="id"]')).toHaveValue("db-789");
+  await expect(page.locator('[name="selectedEtsyListingId"]')).toHaveValue("789");
+  await expect(page.locator('[name="originalListingUrl"]')).toHaveValue("https://www.etsy.com/listing/789/item");
+  await expect(page.locator('[name="affiliateStorefront"]')).toHaveValue("Concordia Mercatura");
 });

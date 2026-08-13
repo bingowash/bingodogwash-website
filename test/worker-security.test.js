@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -7,6 +8,7 @@ import {
   giftCardCode,
   normalizeGiveawayInput,
   normalizeEtsyImport,
+  etsyTestHelpers,
   timingSafeEqual,
   timingSafeEqualBytes,
   verifyStripeSignature,
@@ -1107,6 +1109,469 @@ test("public Etsy products stay empty when feature flag is disabled", async () =
   assert.equal(response.status, 200);
   assert.equal(data.enabled, false);
   assert.deepEqual(data.products, []);
+});
+
+test("public Etsy products exclude every non-public state and live marketplace results", async () => {
+  const originalFetch = globalThis.fetch;
+  let selectSql = "";
+  const records = [
+    { external_listing_id: "published-1", title: "Approved dog tag", admin_status: "published", public_visibility: 1 },
+    { external_listing_id: "review-1", title: "Review product", admin_status: "review", public_visibility: 0 },
+    { external_listing_id: "hidden-1", title: "Hidden product", admin_status: "hidden", public_visibility: 0 },
+    { external_listing_id: "unpublished-1", title: "Unpublished product", admin_status: "unpublished", public_visibility: 0 },
+    { external_listing_id: "archived-1", title: "Archived product", admin_status: "archived", public_visibility: 0 },
+    { external_listing_id: "approved-private", title: "Approved but private", admin_status: "approved", public_visibility: 0 }
+  ].map((record) => ({ ...record, description: "Reviewed listing", category: "Accessories", price: 1299, currency: "GBP", listing_url: `https://www.etsy.com/uk/listing/${record.external_listing_id}`, primary_image: "", personalisation_available: 0 }));
+  globalThis.fetch = async () => { throw new Error("the public Etsy feed must not call the live marketplace API"); };
+  const db = {
+    prepare(sql) {
+      selectSql = sql;
+      return {
+        bind() { return this; },
+        async all() {
+          return { results: records.filter((record) => record.admin_status === "published" && record.public_visibility === 1) };
+        }
+      };
+    }
+  };
+  try {
+    const response = await worker.fetch(new Request("https://bingodogwash.com/api/etsy/products"), {
+      ETSY_FEATURE_ENABLED: "true", GIFT_CARD_DB: db
+    });
+    const data = await response.json();
+    assert.equal(response.status, 200);
+    assert.match(selectSql, /admin_status = 'published'/);
+    assert.match(selectSql, /public_visibility = 1/);
+    assert.equal(data.products.length, 1);
+    assert.equal(data.products[0].sourceProductId, "published-1");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("new Etsy sync inserts default to review and private", () => {
+  const source = readFileSync(new URL("../_functions_NOT_FOR_STATIC_UPLOAD/api/worker.js", import.meta.url), "utf8");
+  const insert = source.slice(source.indexOf("INSERT INTO etsy_products"), source.indexOf("function normalizeEtsyImport"));
+  assert.match(insert, /'review', 0/);
+  assert.doesNotMatch(insert, /'published', 1/);
+});
+
+test("scheduled Etsy sync stays off when persisted automatic sync is disabled", async () => {
+  const pending = [];
+  let syncRunWrites = 0;
+  const db = {
+    prepare(sql) {
+      if (/INSERT INTO etsy_sync_runs/.test(sql)) syncRunWrites += 1;
+      return {
+        bind() { return this; },
+        async first() {
+          if (/etsy_connections/.test(sql)) return { status: "Connected", automatic_sync_enabled: 0, access_token: "stored-token" };
+          return null;
+        },
+        async all() { return { results: [] }; },
+        async run() { return { success: true }; }
+      };
+    }
+  };
+  await worker.scheduled({ cron: "7 7 * * *", scheduledTime: Date.now() }, {
+    GIFT_CARD_DB: db,
+    ETSY_FEATURE_ENABLED: "true",
+    ETSY_SYNC_ENABLED: "true",
+    MARKETING_PUBLISHING_DISABLED: "true",
+    AI_PROSPECTING_ENABLED: "false"
+  }, { waitUntil(promise) { pending.push(Promise.resolve(promise)); } });
+  await Promise.all(pending);
+  assert.equal(syncRunWrites, 0);
+});
+
+test("scheduled Etsy sync gate requires flags, persisted opt-in, connection and valid token", async () => {
+  const future = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  const connectionDb = (overrides = {}) => ({
+    prepare() {
+      return { async first() { return { status: "Connected", automatic_sync_enabled: 1, access_token: "stored-token", token_expires_at: future, ...overrides }; } };
+    }
+  });
+  assert.equal(await etsyTestHelpers.scheduledSyncAllowed({ GIFT_CARD_DB: connectionDb() }), true);
+  assert.equal(await etsyTestHelpers.scheduledSyncAllowed({ GIFT_CARD_DB: connectionDb({ automatic_sync_enabled: 0 }) }), false);
+  assert.equal(await etsyTestHelpers.scheduledSyncAllowed({ GIFT_CARD_DB: connectionDb({ status: "Disconnected" }) }), false);
+  assert.equal(await etsyTestHelpers.scheduledSyncAllowed({ GIFT_CARD_DB: connectionDb({ access_token: "", refresh_token: "" }) }), false);
+
+  const workerSource = readFileSync(new URL("../_functions_NOT_FOR_STATIC_UPLOAD/api/worker.js", import.meta.url), "utf8");
+  const scheduled = workerSource.slice(workerSource.indexOf("async scheduled("), workerSource.indexOf("async function handleRequestWithAssets"));
+  assert.match(scheduled, /ETSY_FEATURE_ENABLED/);
+  assert.match(scheduled, /ETSY_SYNC_ENABLED/);
+  assert.match(scheduled, /scheduledEtsySyncAllowed/);
+});
+
+test("Etsy admin status reports the persisted automatic-sync value", async () => {
+  const db = {
+    prepare(sql) {
+      return {
+        bind() { return this; },
+        async first() {
+          if (/etsy_connections/.test(sql)) return { status: "Connected", automatic_sync_enabled: 1, access_token: "stored-token" };
+          if (/COUNT\(\*\)/.test(sql)) return { count: 0 };
+          return null;
+        },
+        async all() { return { results: [] }; }
+      };
+    }
+  };
+  const response = await worker.fetch(new Request("https://bingodogwash.com/api/admin/etsy", {
+    headers: { Authorization: "Bearer admin-token" }
+  }), { ADMIN_API_TOKEN: "admin-token", GIFT_CARD_DB: db, ETSY_FEATURE_ENABLED: "true", ETSY_SYNC_ENABLED: "true" });
+  const data = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(data.connection.automaticSyncEnabled, true);
+});
+
+test("AI Product Centre keeps Etsy draft-only and outside publishable channels", () => {
+  const source = readFileSync(new URL("../public/admin/ai-drafts.js", import.meta.url), "utf8");
+  assert.match(source, /\["etsy", "Etsy", "draft"\]/);
+  assert.match(source, /const publishable=channels\.filter\(\(channel\)=>channel==="facebook"\|\|channel==="instagram"\)/);
+  assert.doesNotMatch(source, /publishable[^;]*etsy/);
+  assert.doesNotMatch(source, /api\.etsy\.com|listings\/active|listings\/batch|listings\/create|listings\/update|listings\/publish/);
+});
+
+test("Creator Collective migration adds only additive affiliate fields with draft default", () => {
+  const migration = readFileSync(new URL("../migrations/0022_etsy_creator_collective_affiliate.sql", import.meta.url), "utf8");
+  for (const field of ["original_listing_url", "affiliate_url", "affiliate_provider", "affiliate_program", "affiliate_storefront", "affiliate_provenance", "commission_disclosure", "affiliate_review_status", "affiliate_reviewed_at", "affiliate_reviewed_by"]) {
+    assert.match(migration, new RegExp(`ADD COLUMN ${field}\\b`));
+  }
+  assert.match(migration, /affiliate_review_status TEXT NOT NULL DEFAULT 'draft'/);
+  assert.doesNotMatch(migration, /DROP|DELETE|UPDATE etsy_products/i);
+});
+
+test("affiliate verification migration adds review evidence fields safely", () => {
+  const migration = readFileSync(new URL("../migrations/0023_etsy_affiliate_verification.sql", import.meta.url), "utf8");
+  for (const field of ["affiliate_verification_status", "affiliate_verified_url", "affiliate_final_url", "affiliate_destination_listing_id", "affiliate_verified_at"]) assert.match(migration, new RegExp(`ADD COLUMN ${field}\\b`));
+  assert.match(migration, /affiliate_verification_status TEXT NOT NULL DEFAULT 'unverified'/);
+  assert.doesNotMatch(migration, /DROP|DELETE|UPDATE etsy_products/i);
+});
+
+test("Etsy sync preserves affiliate metadata and original listing provenance", () => {
+  const source = readFileSync(new URL("../_functions_NOT_FOR_STATIC_UPLOAD/api/worker.js", import.meta.url), "utf8");
+  const upsert = source.slice(source.indexOf("async function upsertEtsyListing"), source.indexOf("function normalizeEtsyImport"));
+  const update = upsert.slice(upsert.indexOf("UPDATE etsy_products"), upsert.indexOf("return \"updated\""));
+  assert.match(update, /original_listing_url = \?/);
+  assert.match(upsert, /etsyListingIdFromUrl\(storedOriginalUrl\) === product\.externalListingId/);
+  assert.doesNotMatch(update, /affiliate_url\s*=/);
+  assert.doesNotMatch(update, /affiliate_review_status\s*=/);
+  assert.match(upsert, /'review', 0, 'draft'/);
+});
+
+test("exact Etsy listing references accept only IDs and HTTPS Etsy listing URLs", () => {
+  for (const value of ["4530046541", "etsy-4530046541", "https://www.etsy.com/uk/listing/4530046541/example", "https://etsy.com/listing/4530046541/example"]) {
+    assert.equal(etsyTestHelpers.etsyListingReference(value).listingId, "4530046541");
+  }
+  for (const value of ["http://www.etsy.com/listing/4530046541/example", "https://example.com/listing/4530046541/example", "https://www.etsy.com/search?q=dog", "https://www.etsy.com/shop/example", "etsy-invalid"]) {
+    assert.equal(etsyTestHelpers.etsyListingReference(value).listingId, "");
+  }
+});
+
+test("Etsy admin routes allow only approved admin CORS origins", async () => {
+  const approved = await worker.fetch(new Request("https://bingodogwash.com/api/admin/etsy/products/import-listing", { method: "OPTIONS", headers: { Origin: "https://admin.bingodogwash.com", "Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "authorization,content-type" } }), {});
+  assert.equal(approved.status, 204);
+  assert.equal(approved.headers.get("Access-Control-Allow-Origin"), "https://admin.bingodogwash.com");
+  assert.match(approved.headers.get("Access-Control-Allow-Headers") || "", /Authorization/i);
+  const rejected = await worker.fetch(new Request("https://bingodogwash.com/api/admin/etsy/products/affiliate-verify", { method: "OPTIONS", headers: { Origin: "https://attacker.example", "Access-Control-Request-Method": "POST" } }), {});
+  assert.equal(rejected.status, 403);
+  assert.equal(rejected.headers.get("Access-Control-Allow-Origin"), null);
+});
+
+test("Product Centre exposes an explicit validated Etsy import action on the main API origin", () => {
+  const html = readFileSync(new URL("../public/admin/ai-drafts.html", import.meta.url), "utf8");
+  const script = readFileSync(new URL("../public/admin/ai-drafts.js", import.meta.url), "utf8");
+  assert.match(html, /data-etsy-import[^>]*hidden disabled[^>]*>Import Etsy listing/);
+  assert.match(script, /const etsyApiOrigin = location\.hostname === "admin\.bingodogwash\.com" \? "https:\/\/bingodogwash\.com"/);
+  assert.match(script, /function importCurrentEtsyListing\(\)/);
+  assert.match(script, /data-etsy-import.*addEventListener\("click",importCurrentEtsyListing\)/);
+  assert.match(script, /event\.key==="Enter"[\s\S]*importCurrentEtsyListing\(\)/);
+  assert.match(script, /if\(state\.etsyImportPromise\)return state\.etsyImportPromise/);
+});
+
+test("exact Etsy listing import uses the Etsy JSON API without scraping HTML", async () => {
+  const requests = [];
+  const oldFetch = globalThis.fetch;
+  globalThis.fetch = async (input, options = {}) => {
+    requests.push({ url: String(input), options });
+    return Response.json({ listing_id: 4530046541, shop_id: 99, title: "Wooden dog tag", description: "Personalised tag", price: { amount: 1299, divisor: 100, currency_code: "GBP" }, state: "active", url: "https://www.etsy.com/uk/listing/4530046541/wooden-dog-tag", images: [] });
+  };
+  try {
+    const listing = await etsyTestHelpers.fetchExactEtsyListing("4530046541", { ETSY_API_KEY: "test-key" });
+    assert.equal(listing.listing_id, 4530046541);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].url, "https://api.etsy.com/v3/application/listings/4530046541?includes=Images,Shop");
+    assert.equal(requests[0].options.method, undefined);
+    assert.equal(requests[0].options.body, undefined);
+  } finally { globalThis.fetch = oldFetch; }
+});
+
+test("exact Etsy import remains review/private and preserves affiliate columns", () => {
+  const source = readFileSync(new URL("../_functions_NOT_FOR_STATIC_UPLOAD/api/worker.js", import.meta.url), "utf8");
+  const upsert = source.slice(source.indexOf("async function upsertEtsyListing"), source.indexOf("function normalizeEtsyImport"));
+  assert.match(upsert, /WHERE source = 'etsy' AND external_listing_id = \?/);
+  assert.match(upsert, /'review', 0, 'draft'/);
+  for (const column of ["affiliate_url", "affiliate_provider", "affiliate_program", "affiliate_storefront", "affiliate_review_status", "affiliate_reviewed_at", "affiliate_reviewed_by", "commission_disclosure"]) {
+    assert.doesNotMatch(upsert.match(/UPDATE etsy_products SET[\s\S]*?return "updated"/)?.[0] || "", new RegExp(`${column}\\s*=`));
+  }
+  const exactImport = source.slice(source.indexOf("async function adminEtsyImportListing"), source.indexOf("async function etsyAffiliateProduct"));
+  assert.doesNotMatch(exactImport, /admin_status\s*=\s*'published'|public_visibility\s*=\s*1|method:\s*"(?:POST|PUT|PATCH|DELETE)"/i);
+});
+
+test("affiliate URL policy accepts HTTPS tracking URLs and rejects unsafe schemes", () => {
+  assert.equal(etsyTestHelpers.cleanAffiliateUrl("https://click.example.net/track?id=approved"), "https://click.example.net/track?id=approved");
+  for (const unsafe of ["javascript:alert(1)", "data:text/html,test", "http://example.net/track", "ftp://example.net/file"]) {
+    assert.equal(etsyTestHelpers.cleanAffiliateUrl(unsafe), "");
+  }
+});
+
+test("outbound Etsy URL uses only a valid approved affiliate URL and retains provenance", () => {
+  const base = { external_listing_id: "123", title: "Dog tag", listing_url: "https://www.etsy.com/uk/listing/123/dog-tag", original_listing_url: "https://www.etsy.com/uk/listing/123/dog-tag", affiliate_url: "https://click.example.net/track?id=approved", affiliate_provider: "rakuten", affiliate_storefront: "Concordia Mercatura" };
+  for (const status of ["draft", "rejected", "review", ""]) {
+    const shaped = etsyTestHelpers.publicProductShape({ ...base, affiliate_review_status: status });
+    assert.equal(shaped.externalUrl, base.original_listing_url);
+    assert.equal(shaped.originalListingUrl, base.original_listing_url);
+    assert.equal(shaped.commissionDisclosure, "");
+  }
+  const approved = etsyTestHelpers.publicProductShape({ ...base, affiliate_review_status: "approved" });
+  assert.equal(approved.externalUrl, base.affiliate_url);
+  assert.equal(approved.originalListingUrl, base.original_listing_url);
+  assert.equal(approved.affiliateProvider, "rakuten");
+  assert.match(approved.commissionDisclosure, /may earn a commission/i);
+  const malformed = etsyTestHelpers.publicProductShape({ ...base, affiliate_review_status: "approved", affiliate_url: "javascript:alert(1)" });
+  assert.equal(malformed.externalUrl, base.original_listing_url);
+});
+
+test("affiliate approval is authenticated, records reviewer, and does not publish product", async () => {
+  let queriedWithoutAuth = false;
+  const unauthorised = await worker.fetch(new Request("https://bingodogwash.com/api/admin/etsy/products/affiliate-approve", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: "etsy-123" }) }), {
+    ADMIN_API_TOKEN: "admin-token", GIFT_CARD_DB: { prepare() { queriedWithoutAuth = true; throw new Error("must not query"); } }
+  });
+  assert.equal(unauthorised.status, 401);
+  assert.equal(queriedWithoutAuth, false);
+
+  let approvalSql = "";
+  let approvalBinds = [];
+  const product = { id: "db-123", external_listing_id: "123", source: "etsy", listing_url: "https://www.etsy.com/uk/listing/123/dog-tag", original_listing_url: "https://www.etsy.com/uk/listing/123/dog-tag", affiliate_url: "https://click.example.net/track?id=approved", affiliate_provider: "rakuten", affiliate_program: "etsy_creator_collective_uk", affiliate_storefront: "Concordia Mercatura", affiliate_review_status: "draft", affiliate_verification_status: "match", affiliate_verified_url: "https://click.example.net/track?id=approved", affiliate_destination_listing_id: "123", admin_status: "review", public_visibility: 0 };
+  const db = { prepare(sql) { const statement = { bind(...values) { if (/affiliate_review_status = 'approved'/.test(sql)) { approvalSql = sql; approvalBinds = values; } return statement; }, async first() { return /SELECT \* FROM etsy_products/.test(sql) ? product : null; }, async run() { return { success: true }; }, async all() { return { results: [] }; } }; return statement; } };
+  const response = await worker.fetch(new Request("https://bingodogwash.com/api/admin/etsy/products/affiliate-approve", { method: "POST", headers: { Authorization: "Bearer admin-token", "X-Admin-Actor": "human-reviewer", "Content-Type": "application/json" }, body: JSON.stringify({ id: "etsy-123" }) }), { ADMIN_API_TOKEN: "admin-token", GIFT_CARD_DB: db });
+  const data = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(data.affiliateReviewStatus, "approved");
+  assert.equal(data.affiliateReviewedBy, "human-reviewer");
+  assert.equal(data.adminStatus, "review");
+  assert.equal(data.publicVisibility, false);
+  assert.match(approvalSql, /affiliate_reviewed_at = \?/);
+  assert.equal(approvalBinds[1], "human-reviewer");
+  assert.doesNotMatch(approvalSql, /admin_status|public_visibility/);
+});
+
+test("affiliate approval uses Etsy listing identity while preserving persisted MATCH evidence", async () => {
+  const base = {
+    id: "db-4530046541", source: "etsy", external_listing_id: "4530046541",
+    listing_url: "https://www.etsy.com/listing/4530046541/canonical-slug",
+    original_listing_url: "https://www.etsy.com/uk/listing/4530046541/original-slug?ref=creator_collective",
+    affiliate_url: "https://etsy.me/current-link", affiliate_verified_url: "https://etsy.me/current-link",
+    affiliate_provider: "rakuten", affiliate_program: "etsy_creator_collective_uk", affiliate_storefront: "Concordia Mercatura",
+    affiliate_review_status: "draft", affiliate_verification_status: "match", affiliate_destination_listing_id: "4530046541",
+    affiliate_verified_at: "2026-08-13T18:51:49.657Z", admin_status: "review", public_visibility: 0
+  };
+  const attempt = async (overrides = {}, authenticated = true) => {
+    const product = { ...base, ...overrides };
+    let approvalSql = "";
+    const db = { prepare(sql) { const statement = { bind() { return statement; }, async first() { return /SELECT \* FROM etsy_products/.test(sql) ? product : null; }, async run() { if (/affiliate_review_status = 'approved'/.test(sql)) approvalSql = sql; return { success: true }; }, async all() { return { results: [] }; } }; return statement; } };
+    const headers = { "Content-Type": "application/json", ...(authenticated ? { Authorization: "Bearer admin-token", "X-Admin-Actor": "human-reviewer" } : {}) };
+    const response = await worker.fetch(new Request("https://bingodogwash.com/api/admin/etsy/products/affiliate-approve", { method: "POST", headers, body: JSON.stringify({ id: product.id }) }), { ADMIN_API_TOKEN: "admin-token", GIFT_CARD_DB: db });
+    return { response, approvalSql };
+  };
+
+  for (const original_listing_url of [
+    "https://www.etsy.com/uk/listing/4530046541/different-slug",
+    "https://www.etsy.com/listing/4530046541/another-slug?ref=creator_collective&campaign=reviewed"
+  ]) {
+    const { response, approvalSql } = await attempt({ original_listing_url });
+    assert.equal(response.status, 200, original_listing_url);
+    assert.match(approvalSql, /affiliate_review_status = 'approved'/);
+    assert.doesNotMatch(approvalSql, /admin_status|public_visibility/);
+    const result = await response.json();
+    assert.equal(result.adminStatus, "review");
+    assert.equal(result.publicVisibility, false);
+  }
+
+  for (const overrides of [
+    { original_listing_url: "https://www.etsy.com/listing/9999999999/different-product" },
+    { original_listing_url: null },
+    { original_listing_url: "http://www.etsy.com/listing/4530046541/insecure" },
+    { original_listing_url: "https://example.com/listing/4530046541/not-etsy" },
+    { affiliate_url: "https://etsy.me/changed-after-verification" },
+    { affiliate_verification_status: "unverified" },
+    { affiliate_verification_status: null },
+    { affiliate_destination_listing_id: "9999999999" }
+  ]) {
+    const { response, approvalSql } = await attempt(overrides);
+    assert.equal(response.status, 409, JSON.stringify(overrides));
+    assert.equal(approvalSql, "");
+  }
+
+  const unauthorised = await attempt({}, false);
+  assert.equal(unauthorised.response.status, 401);
+  assert.equal(unauthorised.approvalSql, "");
+});
+
+test("affiliate draft stores a separate HTTPS URL as draft and rejection clears only that URL", async () => {
+  const product = { id: "db-456", external_listing_id: "456", source: "etsy", listing_url: "https://www.etsy.com/uk/listing/456/dog-bow", admin_status: "review", public_visibility: 0, affiliate_review_status: "draft" };
+  const updates = [];
+  const db = { prepare(sql) { const statement = { bind(...values) { if (/UPDATE etsy_products SET/.test(sql)) updates.push({ sql, values }); return statement; }, async first() { return /SELECT \* FROM etsy_products/.test(sql) ? product : null; }, async run() { return { success: true }; }, async all() { return { results: [] }; } }; return statement; } };
+  const headers = { Authorization: "Bearer admin-token", "X-Admin-Actor": "reviewer", "Content-Type": "application/json" };
+  const draftResponse = await worker.fetch(new Request("https://bingodogwash.com/api/admin/etsy/products/affiliate-draft", { method: "POST", headers, body: JSON.stringify({ id: "etsy-456", originalListingUrl: product.listing_url, affiliateUrl: "https://tracking.example.org/click?campaign=reviewed", affiliateProvider: "rakuten", affiliateProgram: "etsy_creator_collective_uk", affiliateStorefront: "Concordia Mercatura", affiliateProvenance: "Human-supplied Rakuten reference", commissionDisclosure: "" }) }), { ADMIN_API_TOKEN: "admin-token", GIFT_CARD_DB: db });
+  const draft = await draftResponse.json();
+  assert.equal(draftResponse.status, 200);
+  assert.equal(draft.affiliateReviewStatus, "draft");
+  const draftUpdate = updates.find((entry) => /affiliate_url = \?/.test(entry.sql));
+  assert.equal(draftUpdate.values[0], product.listing_url);
+  assert.equal(draftUpdate.values[1], "https://tracking.example.org/click?campaign=reviewed");
+  assert.match(draftUpdate.sql, /affiliate_reviewed_at = NULL/);
+  assert.doesNotMatch(draftUpdate.sql, /(?:^|[^_])listing_url = \?/);
+
+  const rejectResponse = await worker.fetch(new Request("https://bingodogwash.com/api/admin/etsy/products/affiliate-reject", { method: "POST", headers, body: JSON.stringify({ id: "etsy-456" }) }), { ADMIN_API_TOKEN: "admin-token", GIFT_CARD_DB: db });
+  const rejected = await rejectResponse.json();
+  assert.equal(rejectResponse.status, 200);
+  assert.equal(rejected.affiliateReviewStatus, "rejected");
+  const rejectUpdate = updates.find((entry) => /affiliate_url = NULL/.test(entry.sql));
+  assert.ok(rejectUpdate);
+  assert.doesNotMatch(rejectUpdate.sql, /(?:^|[^_])listing_url\s*=/);
+});
+
+test("affiliate draft validates Etsy listing identity instead of serialized URL equality", async () => {
+  const headers = { Authorization: "Bearer admin-token", "Content-Type": "application/json" };
+  const baseProduct = { id: "db-4530046541", external_listing_id: "4530046541", source: "etsy", listing_url: "https://www.etsy.com/listing/4530046541/canonical-api-slug", admin_status: "review", public_visibility: 0, affiliate_review_status: "draft" };
+  const requestFor = (originalListingUrl, product = baseProduct) => {
+    const db = { prepare(sql) { const statement = { bind() { return statement; }, async first() { return /SELECT \* FROM etsy_products/.test(sql) ? product : null; }, async run() { return { success: true }; }, async all() { return { results: [] }; } }; return statement; } };
+    return worker.fetch(new Request("https://bingodogwash.com/api/admin/etsy/products/affiliate-draft", { method: "POST", headers, body: JSON.stringify({ id: product.id, originalListingUrl, affiliateUrl: "https://tracking.example/affiliate", affiliateProvider: "rakuten", affiliateProgram: "etsy_creator_collective_uk", affiliateStorefront: "Concordia Mercatura" }) }), { ADMIN_API_TOKEN: "admin-token", GIFT_CARD_DB: db });
+  };
+
+  for (const accepted of [
+    "https://www.etsy.com/uk/listing/4530046541/different-slug?ref=search&ga_order=most_relevant",
+    "https://etsy.com/listing/4530046541/another-valid-slug",
+    "https://www.etsy.com/listing/4530046541/"
+  ]) assert.equal((await requestFor(accepted)).status, 200, accepted);
+
+  for (const rejected of [
+    "https://www.etsy.com/listing/9999999999/different-product",
+    "https://example.com/listing/4530046541/item",
+    "http://www.etsy.com/listing/4530046541/item",
+    "https://www.etsy.com/search?q=4530046541",
+    "https://www.etsy.com/listing/not-a-number/item"
+  ]) assert.equal((await requestFor(rejected)).status, 400, rejected);
+
+  assert.equal((await requestFor("https://www.etsy.com/listing/4530046541/item", { ...baseProduct, external_listing_id: "1111111111" })).status, 400);
+  assert.equal((await requestFor("https://www.etsy.com/listing/4530046541/item", { ...baseProduct, listing_url: "https://www.etsy.com/listing/2222222222/other" })).status, 400);
+});
+
+test("Product Centre exposes manual Etsy affiliate review controls without publishing", () => {
+  const html = readFileSync(new URL("../public/admin/ai-drafts.html", import.meta.url), "utf8");
+  const script = readFileSync(new URL("../public/admin/ai-drafts.js", import.meta.url), "utf8");
+  assert.match(html, /Save affiliate draft/);
+  assert.match(html, /Approve affiliate link/);
+  assert.match(html, /Reject\/remove affiliate link/);
+  assert.match(html, /affiliate-draft/);
+  assert.match(html, /affiliate-approve/);
+  assert.match(html, /affiliate-reject/);
+  assert.match(script, /etsyAffiliateAction/);
+  assert.doesNotMatch(script, /api\.etsy\.com|\/v3\/application\/listings/);
+});
+
+test("affiliate redirect verification matches only the selected Etsy listing without credentials", async () => {
+  const oldFetch = globalThis.fetch;
+  const requests = [];
+  globalThis.fetch = async (input, options = {}) => {
+    const url = String(input);
+    requests.push({ url, options });
+    if (url.startsWith("https://cloudflare-dns.com/")) return Response.json({ Answer: [{ type: 1, data: "104.18.1.1" }] });
+    if (url === "https://tracking.example/start") return new Response(null, { status: 302, headers: { Location: "https://www.etsy.com/uk/listing/12345/dog-tag" } });
+    return new Response("ok", { status: 200 });
+  };
+  try {
+    const finalUrl = await etsyTestHelpers.resolveAffiliateDestination("https://tracking.example/start");
+    assert.equal(finalUrl, "https://www.etsy.com/uk/listing/12345/dog-tag");
+    assert.equal(etsyTestHelpers.etsyListingIdFromUrl(finalUrl), "12345");
+    for (const request of requests) {
+      assert.equal(request.options.redirect, "manual");
+      assert.equal(request.options.headers?.Authorization, undefined);
+      assert.equal(request.options.headers?.Cookie, undefined);
+      assert.equal(request.options.credentials, undefined);
+    }
+  } finally { globalThis.fetch = oldFetch; }
+});
+
+test("affiliate redirect verification resolves relative locations and validates every hop", async () => {
+  const oldFetch = globalThis.fetch;
+  const requested = [];
+  globalThis.fetch = async (input, options = {}) => {
+    const url = String(input);
+    if (url.startsWith("https://cloudflare-dns.com/")) return Response.json({ Answer: [{ type: 1, data: "104.18.1.1" }] });
+    requested.push({ url, redirect: options.redirect });
+    if (url === "https://tracking.example/start") return new Response(null, { status: 302, headers: { Location: "/next" } });
+    if (url === "https://tracking.example/next") return new Response(null, { status: 307, headers: { Location: "https://www.etsy.com/uk/listing/4530046541/item" } });
+    return new Response("ok", { status: 200 });
+  };
+  try {
+    const finalUrl = await etsyTestHelpers.resolveAffiliateDestination("https://tracking.example/start");
+    assert.equal(finalUrl, "https://www.etsy.com/uk/listing/4530046541/item");
+    assert.deepEqual(etsyTestHelpers.affiliateProductMatch("4530046541", finalUrl), { status: "match", destinationListingId: "4530046541" });
+    assert.deepEqual(requested.map((entry) => entry.url), ["https://tracking.example/start", "https://tracking.example/next", "https://www.etsy.com/uk/listing/4530046541/item"]);
+    assert.ok(requested.every((entry) => entry.redirect === "manual"));
+  } finally { globalThis.fetch = oldFetch; }
+});
+
+test("affiliate redirect verification fails closed for invalid redirect responses", async () => {
+  const oldFetch = globalThis.fetch;
+  const run = async (responseFactory) => {
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      if (url.startsWith("https://cloudflare-dns.com/")) return Response.json({ Answer: [{ type: 1, data: new URL(url).searchParams.get("name") === "127.0.0.1" ? "127.0.0.1" : "104.18.1.1" }] });
+      return responseFactory();
+    };
+    return etsyTestHelpers.resolveAffiliateDestination("https://tracking.example/start");
+  };
+  try {
+    await assert.rejects(() => run(() => new Response(null, { status: 302 })), /missing a destination/);
+    await assert.rejects(() => run(() => new Response(null, { status: 302, headers: { Location: "http://www.etsy.com/listing/4530046541/item" } })), /unsafe/);
+    await assert.rejects(() => run(() => new Response(null, { status: 302, headers: { Location: "https://127.0.0.1/listing/4530046541/item" } })), /blocked address/);
+    await assert.rejects(() => run(() => new Response(null, { status: 302, headers: { Location: "https://[invalid" } })), /malformed/);
+    await assert.rejects(() => run(() => new Response(null, { status: 300, headers: { Location: "https://www.etsy.com/listing/4530046541/item" } })), /unsupported redirect/);
+    await assert.rejects(() => run(() => { throw new Error("network unavailable"); }), /network unavailable/);
+  } finally { globalThis.fetch = oldFetch; }
+});
+
+test("affiliate verification identifies mismatch and non-Etsy destinations", () => {
+  assert.deepEqual(etsyTestHelpers.affiliateProductMatch("12345", "https://www.etsy.com/listing/12345/item"), { status: "match", destinationListingId: "12345" });
+  assert.deepEqual(etsyTestHelpers.affiliateProductMatch("12345", "https://www.etsy.com/listing/99999/other"), { status: "mismatch", destinationListingId: "99999" });
+  assert.deepEqual(etsyTestHelpers.affiliateProductMatch("12345", "https://example.com/listing/12345"), { status: "unverified", destinationListingId: "" });
+  assert.deepEqual(etsyTestHelpers.affiliateProductMatch("12345", "https://notetsy.com/listing/12345"), { status: "unverified", destinationListingId: "" });
+});
+
+test("affiliate verification blocks private addresses and excessive redirects", async () => {
+  for (const ip of ["127.0.0.1", "10.0.0.1", "169.254.169.254", "172.16.0.1", "192.168.1.1", "100.64.0.1", "::1", "fc00::1", "fe80::1"]) assert.equal(etsyTestHelpers.publicVerificationIp(ip), false);
+  const oldFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.startsWith("https://cloudflare-dns.com/")) return Response.json({ Answer: [{ type: 1, data: "104.18.1.1" }] });
+    const number = Number(new URL(url).pathname.slice(1) || 0);
+    return new Response(null, { status: 302, headers: { Location: `https://tracking.example/${number + 1}` } });
+  };
+  try { await assert.rejects(() => etsyTestHelpers.resolveAffiliateDestination("https://tracking.example/0", 2), /redirect limit/); }
+  finally { globalThis.fetch = oldFetch; }
+});
+
+test("affiliate approval requires a persisted MATCH for the unchanged URL", async () => {
+  const product = { id: "db-no-match", external_listing_id: "123", source: "etsy", listing_url: "https://www.etsy.com/listing/123/item", original_listing_url: "https://www.etsy.com/listing/123/item", affiliate_url: "https://tracking.example/item", affiliate_provider: "rakuten", affiliate_program: "etsy_creator_collective_uk", affiliate_storefront: "Concordia Mercatura", affiliate_review_status: "draft", affiliate_verification_status: "mismatch", affiliate_verified_url: "https://tracking.example/item", affiliate_destination_listing_id: "999" };
+  let wrote = false;
+  const db = { prepare() { return { bind() { return this; }, async first() { return product; }, async run() { wrote = true; } }; } };
+  const response = await worker.fetch(new Request("https://bingodogwash.com/api/admin/etsy/products/affiliate-approve", { method: "POST", headers: { Authorization: "Bearer admin-token", "Content-Type": "application/json" }, body: JSON.stringify({ id: product.id }) }), { ADMIN_API_TOKEN: "admin-token", GIFT_CARD_DB: db });
+  assert.equal(response.status, 409);
+  assert.equal(wrote, false);
 });
 
 test("Etsy import normalization keeps external content safe", () => {

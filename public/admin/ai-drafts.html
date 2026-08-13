@@ -29,6 +29,7 @@
             <label>Search shop products<input type="search" data-product-search placeholder="Search by product name, category or supplier"></label>
             <label>Existing product<select data-product-select><option value="">Manual product</option></select></label>
             <label>Paste product URL<input type="url" data-product-url-search placeholder="https://bingodogwash.com/product?id=..."></label>
+            <button class="btn btn-light" type="button" data-etsy-import hidden disabled>Import Etsy listing</button>
             <p class="small-note" data-product-status aria-live="polite">Unlock the centre to load available products.</p>
             <button class="btn btn-light" type="button" data-product-retry hidden>Retry loading shop products</button>
           </div>
@@ -50,6 +51,24 @@
           <label>Original product description *<textarea name="description" maxlength="1800" rows="7" required></textarea></label>
           <label>Target audience<input name="audience" maxlength="240" placeholder="Dog owners and dog lovers"></label>
           <label>Public product URL<input name="url" type="url" maxlength="300"></label>
+          <fieldset data-etsy-affiliate hidden>
+            <legend>Etsy Creator Collective affiliate review</legend>
+            <p class="small-note">Affiliate attribution is separate from Etsy OAuth and product publication. Saving or approving a link does not publish the product.</p>
+            <label>Original Etsy listing URL<input name="originalListingUrl" type="url" maxlength="500" readonly></label>
+            <label>Affiliate URL<input name="affiliateUrl" type="url" maxlength="2000" placeholder="Paste the reviewed Rakuten/Creator Collective HTTPS URL"></label>
+            <div class="two-fields"><label>Provider<input name="affiliateProvider" value="rakuten" readonly></label><label>Program<input name="affiliateProgram" value="etsy_creator_collective_uk" readonly></label></div>
+            <label>Storefront<input name="affiliateStorefront" value="Concordia Mercatura" readonly></label>
+            <label>Provenance/reference<textarea name="affiliateProvenance" maxlength="1000" rows="3"></textarea></label>
+            <button class="btn btn-light" type="button" data-etsy-provenance-template>Use Creator Collective copy-link provenance</button>
+            <label>Commission disclosure<textarea name="commissionDisclosure" maxlength="500" rows="3"></textarea></label>
+            <div class="two-fields"><label>Review status<input name="affiliateReviewStatus" readonly></label><label>Reviewed by<input name="affiliateReviewedBy" readonly></label></div>
+            <label>Reviewed at<input name="affiliateReviewedAt" readonly></label>
+            <div class="two-fields"><label>Selected listing ID<input name="selectedEtsyListingId" readonly></label><label>Destination listing ID<input name="affiliateDestinationListingId" readonly></label></div>
+            <label>Final resolved destination<input name="affiliateFinalUrl" type="url" readonly></label>
+            <div class="two-fields"><label>Product verification<input name="affiliateVerificationStatus" readonly></label><label>Verified at<input name="affiliateVerifiedAt" readonly></label></div>
+            <div class="button-row"><button class="btn btn-light" type="button" data-etsy-affiliate-action="affiliate-draft">Save affiliate draft</button><button class="btn btn-light" type="button" data-etsy-affiliate-action="affiliate-verify">Verify affiliate link</button><button class="btn btn-secondary" type="button" data-etsy-affiliate-action="affiliate-approve">Approve affiliate link</button><button class="btn btn-light" type="button" data-etsy-affiliate-action="affiliate-reject">Reject/remove affiliate link</button></div>
+            <p class="small-note" data-etsy-affiliate-status aria-live="polite">Select an Etsy database product to review affiliate attribution.</p>
+          </fieldset>
           <label>Public image URL<input name="image" type="url" maxlength="500" data-image-url></label>
           <label>TikTok campaign video<input name="tiktokVideo" type="file" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm" data-tiktok-video><span class="small-note">Required only when TikTok is selected. The video is uploaded as a private draft for completion in TikTok; it is never posted directly.</span></label>
           <div class="instagram-readiness"><strong data-instagram-readiness>Image problem ⚠️</strong><button class="btn btn-light" type="button" data-retry-instagram-image>Retry image</button></div>
