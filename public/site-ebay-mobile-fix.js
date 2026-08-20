@@ -2375,23 +2375,39 @@ async function handleAdminEtsyAction(action) {
 }
 
 async function handleAdminEtsyProductAction(action) {
+  const actionButton = document.querySelector(`[data-admin-etsy-product-action="${action}"]`);
   const ids = Array.from(document.querySelectorAll("[data-admin-etsy-product-id]:checked"))
     .map((input) => input.dataset.adminEtsyProductId)
     .filter(Boolean);
-  if (!ids.length) {
+  const bulkAllAction = action === "affiliate-generate-verify" || action === "publish-verified";
+  if (!ids.length && !bulkAllAction) {
     window.alert("Select at least one Etsy product.");
     return;
   }
-  if (action === "publish" && !window.confirm("Publish selected Etsy products to the public shop?")) return;
+
+  if ((action === "publish" || action === "publish-verified") && !window.confirm(action === "publish-verified" ? "Publish every currently verified and approved Etsy product? Unverified products will remain hidden." : "Publish selected Etsy products to the public shop?")) return;
+  const originalLabel = actionButton?.textContent || "";
   try {
-    await adminCoreJson(`${adminEtsyApiBase}/products/${encodeURIComponent(action)}`, {
-      method: "POST",
-      body: JSON.stringify({ ids })
-    });
+    if (actionButton) { actionButton.disabled = true; actionButton.textContent = action === "affiliate-generate-verify" ? "Generating and verifying…" : "Publishing verified products…"; }
+    let afterId = "";
+    const totals = { processed: 0, verified: 0, needsReview: 0, failed: 0, skipped: 0, published: 0, blocked: 0 };
+    let result;
+    do {
+      result = await adminCoreJson(`${adminEtsyApiBase}/products/${encodeURIComponent(action)}`, {
+        method: "POST",
+        body: JSON.stringify({ ids, afterId })
+      });
+      Object.keys(totals).forEach((key) => { totals[key] += Number(result[key] || 0); });
+      afterId = result.nextAfterId || "";
+      if (actionButton && !ids.length && result.hasMore) actionButton.textContent = `Processed ${totals.processed || totals.published + totals.blocked}…`;
+    } while (!ids.length && result.hasMore && afterId);
+    if (bulkAllAction) window.alert(action === "affiliate-generate-verify" ? `${totals.verified} verified / ${totals.needsReview} need review / ${totals.failed} failed` : `${totals.published} verified Etsy products published / ${totals.blocked} blocked`);
     await loadAdminEtsy();
     await loadEtsyProducts({ silent: true });
   } catch (error) {
     window.alert(error.message || "Etsy product action failed.");
+  } finally {
+    if (actionButton) { actionButton.disabled = false; actionButton.textContent = originalLabel; }
   }
 }
 
