@@ -2938,6 +2938,7 @@ async function adminEtsyProductAction(request, action) {
   if (action === "affiliate-reject") return adminEtsyAffiliateReject(request, input);
   if (action === "affiliate-verify") return adminEtsyAffiliateVerify(request, input);
   if (action === "affiliate-generate-verify") return adminEtsyBulkGenerateVerify(request, input);
+  if (action === "affiliate-approve-verified") return adminEtsyBulkApproveVerified(request, input);
   if (action === "publish-verified") return adminEtsyPublishVerified(request, input);
   const ids = Array.isArray(input.ids) ? input.ids.map((id) => cleanText(id, 120)).filter(Boolean) : [];
   if (!ids.length) {
@@ -3361,6 +3362,69 @@ async function adminEtsyBulkGenerateVerify(request, input) {
   const failed = results.filter((item) => ["failed", "mismatch"].includes(item.status)).length;
   const skipped = results.filter((item) => ["skipped", "preserved"].includes(item.status)).length;
   return corsResponse(request, { ok: true, processed: results.length, verified, needsReview, failed, skipped, results, ...page, message: `${verified} verified / ${needsReview} need review / ${failed} failed` });
+}
+
+function approvedRakutenEtsyAffiliateUrl(value, listingId) {
+  const cleaned = cleanAffiliateUrl(value);
+  if (!cleaned) return "";
+  const url = new URL(cleaned);
+  if (url.hostname.toLowerCase() !== "click.linksynergy.com" || url.pathname !== "/deeplink") return "";
+  if (url.searchParams.get("id") !== RAKUTEN_AFFILIATE_ID || url.searchParams.get("mid") !== RAKUTEN_ETSY_ADVERTISER_MID) return "";
+  const destination = cleanEtsyListingDestination(url.searchParams.get("murl"));
+  return destination && etsyListingIdFromUrl(destination) === cleanText(listingId, 120) ? cleaned : "";
+}
+
+function etsyBulkApprovalDecision(product) {
+  if (product.affiliate_review_status === "approved" && etsyAffiliateEligibility(product).eligible) return { approved: true, alreadyApproved: true, reason: "ALREADY APPROVED" };
+  if (product.affiliate_review_status !== "draft") return { approved: false, category: "failed", reason: "NOT AWAITING APPROVAL" };
+  if (product.affiliate_provider !== ETSY_AFFILIATE_PROVIDER || product.affiliate_program !== ETSY_AFFILIATE_PROGRAM || product.affiliate_storefront !== ETSY_AFFILIATE_STOREFRONT) return { approved: false, category: "invalid_affiliate", reason: "INVALID AFFILIATE PROGRAMME" };
+  const listingId = cleanText(product.external_listing_id, 120);
+  const originalListingId = etsyListingIdFromUrl(cleanEtsyListingDestination(product.original_listing_url || product.listing_url));
+  if (!listingId || !originalListingId || originalListingId !== listingId) return { approved: false, category: "failed", reason: "INVALID ORIGINAL LISTING" };
+  const affiliateUrl = approvedRakutenEtsyAffiliateUrl(product.affiliate_url, listingId);
+  if (!affiliateUrl || cleanAffiliateUrl(product.affiliate_verified_url) !== affiliateUrl) return { approved: false, category: "invalid_affiliate", reason: "INVALID AFFILIATE URL" };
+  const destinationListingId = cleanText(product.affiliate_destination_listing_id, 120);
+  if (!destinationListingId) return { approved: false, category: "missing_destination", reason: "MISSING DESTINATION" };
+  if (destinationListingId !== listingId || product.affiliate_verification_status === "mismatch") return { approved: false, category: "mismatch", reason: "MISMATCH" };
+  if (product.affiliate_verification_status !== "match" || !product.affiliate_verified_at) return { approved: false, category: "failed", reason: "VERIFICATION FAILED" };
+  const finalUrl = cleanEtsyListingDestination(product.affiliate_final_url);
+  if (!finalUrl) return { approved: false, category: "failed", reason: "UNRESOLVED ETSY DESTINATION" };
+  if (etsyListingIdFromUrl(finalUrl) !== listingId) return { approved: false, category: "mismatch", reason: "MISMATCH" };
+  return { approved: true, alreadyApproved: false, reason: "VERIFIED MATCH" };
+}
+
+async function adminEtsyBulkApproveVerified(request, input) {
+  const products = await bulkEtsyProducts(input);
+  const page = bulkEtsyPage(input, products);
+  const results = [];
+  let approved = 0;
+  let blocked = 0;
+  let mismatch = 0;
+  let missingDestination = 0;
+  let invalidAffiliate = 0;
+  let failed = 0;
+  for (const product of products) {
+    const decision = etsyBulkApprovalDecision(product);
+    if (!decision.approved) {
+      blocked += 1;
+      if (decision.category === "mismatch") mismatch += 1;
+      else if (decision.category === "missing_destination") missingDestination += 1;
+      else if (decision.category === "invalid_affiliate") invalidAffiliate += 1;
+      else failed += 1;
+      results.push({ id: product.id, status: "blocked", reason: decision.reason });
+      continue;
+    }
+    approved += 1;
+    if (!decision.alreadyApproved) {
+      const now = new Date().toISOString();
+      const reviewer = adminActor(request);
+      await giftCardDb().prepare("UPDATE etsy_products SET affiliate_review_status = 'approved', affiliate_reviewed_at = ?, affiliate_reviewed_by = ?, updated_at = ? WHERE id = ? AND source = 'etsy' AND affiliate_review_status = 'draft'")
+        .bind(now, reviewer, now, product.id).run();
+      await auditSiteEvent(request, "etsy-affiliate-bulk-approve", "etsy_product", product.id, "draft", "approved", "ok", "");
+    }
+    results.push({ id: product.id, status: decision.alreadyApproved ? "already_approved" : "approved", reason: decision.reason });
+  }
+  return corsResponse(request, { ok: true, processed: products.length, approved, blocked, mismatch, missingDestination, invalidAffiliate, failed, results, ...page, message: `${approved} exact matches approved / ${blocked} blocked` });
 }
 
 async function adminEtsyPublishVerified(request, input) {

@@ -103,3 +103,42 @@ test("verified-only bulk publication publishes eligible records and blocks faile
   assert.equal(data.blocked, 1);
   assert.equal(db.updates.some((entry) => /public_visibility = 1/.test(entry.sql)), true);
 });
+
+test("bulk approval approves only exact verified Rakuten matches without publishing", async () => {
+  const verified = (id, overrides = {}) => {
+    const original = `https://www.etsy.com/uk/listing/${id}/dog-product`;
+    const affiliate = etsyTestHelpers.rakutenFallbackDeepLink(original);
+    return product(id, {
+      affiliate_url: affiliate,
+      affiliate_verified_url: affiliate,
+      affiliate_final_url: original,
+      affiliate_destination_listing_id: id,
+      affiliate_verification_status: "match",
+      affiliate_verified_at: "2026-08-20T00:00:00.000Z",
+      affiliate_provider: "rakuten",
+      affiliate_program: "etsy_creator_collective_uk",
+      affiliate_storefront: "Concordia Mercatura",
+      ...overrides
+    });
+  };
+  const products = [
+    verified("601"),
+    verified("602", { affiliate_destination_listing_id: "999", affiliate_final_url: "https://www.etsy.com/uk/listing/999/wrong" }),
+    verified("603", { affiliate_destination_listing_id: null }),
+    verified("604", { affiliate_url: null, affiliate_verified_url: null }),
+    verified("605", { affiliate_url: "https://www.etsy.com/uk/listing/605/plain", affiliate_verified_url: "https://www.etsy.com/uk/listing/605/plain" }),
+    verified("606", { affiliate_verification_status: "failed", affiliate_final_url: null }),
+    verified("607", { affiliate_review_status: "approved", affiliate_reviewed_at: "2026-08-20T00:00:00.000Z", affiliate_reviewed_by: "admin" })
+  ];
+  const db = fakeDb(products);
+  const response = await worker.fetch(new Request("https://bingodogwash.com/api/admin/etsy/products/affiliate-approve-verified", { method: "POST", headers: { Authorization: "Bearer admin-token", "Content-Type": "application/json", "X-Admin-Actor": "catalogue-admin" }, body: "{}" }), { ADMIN_API_TOKEN: "admin-token", ETSY_FEATURE_ENABLED: "true", GIFT_CARD_DB: db });
+  const data = await response.json();
+  assert.equal(response.status, 200);
+  assert.deepEqual({ processed: data.processed, approved: data.approved, blocked: data.blocked, mismatch: data.mismatch, missingDestination: data.missingDestination, invalidAffiliate: data.invalidAffiliate, failed: data.failed }, { processed: 7, approved: 2, blocked: 5, mismatch: 1, missingDestination: 1, invalidAffiliate: 2, failed: 1 });
+  const approvalUpdates = db.updates.filter((entry) => /SET affiliate_review_status = 'approved'/.test(entry.sql));
+  assert.equal(approvalUpdates.length, 1);
+  assert.equal(approvalUpdates[0].values.at(-1), "db-601");
+  assert.equal(approvalUpdates.some((entry) => /admin_status|public_visibility/.test(entry.sql)), false);
+  assert.equal(db.updates.filter((entry) => /INSERT INTO site_audit_events/.test(entry.sql)).length, 1);
+  assert.equal(db.updates.some((entry) => /public_visibility = 1/.test(entry.sql)), false);
+});
