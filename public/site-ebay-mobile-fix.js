@@ -905,12 +905,14 @@ function normalizeEtsyProduct(raw, index) {
   const reviewStatus = String(raw.affiliateReviewStatus || raw.affiliate_review_status || "").toLowerCase();
   const externalUrl = firstValue(raw.externalUrl);
   if (verificationStatus !== "match" || reviewStatus !== "approved" || !externalUrl) return null;
-  const name = firstValue(raw.name, raw.title, raw.productName, `Etsy product ${index + 1}`);
+  const name = decodeEtsyDisplayText(firstValue(raw.name, raw.title, raw.productName, `Etsy product ${index + 1}`));
+  const rawCategory = firstValue(raw.category, raw.categoryName, raw.type, "Etsy Dog Products");
+  const category = /^\d+$/.test(String(rawCategory).trim()) ? "Etsy Dog Products" : rawCategory;
   const price = Number(firstValue(raw.price, raw.retailPrice, raw.salePrice, raw.amount));
   return {
     id: `etsy-${productHandle(firstValue(raw.sourceProductId, raw.listingId, raw.id, raw.sku, name), `product-${index + 1}`).replace(/^etsy-/, "")}`,
     name,
-    category: firstValue(raw.category, raw.categoryName, raw.type, "Etsy Pet Products"),
+    category,
     price: Number.isFinite(price) ? price : null,
     priceLabel: Number.isFinite(price) ? "" : firstValue(raw.priceLabel, "Price on Etsy"),
     icon: "ET",
@@ -959,6 +961,31 @@ async function readLiveProductFeed(url, normalizeProduct) {
     products: normalized,
     status: data
   };
+}
+
+async function readPaginatedEtsyFeed(url, normalizeProduct) {
+  const productsById = new Map();
+  let nextCursor = "";
+  let status = {};
+  for (let page = 0; page < 100; page += 1) {
+    const pageUrl = new URL(url, location.href);
+    pageUrl.searchParams.set("limit", "50");
+    if (nextCursor) pageUrl.searchParams.set("cursor", nextCursor);
+    const result = await readLiveProductFeed(pageUrl.toString(), normalizeProduct);
+    status = result.status;
+    for (const product of result.products) productsById.set(product.id, product);
+    if (!status.hasMore || !status.nextCursor || status.nextCursor === nextCursor) {
+      return { products: [...productsById.values()], status };
+    }
+    nextCursor = status.nextCursor;
+  }
+  throw new Error("Etsy catalogue pagination did not terminate safely.");
+}
+
+function decodeEtsyDisplayText(value) {
+  const textarea = document.createElement("textarea");
+  textarea.innerHTML = String(value || "");
+  return textarea.value;
 }
 
 async function loadAvasamProducts({ silent = false } = {}) {
@@ -1150,7 +1177,7 @@ async function loadEtsyProducts({ silent = false } = {}) {
   etsyState.error = false;
 
   try {
-    const result = await readLiveProductFeed(etsyFeedUrl, normalizeEtsyProduct);
+    const result = await readPaginatedEtsyFeed(etsyFeedUrl, normalizeEtsyProduct);
     etsyProducts = result.status?.enabled === false ? [] : result.products;
     etsyState.error = false;
   } catch (error) {

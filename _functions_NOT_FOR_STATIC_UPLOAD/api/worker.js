@@ -2615,11 +2615,16 @@ async function handlePublicEtsyProducts(request, url) {
 
   const keywords = cleanText(url.searchParams.get("q"), 80).toLowerCase();
   const limit = cleanLimit(url.searchParams.get("limit"), 24, 50);
-  const result = await giftCardDb()
-    .prepare("SELECT * FROM etsy_products WHERE source = 'etsy' AND admin_status = 'published' AND public_visibility = 1 AND affiliate_review_status = 'approved' AND affiliate_verification_status = 'match' ORDER BY updated_at DESC LIMIT ?")
-    .bind(limit)
-    .all();
-  const products = (result.results || [])
+  const cursor = decodeEtsyCatalogueCursor(url.searchParams.get("cursor"));
+  const baseSql = "SELECT * FROM etsy_products WHERE source = 'etsy' AND admin_status = 'published' AND public_visibility = 1 AND affiliate_review_status = 'approved' AND affiliate_verification_status = 'match'";
+  const statement = cursor
+    ? giftCardDb().prepare(`${baseSql} AND (updated_at < ? OR (updated_at = ? AND id < ?)) ORDER BY updated_at DESC, id DESC LIMIT ?`).bind(cursor.updatedAt, cursor.updatedAt, cursor.id, limit + 1)
+    : giftCardDb().prepare(`${baseSql} ORDER BY updated_at DESC, id DESC LIMIT ?`).bind(limit + 1);
+  const result = await statement.all();
+  const rows = (result.results || []).slice(0, limit);
+  const hasMore = (result.results || []).length > limit;
+  const lastRow = rows.at(-1);
+  const products = rows
     .filter((product) => etsyAffiliateEligibility(product).eligible)
     .filter((product) => !keywords || [product.title, product.display_title, product.description, product.display_description, product.category, product.tags]
       .some((value) => String(value || "").toLowerCase().includes(keywords)))
@@ -2632,8 +2637,25 @@ async function handlePublicEtsyProducts(request, url) {
     adminControlled: true,
     query: keywords,
     count: products.length,
+    hasMore,
+    nextCursor: hasMore && lastRow ? encodeEtsyCatalogueCursor(lastRow) : "",
     products
   });
+}
+
+function encodeEtsyCatalogueCursor(product) {
+  return btoa(JSON.stringify([String(product.updated_at || ""), String(product.id || "")]));
+}
+
+function decodeEtsyCatalogueCursor(value) {
+  if (!value) return null;
+  try {
+    const [updatedAt, id] = JSON.parse(atob(cleanText(value, 500)));
+    if (typeof updatedAt !== "string" || !updatedAt || typeof id !== "string" || !id) return null;
+    return { updatedAt, id };
+  } catch {
+    return null;
+  }
 }
 
 async function fetchEtsyMarketplaceListings(keywords = "dog grooming", limit = 24) {
@@ -3755,8 +3777,10 @@ function publicEtsyProductShape(product) {
     id: `etsy-${product.external_listing_id}`,
     source: "etsy",
     sourceProductId: product.external_listing_id,
-    name: product.display_title || product.title,
-    category: product.category || "Etsy Products",
+    name: decodeAiDraftEntities(product.display_title || product.title),
+    category: cleanText(product.category, 120) && !/^\d+$/.test(cleanText(product.category, 120))
+      ? cleanText(product.category, 120)
+      : "Etsy Dog Products",
     price: product.price ? product.price / 100 : null,
     priceLabel: product.price ? formatPence(product.price, product.currency) : "Price on Etsy",
     icon: "ET",

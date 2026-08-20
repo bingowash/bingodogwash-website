@@ -1152,6 +1152,76 @@ test("public Etsy products exclude every non-public state and live marketplace r
   }
 });
 
+test("public Etsy shaping normalizes numeric categories and common title entities", () => {
+  const base = {
+    external_listing_id: "1027",
+    title: "Dog Groomer&#39;s Brush &amp; Comb",
+    category: "1027"
+  };
+  const numeric = etsyTestHelpers.publicProductShape(base);
+  assert.equal(numeric.name, "Dog Groomer's Brush & Comb");
+  assert.equal(numeric.category, "Etsy Dog Products");
+  const named = etsyTestHelpers.publicProductShape({ ...base, category: "Dog Grooming Tools" });
+  assert.equal(named.category, "Dog Grooming Tools");
+});
+
+test("public Etsy catalogue uses bounded stable cursor pagination", async () => {
+  const rows = Array.from({ length: 52 }, (_, index) => {
+    const listingId = String(5000 - index);
+    const affiliateUrl = `https://click.linksynergy.com/deeplink?id=FUdPmdlyOp8&mid=54080&murl=${encodeURIComponent(`https://www.etsy.com/uk/listing/${listingId}/dog-product`)}`;
+    return {
+      id: `etsy-db-${listingId}`,
+      external_listing_id: listingId,
+      title: `Dog product ${listingId}`,
+      category: "Dog Products",
+      listing_url: `https://www.etsy.com/uk/listing/${listingId}/dog-product`,
+      original_listing_url: `https://www.etsy.com/uk/listing/${listingId}/dog-product`,
+      updated_at: `2026-08-20T12:${String(59 - index).padStart(2, "0")}:00.000Z`,
+      admin_status: "published",
+      public_visibility: 1,
+      affiliate_url: affiliateUrl,
+      affiliate_verified_url: affiliateUrl,
+      affiliate_final_url: `https://www.etsy.com/uk/listing/${listingId}/dog-product`,
+      affiliate_destination_listing_id: listingId,
+      affiliate_review_status: "approved",
+      affiliate_reviewed_at: "2026-08-20T10:00:00.000Z",
+      affiliate_reviewed_by: "reviewer",
+      affiliate_verification_status: "match",
+      affiliate_verified_at: "2026-08-20T09:00:00.000Z",
+      affiliate_provider: "rakuten",
+      affiliate_program: "etsy_creator_collective_uk",
+      affiliate_storefront: "Concordia Mercatura"
+    };
+  });
+  const db = {
+    prepare(sql) {
+      const statement = {
+        values: [],
+        bind(...values) { statement.values = values; return statement; },
+        async all() {
+          if (!sql.includes("updated_at < ?")) return { results: rows.slice(0, statement.values.at(-1)) };
+          const cursorId = statement.values[2];
+          const start = rows.findIndex((row) => row.id === cursorId) + 1;
+          return { results: rows.slice(start, start + statement.values.at(-1)) };
+        }
+      };
+      return statement;
+    }
+  };
+  const env = { ETSY_FEATURE_ENABLED: "true", GIFT_CARD_DB: db };
+  const firstResponse = await worker.fetch(new Request("https://bingodogwash.com/api/etsy/products?limit=50"), env);
+  const first = await firstResponse.json();
+  assert.equal(first.products.length, 50);
+  assert.equal(first.hasMore, true);
+  assert.ok(first.nextCursor);
+  const secondResponse = await worker.fetch(new Request(`https://bingodogwash.com/api/etsy/products?limit=50&cursor=${encodeURIComponent(first.nextCursor)}`), env);
+  const second = await secondResponse.json();
+  assert.equal(second.products.length, 2);
+  assert.equal(second.hasMore, false);
+  assert.equal(second.nextCursor, "");
+  assert.equal(new Set([...first.products, ...second.products].map((product) => product.sourceProductId)).size, 52);
+});
+
 test("new Etsy sync inserts default to review and private", () => {
   const source = readFileSync(new URL("../_functions_NOT_FOR_STATIC_UPLOAD/api/worker.js", import.meta.url), "utf8");
   const insert = source.slice(source.indexOf("INSERT INTO etsy_products"), source.indexOf("function normalizeEtsyImport"));
