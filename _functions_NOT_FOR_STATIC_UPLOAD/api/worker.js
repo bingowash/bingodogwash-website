@@ -172,15 +172,6 @@ const STATIC_PRODUCT_FEEDS = {
     }
   ]
 }
-,
-  "etsy-products.json": {
-  "products": [
-    { "id": "personalised-dog-tag", "name": "Personalised Dog Name Tag", "category": "Accessories", "priceLabel": "Price on Etsy", "supplier": "Etsy", "status": "External checkout", "externalUrl": "https://www.etsy.com/uk/search?q=personalised+dog+tag", "description": "Personalised dog ID tags from Etsy sellers." },
-    { "id": "handmade-dog-bandana", "name": "Handmade Dog Bandana", "category": "Accessories", "priceLabel": "Price on Etsy", "supplier": "Etsy", "status": "External checkout", "externalUrl": "https://www.etsy.com/uk/search?q=handmade+dog+bandana", "description": "Handmade dog bandanas and custom pet accessories." },
-    { "id": "dog-treat-jar", "name": "Personalised Dog Treat Jar", "category": "Treats", "priceLabel": "Price on Etsy", "supplier": "Etsy", "status": "External checkout", "externalUrl": "https://www.etsy.com/uk/search?q=personalised+dog+treat+jar", "description": "Custom treat storage jars for dog owners." },
-    { "id": "dog-towel-hook", "name": "Dog Towel Hook", "category": "Accessories", "priceLabel": "Price on Etsy", "supplier": "Etsy", "status": "External checkout", "externalUrl": "https://www.etsy.com/uk/search?q=dog+towel+hook", "description": "Dog lead, towel and grooming hooks from Etsy makers." }
-  ]
-}
 };
 
 const EBAY_AFFILIATE_PARAMS = {
@@ -861,31 +852,6 @@ function handleFeedStatus(request) {
     }
   });
 }
-function etsyFeedConfig(requestUrl) {
-  const configuredFeedUrl = envText("ETSY_FEED_URL");
-  const etsyApiKey = envText("ETSY_API_KEY");
-  const query = requestUrl.searchParams.get("q") || "dog accessories";
-  const limit = cleanLimit(requestUrl.searchParams.get("limit"), 12, 25);
-  let feedUrl = configuredFeedUrl;
-
-  if (!feedUrl && etsyApiKey) {
-    const etsyUrl = new URL("https://api.etsy.com/v3/application/listings/active");
-    etsyUrl.searchParams.set("keywords", query);
-    etsyUrl.searchParams.set("limit", String(limit));
-    feedUrl = etsyUrl.toString();
-  }
-
-  return {
-    source: "Etsy",
-    filename: "etsy-products.json",
-    feedUrl,
-    apiKey: etsyApiKey,
-    authHeader: configuredFeedUrl ? (envText("ETSY_AUTH_HEADER") || "Authorization") : "x-api-key",
-    authPrefix: configuredFeedUrl ? (envText("ETSY_AUTH_PREFIX") || "Bearer") : "",
-    normalize: normalizeEtsyListings
-  };
-}
-
 async function handleSupplierProductFeed(request, config) {
   if (request.method !== "GET") {
     return corsResponse(request, { ok: false, error: "Method not allowed." }, 405);
@@ -2650,10 +2616,11 @@ async function handlePublicEtsyProducts(request, url) {
   const keywords = cleanText(url.searchParams.get("q"), 80).toLowerCase();
   const limit = cleanLimit(url.searchParams.get("limit"), 24, 50);
   const result = await giftCardDb()
-    .prepare("SELECT * FROM etsy_products WHERE source = 'etsy' AND admin_status = 'published' AND public_visibility = 1 ORDER BY updated_at DESC LIMIT ?")
+    .prepare("SELECT * FROM etsy_products WHERE source = 'etsy' AND admin_status = 'published' AND public_visibility = 1 AND affiliate_review_status = 'approved' AND affiliate_verification_status = 'match' ORDER BY updated_at DESC LIMIT ?")
     .bind(limit)
     .all();
   const products = (result.results || [])
+    .filter((product) => etsyAffiliateEligibility(product).eligible)
     .filter((product) => !keywords || [product.title, product.display_title, product.description, product.display_description, product.category, product.tags]
       .some((value) => String(value || "").toLowerCase().includes(keywords)))
     .map(publicEtsyProductShape)
@@ -2987,6 +2954,18 @@ async function adminEtsyProductAction(request, action) {
     return corsResponse(request, { ok: false, error: "Unknown Etsy product action." }, 400);
   }
 
+  if (action === "publish") {
+    const placeholders = ids.map(() => "?").join(",");
+    const selected = await giftCardDb().prepare(`SELECT * FROM etsy_products WHERE id IN (${placeholders}) AND source = 'etsy'`).bind(...ids).all();
+    const products = selected.results || [];
+    const blocked = products.map((product) => ({ id: product.id, ...etsyAffiliateEligibility(product) })).filter((result) => !result.eligible);
+    if (products.length !== ids.length || blocked.length) {
+      const reason = products.length !== ids.length ? "One or more Etsy products were not found." : blocked.map((item) => `${item.id}: ${item.reason}`).join(" ");
+      await auditSiteEvent(request, "etsy-product-publish-blocked", "etsy_product", ids.join(","), "", "blocked", "error", reason);
+      return corsResponse(request, { ok: false, error: `Public publishing blocked. ${reason}`, blocked }, 409);
+    }
+  }
+
   const placeholders = ids.map(() => "?").join(",");
   await giftCardDb()
     .prepare(`UPDATE etsy_products SET admin_status = ?, public_visibility = ?, updated_at = ? WHERE id IN (${placeholders}) AND source = 'etsy'`)
@@ -2999,7 +2978,11 @@ async function adminEtsyProductAction(request, action) {
 const ETSY_AFFILIATE_PROVIDER = "rakuten";
 const ETSY_AFFILIATE_PROGRAM = "etsy_creator_collective_uk";
 const ETSY_AFFILIATE_STOREFRONT = "Concordia Mercatura";
+const ETSY_CANONICAL_STOREFRONT_URL = "https://www.etsy.com/uk/storefront/sd5a8vu67gupclza?ref=hdr_user_menu-storefront";
 const ETSY_AFFILIATE_DISCLOSURE = "We may earn a commission from qualifying purchases at no extra cost to you.";
+const ETSY_VERIFIED_AFFILIATE_URLS = Object.freeze({
+  "1162091738": "https://www.etsy.com/strfrnt/sd5a8vu67gupclza/share?url=https%3A%2F%2Fwww.etsy.com%2Fuk%2Fstorefront%2Fsd5a8vu67gupclza&product_page_id=19"
+});
 
 function cleanAffiliateUrl(value) {
   try {
@@ -3011,6 +2994,36 @@ function cleanAffiliateUrl(value) {
   } catch {
     return "";
   }
+}
+
+function etsyAffiliateEligibility(product) {
+  const listingId = cleanText(product.external_listing_id, 120);
+  const originalListingId = etsyListingIdFromUrl(product.original_listing_url || product.listing_url);
+  const affiliateUrl = cleanAffiliateUrl(product.affiliate_url);
+  const verifiedUrl = cleanAffiliateUrl(product.affiliate_verified_url);
+  const finalUrl = cleanEtsyUrl(product.affiliate_final_url);
+  const destinationListingId = cleanText(product.affiliate_destination_listing_id, 120);
+  if (!affiliateUrl) return { eligible: false, status: "missing_affiliate_url", reason: "MISSING AFFILIATE URL" };
+  if (!verifiedUrl || !product.affiliate_verified_at || product.affiliate_verification_status === "unverified") return { eligible: false, status: "unverified", reason: "UNVERIFIED" };
+  if (verifiedUrl !== affiliateUrl) return { eligible: false, status: "changed_after_verification", reason: "CHANGED AFTER VERIFICATION" };
+  if (product.affiliate_verification_status === "mismatch") return { eligible: false, status: "mismatch", reason: "MISMATCH" };
+  if (product.affiliate_verification_status !== "match") return { eligible: false, status: "failed", reason: "FAILED" };
+  if (!finalUrl) return { eligible: false, status: "failed", reason: "FAILED: final destination is not Etsy" };
+  if (!listingId || originalListingId !== listingId || destinationListingId !== listingId || etsyListingIdFromUrl(finalUrl) !== listingId) return { eligible: false, status: "mismatch", reason: "MISMATCH: destination listing ID does not match" };
+  if (product.affiliate_review_status !== "approved" || !product.affiliate_reviewed_at || !product.affiliate_reviewed_by) return { eligible: false, status: "unverified", reason: "UNVERIFIED: affiliate review approval is required" };
+  if (product.affiliate_provider !== ETSY_AFFILIATE_PROVIDER || product.affiliate_program !== ETSY_AFFILIATE_PROGRAM || product.affiliate_storefront !== ETSY_AFFILIATE_STOREFRONT) return { eligible: false, status: "failed", reason: "FAILED: affiliate programme metadata is invalid" };
+  return { eligible: true, status: "match", reason: "VERIFIED MATCH", affiliateUrl };
+}
+
+function canonicalEtsyAffiliateUrl(product) {
+  const eligibility = etsyAffiliateEligibility(product);
+  return eligibility.eligible ? eligibility.affiliateUrl : "";
+}
+
+function canonicalEtsyStorefrontRecord(product) {
+  const listingId = cleanText(product.external_listing_id, 120);
+  return Boolean(ETSY_VERIFIED_AFFILIATE_URLS[listingId])
+    || cleanText(product.affiliate_storefront, 120) === ETSY_AFFILIATE_STOREFRONT;
 }
 
 function etsyListingReference(value) {
@@ -3201,7 +3214,11 @@ async function adminEtsyAffiliateVerify(request, input) {
     finalUrl = await resolveAffiliateDestination(affiliateUrl);
     ({ status, destinationListingId } = affiliateProductMatch(product.external_listing_id, finalUrl));
   } catch (error) {
-    return corsResponse(request, { ok: false, error: cleanText(error.message || "Affiliate verification failed.", 300) }, 400);
+    const now = new Date().toISOString();
+    await giftCardDb().prepare("UPDATE etsy_products SET affiliate_verification_status = 'failed', affiliate_verified_url = ?, affiliate_final_url = NULL, affiliate_destination_listing_id = NULL, affiliate_verified_at = ?, updated_at = ? WHERE id = ? AND source = 'etsy'")
+      .bind(affiliateUrl, now, now, product.id).run();
+    await auditSiteEvent(request, "etsy-affiliate-verify", "etsy_product", product.id, "", "failed", "error", cleanText(error.message, 300));
+    return corsResponse(request, { ok: false, verificationStatus: "failed", error: cleanText(error.message || "Affiliate verification failed.", 300) }, 400);
   }
   const now = new Date().toISOString();
   await giftCardDb().prepare("UPDATE etsy_products SET affiliate_verification_status = ?, affiliate_verified_url = ?, affiliate_final_url = ?, affiliate_destination_listing_id = ?, affiliate_verified_at = ?, updated_at = ? WHERE id = ? AND source = 'etsy'")
@@ -3471,7 +3488,8 @@ function adminEtsyProductShape(product) {
     : "Etsy Dog Products";
   const externalListingId = cleanText(product.external_listing_id, 120);
   const originalListingUrl = cleanEtsyUrl(product.original_listing_url || product.listing_url) || cleanEtsyUrl(product.listing_url);
-  const approvedAffiliateUrl = product.affiliate_review_status === "approved" ? cleanAffiliateUrl(product.affiliate_url) : "";
+  const approvedAffiliateUrl = canonicalEtsyAffiliateUrl(product);
+  const affiliateEligibility = etsyAffiliateEligibility(product);
   return {
     id: product.id,
     externalListingId,
@@ -3486,7 +3504,7 @@ function adminEtsyProductShape(product) {
     status: product.admin_status,
     publicVisibility: Boolean(product.public_visibility),
     listingUrl: product.listing_url,
-    externalUrl: approvedAffiliateUrl || originalListingUrl,
+    externalUrl: approvedAffiliateUrl,
     originalListingUrl,
     affiliateUrl: product.affiliate_url || "",
     affiliateProvider: product.affiliate_provider || ETSY_AFFILIATE_PROVIDER,
@@ -3501,7 +3519,9 @@ function adminEtsyProductShape(product) {
     affiliateFinalUrl: product.affiliate_final_url || "",
     affiliateDestinationListingId: product.affiliate_destination_listing_id || "",
     affiliateVerifiedAt: product.affiliate_verified_at || "",
-    publicUrl: product.public_visibility && externalListingId
+    affiliateEligibilityStatus: affiliateEligibility.status,
+    publicBlockedReason: affiliateEligibility.eligible ? "" : affiliateEligibility.reason,
+    publicUrl: product.public_visibility && affiliateEligibility.eligible && externalListingId
       ? `https://bingodogwash.com/product?id=${encodeURIComponent(`etsy-${externalListingId}`)}`
       : "",
     image: product.primary_image,
@@ -3513,7 +3533,7 @@ function adminEtsyProductShape(product) {
 
 function publicEtsyProductShape(product) {
   const originalUrl = cleanEtsyUrl(product.original_listing_url || product.listing_url) || cleanEtsyUrl(product.listing_url);
-  const approvedAffiliateUrl = product.affiliate_review_status === "approved" ? cleanAffiliateUrl(product.affiliate_url) : "";
+  const approvedAffiliateUrl = canonicalEtsyAffiliateUrl(product);
   const affiliateApproved = Boolean(approvedAffiliateUrl);
   return {
     id: `etsy-${product.external_listing_id}`,
@@ -3528,11 +3548,11 @@ function publicEtsyProductShape(product) {
     supplier: "Etsy",
     commission: affiliateApproved ? (product.commission_disclosure || ETSY_AFFILIATE_DISCLOSURE) : "External checkout",
     status: product.personalisation_available ? "Personalised Etsy product" : (product.availability || "External checkout"),
-    externalUrl: approvedAffiliateUrl || originalUrl,
-    originalListingUrl: originalUrl,
+    externalUrl: approvedAffiliateUrl,
     affiliateProvider: affiliateApproved ? product.affiliate_provider || "" : "",
     affiliateStorefront: affiliateApproved ? product.affiliate_storefront || "" : "",
     affiliateReviewStatus: product.affiliate_review_status || "draft",
+    affiliateVerificationStatus: product.affiliate_verification_status || "unverified",
     commissionDisclosure: affiliateApproved ? (product.commission_disclosure || ETSY_AFFILIATE_DISCLOSURE) : "",
     description: product.display_description || product.description || "Etsy product.",
     personalised: Boolean(product.personalisation_available),
@@ -5297,8 +5317,12 @@ export {
 
 export const etsyTestHelpers = {
   scheduledSyncAllowed: (env) => requestEnvStorage.run(env || {}, scheduledEtsySyncAllowed),
+  adminProductShape: adminEtsyProductShape,
   publicProductShape: publicEtsyProductShape,
   cleanAffiliateUrl,
+  canonicalEtsyAffiliateUrl,
+  etsyAffiliateEligibility,
+  canonicalEtsyStorefrontRecord,
   resolveAffiliateDestination,
   publicVerificationIp,
   etsyListingIdFromUrl,

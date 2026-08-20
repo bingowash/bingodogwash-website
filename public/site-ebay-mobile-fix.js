@@ -901,11 +901,14 @@ function groupAvasamProductVariants(productList) {
 
 
 function normalizeEtsyProduct(raw, index) {
+  const verificationStatus = String(raw.affiliateVerificationStatus || raw.affiliate_verification_status || "").toLowerCase();
+  const reviewStatus = String(raw.affiliateReviewStatus || raw.affiliate_review_status || "").toLowerCase();
+  const externalUrl = firstValue(raw.externalUrl);
+  if (verificationStatus !== "match" || reviewStatus !== "approved" || !externalUrl) return null;
   const name = firstValue(raw.name, raw.title, raw.productName, `Etsy product ${index + 1}`);
   const price = Number(firstValue(raw.price, raw.retailPrice, raw.salePrice, raw.amount));
-  const externalUrl = firstValue(raw.externalUrl, raw.url, raw.affiliateUrl, raw.listingUrl, raw.link);
   return {
-    id: `etsy-${productHandle(firstValue(raw.id, raw.sku, raw.listingId, name), `product-${index + 1}`)}`,
+    id: `etsy-${productHandle(firstValue(raw.sourceProductId, raw.listingId, raw.id, raw.sku, name), `product-${index + 1}`).replace(/^etsy-/, "")}`,
     name,
     category: firstValue(raw.category, raw.categoryName, raw.type, "Etsy Pet Products"),
     price: Number.isFinite(price) ? price : null,
@@ -916,7 +919,10 @@ function normalizeEtsyProduct(raw, index) {
     commission: firstValue(raw.margin, raw.commission, "Affiliate"),
     status: firstValue(raw.status, "External checkout"),
     externalUrl,
-    description: firstValue(raw.description, raw.shortDescription, raw.summary, "Etsy affiliate product ready for external checkout.")
+    description: firstValue(raw.description, raw.shortDescription, raw.summary, "Verified Etsy affiliate product ready for external checkout."),
+    paymentProvider: "Etsy",
+    affiliateReviewStatus: reviewStatus,
+    affiliateVerificationStatus: verificationStatus
   };
 }
 
@@ -928,7 +934,7 @@ async function readProductFeed(primaryUrl, fallbackUrl, starterProducts, normali
       if (!response.ok) throw new Error(`${url} returned ${response.status}`);
       const data = await response.json();
       const records = Array.isArray(data) ? data : data.products || data.items || data.data || [];
-      const normalized = records.map(normalizeProduct).filter((product) => product.name);
+      const normalized = records.map(normalizeProduct).filter((product) => product?.name);
       if (normalized.length) return normalized;
     } catch (error) {
       console.warn("Product feed unavailable", url, error);

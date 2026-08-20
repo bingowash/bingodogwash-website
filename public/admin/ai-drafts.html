@@ -55,7 +55,7 @@
             <legend>Etsy Creator Collective affiliate review</legend>
             <p class="small-note">Affiliate attribution is separate from Etsy OAuth and product publication. Saving or approving a link does not publish the product.</p>
             <label>Original Etsy listing URL<input name="originalListingUrl" type="url" maxlength="500" readonly></label>
-            <label>Affiliate URL<input name="affiliateUrl" type="url" maxlength="2000" placeholder="Paste the reviewed Rakuten/Creator Collective HTTPS URL"></label>
+            <label>Candidate affiliate URL<input name="affiliateUrl" type="url" maxlength="2000" placeholder="Paste the reviewed Rakuten/Creator Collective HTTPS URL"></label>
             <div class="two-fields"><label>Provider<input name="affiliateProvider" value="rakuten" readonly></label><label>Program<input name="affiliateProgram" value="etsy_creator_collective_uk" readonly></label></div>
             <label>Storefront<input name="affiliateStorefront" value="Concordia Mercatura" readonly></label>
             <label>Provenance/reference<textarea name="affiliateProvenance" maxlength="1000" rows="3"></textarea></label>
@@ -66,7 +66,8 @@
             <div class="two-fields"><label>Selected listing ID<input name="selectedEtsyListingId" readonly></label><label>Destination listing ID<input name="affiliateDestinationListingId" readonly></label></div>
             <label>Final resolved destination<input name="affiliateFinalUrl" type="url" readonly></label>
             <div class="two-fields"><label>Product verification<input name="affiliateVerificationStatus" readonly></label><label>Verified at<input name="affiliateVerifiedAt" readonly></label></div>
-            <div class="button-row"><button class="btn btn-light" type="button" data-etsy-affiliate-action="affiliate-draft">Save affiliate draft</button><button class="btn btn-light" type="button" data-etsy-affiliate-action="affiliate-verify">Verify affiliate link</button><button class="btn btn-secondary" type="button" data-etsy-affiliate-action="affiliate-approve">Approve affiliate link</button><button class="btn btn-light" type="button" data-etsy-affiliate-action="affiliate-reject">Reject/remove affiliate link</button></div>
+            <div class="two-fields"><label>Public visibility<input name="publicVisibilityLabel" readonly></label><label>Publication block reason<input name="publicBlockedReason" readonly></label></div>
+            <div class="button-row"><button class="btn btn-light" type="button" data-etsy-affiliate-action="affiliate-draft">Save affiliate draft</button><button class="btn btn-light" type="button" data-etsy-affiliate-action="affiliate-verify">Verify affiliate link / retry verification</button><button class="btn btn-secondary" type="button" data-etsy-affiliate-action="affiliate-approve">Approve affiliate link</button><button class="btn btn-light" type="button" data-etsy-affiliate-action="affiliate-reject">Reject/remove affiliate link</button></div>
             <p class="small-note" data-etsy-affiliate-status aria-live="polite">Select an Etsy database product to review affiliate attribution.</p>
           </fieldset>
           <label>Public image URL<input name="image" type="url" maxlength="500" data-image-url></label>

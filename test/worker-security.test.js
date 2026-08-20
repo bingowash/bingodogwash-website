@@ -1115,7 +1115,8 @@ test("public Etsy products exclude every non-public state and live marketplace r
   const originalFetch = globalThis.fetch;
   let selectSql = "";
   const records = [
-    { external_listing_id: "published-1", title: "Approved dog tag", admin_status: "published", public_visibility: 1 },
+    { external_listing_id: "12345", title: "Approved dog tag", admin_status: "published", public_visibility: 1, affiliate_storefront: "Concordia Mercatura", affiliate_url: "https://tracking.example/approved", affiliate_verified_url: "https://tracking.example/approved", affiliate_final_url: "https://www.etsy.com/listing/12345/item", affiliate_destination_listing_id: "12345", affiliate_review_status: "approved", affiliate_reviewed_at: "2026-08-20T10:00:00.000Z", affiliate_reviewed_by: "reviewer", affiliate_verification_status: "match", affiliate_verified_at: "2026-08-20T09:00:00.000Z", affiliate_provider: "rakuten", affiliate_program: "etsy_creator_collective_uk" },
+    { external_listing_id: "arbitrary-public", title: "Arbitrary marketplace result", admin_status: "published", public_visibility: 1 },
     { external_listing_id: "review-1", title: "Review product", admin_status: "review", public_visibility: 0 },
     { external_listing_id: "hidden-1", title: "Hidden product", admin_status: "hidden", public_visibility: 0 },
     { external_listing_id: "unpublished-1", title: "Unpublished product", admin_status: "unpublished", public_visibility: 0 },
@@ -1143,7 +1144,9 @@ test("public Etsy products exclude every non-public state and live marketplace r
     assert.match(selectSql, /admin_status = 'published'/);
     assert.match(selectSql, /public_visibility = 1/);
     assert.equal(data.products.length, 1);
-    assert.equal(data.products[0].sourceProductId, "published-1");
+    assert.equal(data.products[0].sourceProductId, "12345");
+    assert.equal(data.products[0].externalUrl, "https://tracking.example/approved");
+    assert.equal(data.products[0].originalListingUrl, undefined);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -1572,6 +1575,38 @@ test("affiliate approval requires a persisted MATCH for the unchanged URL", asyn
   const response = await worker.fetch(new Request("https://bingodogwash.com/api/admin/etsy/products/affiliate-approve", { method: "POST", headers: { Authorization: "Bearer admin-token", "Content-Type": "application/json" }, body: JSON.stringify({ id: product.id }) }), { ADMIN_API_TOKEN: "admin-token", GIFT_CARD_DB: db });
   assert.equal(response.status, 409);
   assert.equal(wrote, false);
+});
+
+test("Etsy publication eligibility fails closed for every invalid verification state", () => {
+  const verified = {
+    external_listing_id: "12345", listing_url: "https://www.etsy.com/listing/12345/item", original_listing_url: "https://www.etsy.com/listing/12345/item",
+    affiliate_url: "https://tracking.example/12345", affiliate_verified_url: "https://tracking.example/12345", affiliate_final_url: "https://www.etsy.com/listing/12345/item",
+    affiliate_destination_listing_id: "12345", affiliate_verification_status: "match", affiliate_verified_at: "2026-08-20T09:00:00.000Z",
+    affiliate_review_status: "approved", affiliate_reviewed_at: "2026-08-20T10:00:00.000Z", affiliate_reviewed_by: "reviewer",
+    affiliate_provider: "rakuten", affiliate_program: "etsy_creator_collective_uk", affiliate_storefront: "Concordia Mercatura"
+  };
+  assert.deepEqual(etsyTestHelpers.etsyAffiliateEligibility(verified), { eligible: true, status: "match", reason: "VERIFIED MATCH", affiliateUrl: verified.affiliate_url });
+  for (const [overrides, reason] of [
+    [{ affiliate_url: "" }, "MISSING AFFILIATE URL"],
+    [{ affiliate_verified_url: "", affiliate_verified_at: "", affiliate_verification_status: "unverified" }, "UNVERIFIED"],
+    [{ affiliate_url: "https://tracking.example/changed" }, "CHANGED AFTER VERIFICATION"],
+    [{ affiliate_verification_status: "mismatch" }, "MISMATCH"],
+    [{ affiliate_verification_status: "failed" }, "FAILED"],
+    [{ affiliate_destination_listing_id: "99999" }, "MISMATCH: destination listing ID does not match"],
+    [{ affiliate_final_url: "https://example.com/listing/12345" }, "FAILED: final destination is not Etsy"],
+    [{ affiliate_review_status: "draft" }, "UNVERIFIED: affiliate review approval is required"]
+  ]) assert.equal(etsyTestHelpers.etsyAffiliateEligibility({ ...verified, ...overrides }).reason, reason);
+});
+
+test("admin Etsy publish blocks invalid products without changing their records", async () => {
+  const product = { id: "db-123", source: "etsy", external_listing_id: "123", listing_url: "https://www.etsy.com/listing/123/item", original_listing_url: "https://www.etsy.com/listing/123/item", affiliate_review_status: "approved", affiliate_verification_status: "mismatch" };
+  let published = false;
+  const db = { prepare(sql) { const statement = { bind() { return statement; }, async all() { return { results: [product] }; }, async first() { return null; }, async run() { if (/admin_status = \?/.test(sql)) published = true; return { success: true }; } }; return statement; } };
+  const response = await worker.fetch(new Request("https://bingodogwash.com/api/admin/etsy/products/publish", { method: "POST", headers: { Authorization: "Bearer admin-token", "Content-Type": "application/json" }, body: JSON.stringify({ ids: [product.id] }) }), { ADMIN_API_TOKEN: "admin-token", GIFT_CARD_DB: db });
+  const data = await response.json();
+  assert.equal(response.status, 409);
+  assert.match(data.error, /MISSING AFFILIATE URL/);
+  assert.equal(published, false);
 });
 
 test("Etsy import normalization keeps external content safe", () => {
