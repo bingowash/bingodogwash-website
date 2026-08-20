@@ -2482,12 +2482,18 @@ async function handleAdminEtsyAction(action) {
 
 async function handleAdminEtsyProductAction(action) {
   const actionButton = document.querySelector(`[data-admin-etsy-product-action="${action}"]`);
-  const ids = Array.from(document.querySelectorAll("[data-admin-etsy-product-id]:checked"))
+  const selectedInputs = Array.from(document.querySelectorAll("[data-admin-etsy-product-id]:checked"));
+  const ids = selectedInputs
     .map((input) => input.dataset.adminEtsyProductId || input.dataset.adminEtsyExternalListingId)
     .filter(Boolean);
   const bulkAllAction = action === "affiliate-generate-verify" || action === "affiliate-approve-verified" || action === "publish-verified";
   if (!ids.length && !bulkAllAction) {
     window.alert("Select at least one Etsy product.");
+    return;
+  }
+  if (action === "hide" && selectedInputs.every((input) => input.dataset.adminEtsyProductStatus === "hidden")) {
+    const status = document.querySelector("[data-admin-etsy-search-status]");
+    if (status) status.textContent = "Selected Etsy products are already hidden.";
     return;
   }
 
@@ -2514,6 +2520,10 @@ async function handleAdminEtsyProductAction(action) {
         ? `${totals.approved} exact matches approved / ${totals.blocked} blocked\nProcessed: ${totals.processed} / mismatch: ${totals.mismatch} / missing destination: ${totals.missingDestination} / invalid affiliate: ${totals.invalidAffiliate} / failed: ${totals.failed}`
         : `${totals.published} verified Etsy products published / ${totals.blocked} blocked`));
     await loadAdminEtsy();
+    if (action === "hide") {
+      const status = document.querySelector("[data-admin-etsy-search-status]");
+      if (status) status.textContent = `${ids.length} Etsy product${ids.length === 1 ? "" : "s"} hidden`;
+    }
     await loadEtsyProducts({ silent: true });
   } catch (error) {
     window.alert(error.message || "Etsy product action failed.");
@@ -2846,12 +2856,12 @@ function renderAdminEtsyProducts(productList) {
 
   target.innerHTML = productList.map((product) => `
     <div class="row admin-row admin-product-row">
-      <label class="check-row"><input type="checkbox" data-admin-etsy-product-id="${escapeAttr(product.id || product.externalListingId)}" data-admin-etsy-external-listing-id="${escapeAttr(product.externalListingId || "")}"><span><strong>${escapeSvg(product.title)}</strong><small>Listing ID: ${escapeSvg(product.externalListingId || "Unknown")}</small></span></label>
+      <label class="check-row"><input type="checkbox" data-admin-etsy-product-id="${escapeAttr(product.id || product.externalListingId)}" data-admin-etsy-external-listing-id="${escapeAttr(product.externalListingId || "")}" data-admin-etsy-product-status="${escapeAttr(String(product.status || "").toLowerCase())}"><span><strong>${escapeSvg(product.title)}</strong><small>Listing ID: ${escapeSvg(product.externalListingId || "Unknown")}</small></span></label>
       <span>${escapeSvg(product.category || "Etsy Products")}</span>
       <span>${escapeSvg(product.priceLabel || "Price on Etsy")}</span>
       <span>${escapeSvg(product.availability || "")}</span>
-      <span class="tag">${escapeSvg(product.status)}</span>
-      <span class="tag tag-muted">${product.publicVisibility ? "Public" : "Hidden"}</span>
+      <span class="tag">Status: ${escapeSvg(adminEtsyStatusLabel(product.status))}</span>
+      <span class="tag tag-muted">Public visibility: ${product.publicVisibility ? "Public" : "Hidden"}</span>
       <span class="tag">${escapeSvg(product.publicBlockedReason || "VERIFIED MATCH")}</span>
       <dl class="admin-etsy-verification">
         <div><dt>Original Etsy listing URL</dt><dd><a href="${escapeAttr(product.originalListingUrl)}" target="_blank" rel="noopener noreferrer">${escapeSvg(product.originalListingUrl || "Missing")}</a></dd></div>
@@ -2868,6 +2878,11 @@ function renderAdminEtsyProducts(productList) {
       </div>
     </div>
   `).join("");
+}
+
+function adminEtsyStatusLabel(value) {
+  const status = String(value || "unknown").trim().toLowerCase();
+  return status.charAt(0).toUpperCase() + status.slice(1);
 }
 
 function renderAdminEtsyLogs(logs) {

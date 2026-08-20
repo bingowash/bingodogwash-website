@@ -62,3 +62,87 @@ test("admin Etsy search finds a listing outside the initial batch without mutati
   expect(searchedQueries).toContain("1473570446");
   expect(mutationCalls).toBe(actions.length);
 });
+
+test("hiding a searched Etsy product reports and refreshes its canonical hidden state", async ({ page }) => {
+  const listingId = "1473570446";
+  const affiliateUrl = `https://click.linksynergy.com/deeplink?id=test&mid=54080&murl=https%3A%2F%2Fwww.etsy.com%2Flisting%2F${listingId}`;
+  let status = "published";
+  let publicVisibility = true;
+  let hideCalls = 0;
+
+  await page.addInitScript(() => sessionStorage.setItem("bingoAdminCoreToken", "test-admin-token"));
+  await page.route("**/api/**", route => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ ok: true, products: [], logs: [], connection: {}, entries: [], pages: [], subscribers: [] })
+  }));
+  await page.route("**/api/admin/etsy/products**", async route => {
+    const request = route.request();
+    if (request.method() !== "GET") {
+      const action = new URL(request.url()).pathname.split("/").pop();
+      const body = request.postDataJSON() as { ids?: string[] };
+      expect(action).toBe("hide");
+      expect(body.ids).toEqual([listingId]);
+      hideCalls += 1;
+      status = "hidden";
+      publicVisibility = false;
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true, processed: 1, hidden: 1 })
+      });
+    }
+
+    const query = new URL(request.url()).searchParams.get("q") || "";
+    const products = query === listingId ? [{
+      id: "",
+      externalListingId: listingId,
+      title: "Vintage 00s RUSH Vapor Trails 2002 tour concert t shirt",
+      category: "Etsy Dog Products",
+      priceLabel: "£80.00",
+      status,
+      publicVisibility,
+      affiliateUrl,
+      affiliateReviewStatus: "approved",
+      affiliateVerificationStatus: "match",
+      affiliateGenerationStatus: "VERIFIED MATCH",
+      affiliateFinalUrl: `https://www.etsy.com/listing/${listingId}/rush-shirt`,
+      affiliateDestinationListingId: listingId
+    }] : [];
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, query, products })
+    });
+  });
+
+  await page.goto("/admin/");
+  await page.locator("#admin-etsy-search").fill(listingId);
+  await page.locator("[data-admin-etsy-search]").getByRole("button", { name: "Search" }).click();
+
+  const productList = page.locator("[data-admin-etsy-products]");
+  const checkbox = page.locator(`[data-admin-etsy-product-id="${listingId}"]`);
+  await expect(productList).toContainText("Status: Published");
+  await expect(productList).toContainText(affiliateUrl);
+  await expect(productList).toContainText("Reviewapproved");
+  await expect(productList).toContainText("VerificationVERIFIED MATCH");
+
+  await checkbox.check();
+  await page.getByRole("button", { name: "Hide selected", exact: true }).click();
+
+  await expect(page.locator("[data-admin-etsy-search-status]")).toHaveText("1 Etsy product hidden");
+  await expect(productList).toContainText("Vintage 00s RUSH Vapor Trails 2002 tour concert t shirt");
+  await expect(productList).toContainText(`Listing ID: ${listingId}`);
+  await expect(productList).toContainText("Status: Hidden");
+  await expect(productList).toContainText("Public visibility: Hidden");
+  await expect(productList).not.toContainText("Status: Published");
+  await expect(productList).toContainText(affiliateUrl);
+  await expect(productList).toContainText("Reviewapproved");
+  await expect(productList).toContainText("VerificationVERIFIED MATCH");
+  expect(hideCalls).toBe(1);
+
+  await checkbox.check();
+  await page.getByRole("button", { name: "Hide selected", exact: true }).click();
+  await expect(page.locator("[data-admin-etsy-search-status]")).toHaveText("Selected Etsy products are already hidden.");
+  expect(hideCalls).toBe(1);
+});
