@@ -2483,7 +2483,7 @@ async function handleAdminEtsyAction(action) {
 async function handleAdminEtsyProductAction(action) {
   const actionButton = document.querySelector(`[data-admin-etsy-product-action="${action}"]`);
   const ids = Array.from(document.querySelectorAll("[data-admin-etsy-product-id]:checked"))
-    .map((input) => input.dataset.adminEtsyProductId)
+    .map((input) => input.dataset.adminEtsyProductId || input.dataset.adminEtsyExternalListingId)
     .filter(Boolean);
   const bulkAllAction = action === "affiliate-generate-verify" || action === "affiliate-approve-verified" || action === "publish-verified";
   if (!ids.length && !bulkAllAction) {
@@ -2846,7 +2846,7 @@ function renderAdminEtsyProducts(productList) {
 
   target.innerHTML = productList.map((product) => `
     <div class="row admin-row admin-product-row">
-      <label class="check-row"><input type="checkbox" data-admin-etsy-product-id="${escapeAttr(product.id)}"><span><strong>${escapeSvg(product.title)}</strong><small>Listing ID: ${escapeSvg(product.externalListingId || "Unknown")}</small></span></label>
+      <label class="check-row"><input type="checkbox" data-admin-etsy-product-id="${escapeAttr(product.id || product.externalListingId)}" data-admin-etsy-external-listing-id="${escapeAttr(product.externalListingId || "")}"><span><strong>${escapeSvg(product.title)}</strong><small>Listing ID: ${escapeSvg(product.externalListingId || "Unknown")}</small></span></label>
       <span>${escapeSvg(product.category || "Etsy Products")}</span>
       <span>${escapeSvg(product.priceLabel || "Price on Etsy")}</span>
       <span>${escapeSvg(product.availability || "")}</span>

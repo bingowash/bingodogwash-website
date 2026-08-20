@@ -2968,9 +2968,20 @@ async function adminEtsyProductAction(request, action) {
   if (action === "affiliate-generate-verify") return adminEtsyBulkGenerateVerify(request, input);
   if (action === "affiliate-approve-verified") return adminEtsyBulkApproveVerified(request, input);
   if (action === "publish-verified") return adminEtsyPublishVerified(request, input);
-  const ids = Array.isArray(input.ids) ? input.ids.map((id) => cleanText(id, 120)).filter(Boolean) : [];
+  const ids = Array.isArray(input.ids) ? [...new Set(input.ids.map((id) => cleanText(id, 120)).filter(Boolean))] : [];
   if (!ids.length) {
     return corsResponse(request, { ok: false, error: "Select at least one Etsy product." }, 400);
+  }
+
+  const identifierPlaceholders = ids.map(() => "?").join(",");
+  const selectedResult = await giftCardDb()
+    .prepare(`SELECT * FROM etsy_products WHERE source = 'etsy' AND (id IN (${identifierPlaceholders}) OR external_listing_id IN (${identifierPlaceholders}))`)
+    .bind(...ids, ...ids)
+    .all();
+  const selectedProducts = selectedResult.results || [];
+  const selectedIds = [...new Set(selectedProducts.map((product) => cleanText(product.id, 120)).filter(Boolean))];
+  if (selectedIds.length !== ids.length) {
+    return corsResponse(request, { ok: false, error: "One or more selected Etsy products were not found." }, 404);
   }
 
   const updates = {
@@ -2986,23 +2997,20 @@ async function adminEtsyProductAction(request, action) {
   }
 
   if (action === "publish") {
-    const placeholders = ids.map(() => "?").join(",");
-    const selected = await giftCardDb().prepare(`SELECT * FROM etsy_products WHERE id IN (${placeholders}) AND source = 'etsy'`).bind(...ids).all();
-    const products = selected.results || [];
-    const blocked = products.map((product) => ({ id: product.id, ...etsyAffiliateEligibility(product) })).filter((result) => !result.eligible);
-    if (products.length !== ids.length || blocked.length) {
-      const reason = products.length !== ids.length ? "One or more Etsy products were not found." : blocked.map((item) => `${item.id}: ${item.reason}`).join(" ");
-      await auditSiteEvent(request, "etsy-product-publish-blocked", "etsy_product", ids.join(","), "", "blocked", "error", reason);
+    const blocked = selectedProducts.map((product) => ({ id: product.id, ...etsyAffiliateEligibility(product) })).filter((result) => !result.eligible);
+    if (blocked.length) {
+      const reason = blocked.map((item) => `${item.id}: ${item.reason}`).join(" ");
+      await auditSiteEvent(request, "etsy-product-publish-blocked", "etsy_product", selectedIds.join(","), "", "blocked", "error", reason);
       return corsResponse(request, { ok: false, error: `Public publishing blocked. ${reason}`, blocked }, 409);
     }
   }
 
-  const placeholders = ids.map(() => "?").join(",");
+  const placeholders = selectedIds.map(() => "?").join(",");
   await giftCardDb()
     .prepare(`UPDATE etsy_products SET admin_status = ?, public_visibility = ?, updated_at = ? WHERE id IN (${placeholders}) AND source = 'etsy'`)
-    .bind(update.status, update.visibility, new Date().toISOString(), ...ids)
+    .bind(update.status, update.visibility, new Date().toISOString(), ...selectedIds)
     .run();
-  await auditSiteEvent(request, update.audit, "etsy_product", ids.join(","), "", update.status, "ok", "");
+  await auditSiteEvent(request, update.audit, "etsy_product", selectedIds.join(","), "", update.status, "ok", "");
   return corsResponse(request, { ok: true, status: update.status, publicVisibility: Boolean(update.visibility) });
 }
 

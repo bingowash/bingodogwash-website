@@ -1391,6 +1391,47 @@ test("admin Etsy search queries the full database read-only before applying its 
   assert.equal(mutationCalls, 0);
 });
 
+test("selected Etsy actions resolve an external listing ID to the canonical row ID", async () => {
+  const selects = [];
+  const updates = [];
+  const product = {
+    id: "etsy-db-1473570446",
+    source: "etsy",
+    external_listing_id: "1473570446",
+    title: "Vintage 00s RUSH Vapor Trails 2002 tour concert t shirt"
+  };
+  const db = {
+    prepare(sql) {
+      const statement = {
+        values: [],
+        bind(...values) { statement.values = values; return statement; },
+        async all() {
+          if (/SELECT \* FROM etsy_products/.test(sql)) {
+            selects.push({ sql, values: statement.values });
+            return { results: [product] };
+          }
+          return { results: [] };
+        },
+        async run() {
+          if (/UPDATE etsy_products/.test(sql)) updates.push({ sql, values: statement.values });
+          return { success: true };
+        }
+      };
+      return statement;
+    }
+  };
+  const response = await worker.fetch(new Request("https://bingodogwash.com/api/admin/etsy/products/hide", {
+    method: "POST",
+    headers: { Authorization: "Bearer admin-token", "Content-Type": "application/json" },
+    body: JSON.stringify({ ids: ["1473570446"] })
+  }), { ADMIN_API_TOKEN: "admin-token", GIFT_CARD_DB: db });
+  assert.equal(response.status, 200);
+  assert.match(selects[0].sql, /id IN .* OR external_listing_id IN/);
+  assert.deepEqual(selects[0].values, ["1473570446", "1473570446"]);
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0].values.at(-1), "etsy-db-1473570446");
+});
+
 test("Product Centre exposes an explicit validated Etsy import action on the main API origin", () => {
   const html = readFileSync(new URL("../public/admin/ai-drafts.html", import.meta.url), "utf8");
   const script = readFileSync(new URL("../public/admin/ai-drafts.js", import.meta.url), "utf8");
