@@ -1273,10 +1273,13 @@ test("exact Etsy listing references accept only IDs and HTTPS Etsy listing URLs"
 });
 
 test("Etsy admin routes allow only approved admin CORS origins", async () => {
-  const approved = await worker.fetch(new Request("https://bingodogwash.com/api/admin/etsy/products/import-listing", { method: "OPTIONS", headers: { Origin: "https://admin.bingodogwash.com", "Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "authorization,content-type" } }), {});
+  const approved = await worker.fetch(new Request("https://bingodogwash.com/api/admin/etsy/products/affiliate-generate-verify", { method: "OPTIONS", headers: { Origin: "https://admin.bingodogwash.com", "Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "authorization,content-type,x-admin-actor" } }), {});
   assert.equal(approved.status, 204);
   assert.equal(approved.headers.get("Access-Control-Allow-Origin"), "https://admin.bingodogwash.com");
-  assert.match(approved.headers.get("Access-Control-Allow-Headers") || "", /Authorization/i);
+  const allowedHeaders = approved.headers.get("Access-Control-Allow-Headers") || "";
+  for (const header of ["Authorization", "Content-Type", "X-Admin-Actor", "Accept", "X-Admin-Token"]) {
+    assert.match(allowedHeaders, new RegExp(`(?:^|,\\s*)${header}(?:,|$)`, "i"));
+  }
   const rejected = await worker.fetch(new Request("https://bingodogwash.com/api/admin/etsy/products/affiliate-verify", { method: "OPTIONS", headers: { Origin: "https://attacker.example", "Access-Control-Request-Method": "POST" } }), {});
   assert.equal(rejected.status, 403);
   assert.equal(rejected.headers.get("Access-Control-Allow-Origin"), null);

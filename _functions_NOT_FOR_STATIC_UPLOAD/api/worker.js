@@ -5434,7 +5434,7 @@ function adminApiCorsHeaders(request) {
   const origin = request.headers.get("Origin") || "";
   const headers = {
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Authorization, Content-Type, Accept, X-Admin-Token",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type, Accept, X-Admin-Token, X-Admin-Actor",
     "Access-Control-Max-Age": "86400",
     "Cache-Control": "no-store",
     Vary: "Origin",
