@@ -9,6 +9,12 @@ const FACEBOOK_REQUIRED_SCOPES = ["pages_manage_posts", "pages_read_engagement",
 const FACEBOOK_TOKEN_EXPIRED = "Facebook connection expired. Reconnect Meta account.";
 const MAX_RETRIES = 3;
 const MARKETING_INTERVAL_HOURS = 4;
+const PRODUCT_COOLDOWN_DAYS = 7;
+const ETSY_CONCORDIA_STOREFRONT = "Concordia Mercatura";
+const ETSY_AFFILIATE_PROVIDER = "rakuten";
+const ETSY_AFFILIATE_PROGRAM = "etsy_creator_collective_uk";
+const RAKUTEN_ETSY_ADVERTISER_MID = "54080";
+const RAKUTEN_AFFILIATE_ID = "FUdPmdlyOp8";
 const MIN_META_TOKEN_LENGTH = 40;
 const META_ERROR = {
   missing: "Meta access token is not configured.",
@@ -92,8 +98,11 @@ export async function runMarketingAutomation(env, options = {}) {
   if (!settings?.enabled && !options.allowWhilePaused) {
     return { ok: true, status: "paused", skipped: "paused" };
   }
-  const product = await selectNextProduct(db);
-  if (!product) return { ok: false, error: "No published, in-stock products with an image and URL are available." };
+  const product = await selectNextProduct(db, {
+    respectCooldown: options.trigger === "scheduled",
+    now: options.scheduledAt instanceof Date ? options.scheduledAt : new Date(),
+  });
+  if (!product) return { ok: false, skipped: "no-affiliate-eligible-product", error: "No affiliate-eligible product available." };
 
   const campaignCode = `bdw-${new Date().toISOString().slice(0, 10).replaceAll("-", "")}-${crypto.randomUUID().slice(0, 8)}`;
   const trackedUrl = campaignUrl(product.url, campaignCode);
@@ -139,7 +148,10 @@ export async function runMarketingAutomation(env, options = {}) {
       results.instagram = { ok: false, error: connection.error, attempts: 0, tokenSource: connection.source || "none", diagnostic: connection.diagnostic, rejections: [] };
       continue;
     }
-    const instagramSelection = await selectInstagramProduct(db, product);
+    const instagramSelection = await selectInstagramProduct(db, product, {
+      respectCooldown: options.trigger === "scheduled",
+      now: options.scheduledAt instanceof Date ? options.scheduledAt : new Date(),
+    });
     if (!instagramSelection.product) {
       const error = `Instagram skipped: no compatible publicly accessible JPG, JPEG or PNG product image was available. ${instagramSelection.rejections.length} image(s) rejected.`;
       await savePlatformResult(db, postId, platform, "failed", "", 0, error);
@@ -238,34 +250,149 @@ export async function distributePreparedProduct(env, input) {
   return { ok: succeeded > 0, status, postId, product: product.name, results };
 }
 
-async function selectNextProduct(db) {
-  const result = await db.prepare(`SELECT
-      'etsy' AS source, id, COALESCE(NULLIF(display_title, ''), title) AS name,
-      COALESCE(NULLIF(display_description, ''), description, '') AS description,
-      price, currency, category, quantity AS stock, listing_url AS url, primary_image AS image
-    FROM etsy_products
-    WHERE public_visibility = 1 AND admin_status = 'published'
-      AND COALESCE(quantity, 1) > 0 AND COALESCE(listing_url, '') <> '' AND COALESCE(primary_image, '') <> ''
-    ORDER BY CASE WHEN EXISTS (
-      SELECT 1 FROM marketing_posts mp WHERE mp.product_source = 'etsy' AND mp.product_id = etsy_products.id AND mp.status IN ('success', 'partial')
-    ) THEN 1 ELSE 0 END,
-    COALESCE((SELECT MAX(mp.created_at) FROM marketing_posts mp WHERE mp.product_source = 'etsy' AND mp.product_id = etsy_products.id AND mp.status IN ('success', 'partial')), ''),
-    updated_at DESC LIMIT 1`).first();
-  return result || null;
+function successfulScheduledProductSql(productIdExpression = "etsy_products.id") {
+  return `mp.product_source = 'etsy'
+      AND mp.product_id = ${productIdExpression}
+      AND mp.trigger_type = 'scheduled'
+      AND mp.status IN ('success', 'partial')
+      AND (
+        COALESCE(mp.facebook_post_id, '') <> ''
+        OR COALESCE(mp.instagram_post_id, '') <> ''
+        OR EXISTS (
+          SELECT 1 FROM marketing_platform_results mpr
+          WHERE mpr.post_id = mp.id
+            AND mpr.status = 'success'
+            AND (mpr.platform = 'instagram' OR mpr.platform = 'facebook' OR mpr.platform LIKE 'facebook:%')
+        )
+      )`;
 }
 
-async function selectInstagramProduct(db, preferredProduct) {
+function etsyListingIdFromUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    if (url.protocol !== "https:" || !/(^|\.)etsy\.com$/i.test(url.hostname) || url.username || url.password) return "";
+    return url.pathname.match(/\/listing\/(\d{1,20})(?:\/|$)/)?.[1] || "";
+  } catch {
+    return "";
+  }
+}
+
+function canonicalEtsyAffiliateUrl(product) {
+  const listingId = String(product?.external_listing_id || "").trim();
+  const affiliateUrl = String(product?.affiliate_url || "").trim();
+  if (!/^\d{1,20}$/.test(listingId)
+    || product?.affiliate_review_status !== "approved"
+    || product?.affiliate_verification_status !== "match"
+    || product?.affiliate_provider !== ETSY_AFFILIATE_PROVIDER
+    || product?.affiliate_program !== ETSY_AFFILIATE_PROGRAM
+    || product?.affiliate_storefront !== ETSY_CONCORDIA_STOREFRONT
+    || !product?.affiliate_reviewed_at
+    || !product?.affiliate_reviewed_by
+    || !product?.affiliate_verified_at
+    || affiliateUrl !== String(product?.affiliate_verified_url || "").trim()
+    || String(product?.affiliate_destination_listing_id || "").trim() !== listingId
+    || etsyListingIdFromUrl(product?.original_listing_url || product?.listing_url) !== listingId
+    || etsyListingIdFromUrl(product?.affiliate_final_url) !== listingId) return "";
+  try {
+    const url = new URL(affiliateUrl);
+    if (url.protocol !== "https:" || url.hostname !== "click.linksynergy.com" || url.pathname !== "/deeplink" || url.username || url.password) return "";
+    if (url.searchParams.get("id") !== RAKUTEN_AFFILIATE_ID || url.searchParams.get("mid") !== RAKUTEN_ETSY_ADVERTISER_MID) return "";
+    if (etsyListingIdFromUrl(url.searchParams.get("murl")) !== listingId) return "";
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
+function etsyMarketingProductSelectionSql({ excludeCooldown = false, excludeMostRecent = false, limit = 100 } = {}) {
+  const successfulProduct = successfulScheduledProductSql();
+  const lastSuccessfulAt = `(SELECT MAX(mp.created_at) FROM marketing_posts mp WHERE ${successfulProduct})`;
+  const boundedLimit = Math.max(1, Math.min(100, Number(limit) || 1));
+  return `SELECT
+      'etsy' AS source, id, COALESCE(NULLIF(display_title, ''), title) AS name,
+      COALESCE(NULLIF(display_description, ''), description, '') AS description,
+      price, currency, category, quantity AS stock, external_listing_id,
+      listing_url, original_listing_url, affiliate_url, affiliate_verified_url,
+      affiliate_final_url, affiliate_destination_listing_id, affiliate_review_status,
+      affiliate_reviewed_at, affiliate_reviewed_by, affiliate_verification_status,
+      affiliate_verified_at, affiliate_provider, affiliate_program, affiliate_storefront,
+      affiliate_url AS url,
+      primary_image AS image,
+      ${lastSuccessfulAt} AS last_successful_at
+    FROM etsy_products
+    WHERE public_visibility = 1 AND admin_status = 'published'
+      AND affiliate_review_status = 'approved' AND affiliate_verification_status = 'match'
+      AND affiliate_provider = '${ETSY_AFFILIATE_PROVIDER}' AND affiliate_program = '${ETSY_AFFILIATE_PROGRAM}'
+      AND affiliate_storefront = '${ETSY_CONCORDIA_STOREFRONT}'
+      AND COALESCE(affiliate_url, '') <> '' AND affiliate_url = affiliate_verified_url
+      AND COALESCE(affiliate_destination_listing_id, '') = external_listing_id
+      AND COALESCE(affiliate_reviewed_at, '') <> '' AND COALESCE(affiliate_reviewed_by, '') <> ''
+      AND COALESCE(affiliate_verified_at, '') <> '' AND COALESCE(affiliate_final_url, '') <> ''
+      AND affiliate_url LIKE 'https://click.linksynergy.com/deeplink?%'
+      AND COALESCE(quantity, 1) > 0 AND COALESCE(primary_image, '') <> ''
+      ${excludeCooldown ? `AND NOT EXISTS (SELECT 1 FROM marketing_posts mp WHERE ${successfulProduct} AND mp.created_at > ?)` : ""}
+      ${excludeMostRecent ? `AND etsy_products.id <> COALESCE((
+        SELECT recent.product_id FROM marketing_posts recent
+        WHERE recent.product_source = 'etsy'
+          AND recent.trigger_type = 'scheduled'
+          AND recent.status IN ('success', 'partial')
+          AND (
+            COALESCE(recent.facebook_post_id, '') <> ''
+            OR COALESCE(recent.instagram_post_id, '') <> ''
+            OR EXISTS (
+              SELECT 1 FROM marketing_platform_results recent_result
+              WHERE recent_result.post_id = recent.id
+                AND recent_result.status = 'success'
+                AND (recent_result.platform = 'instagram' OR recent_result.platform = 'facebook' OR recent_result.platform LIKE 'facebook:%')
+            )
+          )
+        ORDER BY recent.created_at DESC LIMIT 1
+      ), '')` : ""}
+    ORDER BY CASE WHEN ${lastSuccessfulAt} IS NULL THEN 0 ELSE 1 END,
+      COALESCE(${lastSuccessfulAt}, ''), updated_at DESC LIMIT ${boundedLimit}`;
+}
+
+async function marketingProductCandidates(statement) {
+  const first = typeof statement.first === "function" ? await statement.first() : null;
+  if (first) return [first];
+  if (typeof statement.all === "function") return (await statement.all())?.results || [];
+  return [];
+}
+
+function firstCanonicalEtsyProduct(products) {
+  for (const product of products || []) {
+    const affiliateUrl = canonicalEtsyAffiliateUrl(product);
+    if (affiliateUrl) return { ...product, url: affiliateUrl };
+  }
+  return null;
+}
+
+async function selectNextProduct(db, { respectCooldown = false, now = new Date() } = {}) {
+  if (!respectCooldown) {
+    return firstCanonicalEtsyProduct(await marketingProductCandidates(db.prepare(etsyMarketingProductSelectionSql())));
+  }
+  const cutoff = new Date(now.getTime() - PRODUCT_COOLDOWN_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const availableStatement = db.prepare(etsyMarketingProductSelectionSql({ excludeCooldown: true }));
+  const availableQuery = typeof availableStatement.bind === "function" ? availableStatement.bind(cutoff) : availableStatement;
+  const available = firstCanonicalEtsyProduct(await marketingProductCandidates(availableQuery));
+  if (available) {
+    available.cooldownFallback = false;
+    return available;
+  }
+  const fallback = firstCanonicalEtsyProduct(await marketingProductCandidates(db.prepare(etsyMarketingProductSelectionSql({ excludeMostRecent: true }))));
+  if (fallback) fallback.cooldownFallback = true;
+  return fallback || null;
+}
+
+async function selectInstagramProduct(db, preferredProduct, { respectCooldown = false, now = new Date() } = {}) {
   const candidates = [preferredProduct];
   try {
-    const rows = await db.prepare(`SELECT
-        'etsy' AS source, id, COALESCE(NULLIF(display_title, ''), title) AS name,
-        COALESCE(NULLIF(display_description, ''), description, '') AS description,
-        price, currency, category, quantity AS stock, listing_url AS url, primary_image AS image
-      FROM etsy_products
-      WHERE public_visibility = 1 AND admin_status = 'published'
-        AND COALESCE(quantity, 1) > 0 AND COALESCE(listing_url, '') <> '' AND COALESCE(primary_image, '') <> ''
-      ORDER BY updated_at DESC LIMIT 100`).all();
+    const statement = db.prepare(etsyMarketingProductSelectionSql({ excludeCooldown: respectCooldown, limit: 100 }));
+    const cutoff = new Date(now.getTime() - PRODUCT_COOLDOWN_DAYS * 24 * 60 * 60 * 1000).toISOString();
+    const query = respectCooldown && typeof statement.bind === "function" ? statement.bind(cutoff) : statement;
+    const rows = await query.all();
     for (const product of rows?.results || []) {
+      if (!canonicalEtsyAffiliateUrl(product)) continue;
       if (!candidates.some((candidate) => String(candidate.id) === String(product.id))) candidates.push(product);
     }
   } catch (error) {
@@ -1097,6 +1224,7 @@ function publishingError(message, retryable, diagnostic = null) { const error = 
 async function dashboard(env) {
   const db = env.GIFT_CARD_DB;
   const settingsRequest = Promise.resolve().then(() => getSettings(env));
+  const nextProductRequest = Promise.resolve().then(() => selectNextProduct(db, { respectCooldown: true }));
   const postsRequest = Promise.resolve().then(() => db.prepare(`SELECT marketing_posts.*,
     (SELECT status FROM marketing_platform_results WHERE post_id = marketing_posts.id AND platform = 'tiktok' ORDER BY created_at DESC LIMIT 1) AS tiktok_status,
     (SELECT external_post_id FROM marketing_platform_results WHERE post_id = marketing_posts.id AND platform = 'tiktok' ORDER BY created_at DESC LIMIT 1) AS tiktok_publish_id,
@@ -1114,8 +1242,9 @@ async function dashboard(env) {
     COALESCE(SUM(CASE WHEN event_type = 'sale' THEN value ELSE 0 END), 0) AS sales
     FROM marketing_posts LEFT JOIN marketing_events ON marketing_events.post_id = marketing_posts.id
     GROUP BY product_source, product_id, product_name ORDER BY sales DESC, clicks DESC, engagement DESC LIMIT 8`).all());
-  const [settings, posts, totals, best] = await Promise.all([
+  const [settings, nextProduct, posts, totals, best] = await Promise.all([
     settingsRequest,
+    nextProductRequest,
     postsRequest,
     totalsRequest,
     bestRequest,
@@ -1135,6 +1264,14 @@ async function dashboard(env) {
     },
     platformStatus: { facebook: facebookStatus, instagram: instagramStatus },
     lastPost: history[0] || null,
+    nextEligibleProduct: nextProduct ? {
+      id: String(nextProduct.id || ""),
+      source: nextProduct.source || "",
+      name: nextProduct.name || "",
+      lastSuccessfulAt: nextProduct.last_successful_at || "",
+      cooldownFallback: nextProduct.cooldownFallback === true,
+      cooldownDays: PRODUCT_COOLDOWN_DAYS,
+    } : null,
     history,
     analytics: { ...totals, bestProducts: best.results || [] }
   });
@@ -1267,4 +1404,4 @@ function clean(value, max = 500) { return String(value || "").replace(/\s+/g, " 
 async function readJson(request) { try { return await request.json(); } catch { return null; } }
 function json(body, status = 200) { return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" } }); }
 
-export const marketingTestHelpers = { campaignUrl, trackedDestination, nextRunAt, isScheduledSlot, scheduleSlotKey, hash, benefit, metaAccessToken, resolveMetaConnection, resolveFacebookPublishingContext, resolveFacebookPageAccess, publishWithRetry, publishFacebook, publishInstagram, waitForInstagramMedia, publishFacebookPages, validateInstagramImage, selectInstagramProduct, instagramFeedCaption, configuredFacebookPageIds, postingEndpointResponse, redirectPage, instagramPreflight, facebookPreflight, publishingDisabled };
+export const marketingTestHelpers = { campaignUrl, trackedDestination, nextRunAt, isScheduledSlot, scheduleSlotKey, hash, benefit, metaAccessToken, resolveMetaConnection, resolveFacebookPublishingContext, resolveFacebookPageAccess, publishWithRetry, publishFacebook, publishInstagram, waitForInstagramMedia, publishFacebookPages, validateInstagramImage, selectNextProduct, selectInstagramProduct, canonicalEtsyAffiliateUrl, instagramFeedCaption, configuredFacebookPageIds, postingEndpointResponse, redirectPage, instagramPreflight, facebookPreflight, publishingDisabled };

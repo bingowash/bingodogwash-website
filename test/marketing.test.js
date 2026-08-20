@@ -35,6 +35,8 @@ test("Marketing Admin always exposes the existing Meta reconnect flow", () => {
   assert.match(frontend, /Meta credential stored, but managed Page discovery needs attention/);
   assert.match(frontend, /oauthCallbackResult/);
   assert.match(frontend, /Meta code/);
+  assert.match(frontend, /Next eligible product:/);
+  assert.match(frontend, /7-day cooldown/);
   assert.doesNotMatch(frontend, /safePreflightResult/);
   assert.match(frontend, /return data;\/\/|return data;/);
 });
@@ -253,6 +255,242 @@ test("four-hour schedule recognises each slot and creates a per-slot duplicate k
   }
   assert.equal(marketingTestHelpers.isScheduledSlot(settings, new Date("2026-08-06T06:15:00Z")), false);
   assert.equal(marketingTestHelpers.scheduleSlotKey(settings, new Date("2026-08-06T08:19:30Z")), "2026-08-06T08:15");
+});
+
+function approvedMarketingEtsyProduct(overrides = {}) {
+  const listingId = String(overrides.external_listing_id || "4440462877");
+  const listingUrl = `https://www.etsy.com/listing/${listingId}/dog-product`;
+  const affiliateUrl = `https://click.linksynergy.com/deeplink?id=FUdPmdlyOp8&mid=54080&murl=${encodeURIComponent(listingUrl)}`;
+  return {
+    source: "etsy", id: `etsy-row-${listingId}`, external_listing_id: listingId, name: "Approved dog product",
+    listing_url: listingUrl, original_listing_url: listingUrl, affiliate_url: affiliateUrl,
+    affiliate_verified_url: affiliateUrl, affiliate_final_url: listingUrl,
+    affiliate_destination_listing_id: listingId, affiliate_review_status: "approved",
+    affiliate_reviewed_at: "2026-08-19T10:00:00.000Z", affiliate_reviewed_by: "admin",
+    affiliate_verification_status: "match", affiliate_verified_at: "2026-08-19T09:00:00.000Z",
+    affiliate_provider: "rakuten", affiliate_program: "etsy_creator_collective_uk",
+    affiliate_storefront: "Concordia Mercatura", image: "https://example.com/dog.jpg", ...overrides,
+  };
+}
+
+test("marketing Etsy selection is limited to public Concordia catalogue records", async () => {
+  let selectionSql = "";
+  const selected = approvedMarketingEtsyProduct();
+  const db = {
+    prepare(sql) {
+      selectionSql = sql;
+      return { first: async () => selected };
+    },
+  };
+
+  assert.equal((await marketingTestHelpers.selectNextProduct(db)).url, selected.affiliate_url);
+  assert.match(selectionSql, /public_visibility = 1 AND admin_status = 'published'/);
+  assert.match(selectionSql, /affiliate_storefront = 'Concordia Mercatura'/);
+  assert.match(selectionSql, /affiliate_verification_status = 'match'/);
+  assert.doesNotMatch(selectionSql, /etsy\.com\/search/i);
+  assert.doesNotMatch(selectionSql, /ELSE .*storefront/i);
+  assert.match(selectionSql, /marketing_posts/);
+});
+
+test("automatic selection excludes a canonical product successfully posted within seven days", async () => {
+  const queries = [];
+  const binds = [];
+  const differentProduct = approvedMarketingEtsyProduct({ id: "etsy-row-2", name: "Different dog product" });
+  const db = {
+    prepare(sql) {
+      queries.push(sql);
+      return {
+        bind(...values) { binds.push(values); return this; },
+        first: async () => differentProduct,
+      };
+    },
+  };
+
+  const selected = await marketingTestHelpers.selectNextProduct(db, {
+    respectCooldown: true,
+    now: new Date("2026-08-20T12:00:00.000Z"),
+  });
+
+  assert.equal(selected.id, "etsy-row-2");
+  assert.equal(selected.cooldownFallback, false);
+  assert.equal(queries.length, 1);
+  assert.match(queries[0], /mp\.product_id = etsy_products\.id/);
+  assert.match(queries[0], /mp\.trigger_type = 'scheduled'/);
+  assert.match(queries[0], /mp\.created_at > \?/);
+  assert.match(queries[0], /mpr\.status = 'success'/);
+  assert.match(queries[0], /mpr\.platform = 'instagram'/);
+  assert.match(queries[0], /mpr\.platform LIKE 'facebook:%'/);
+  assert.deepEqual(binds, [["2026-08-13T12:00:00.000Z"]]);
+});
+
+test("automatic cooldown uses canonical ID regardless of repeated title or caption", async () => {
+  let selectionSql = "";
+  const db = {
+    prepare(sql) {
+      selectionSql = sql;
+      return { bind() { return this; }, first: async () => approvedMarketingEtsyProduct({ id: "different-canonical-id", name: "SMALL/MEDIUM water-resistant dog bath cap" }) };
+    },
+  };
+  await marketingTestHelpers.selectNextProduct(db, { respectCooldown: true });
+  assert.match(selectionSql, /mp\.product_id = etsy_products\.id/);
+  assert.doesNotMatch(selectionSql, /product_name\s*=/);
+  assert.doesNotMatch(selectionSql, /caption\s*=/);
+});
+
+test("a product becomes eligible at the seven-day cooldown boundary", async () => {
+  let selectionSql = "";
+  let cutoff = "";
+  const db = {
+    prepare(sql) {
+      selectionSql = sql;
+      return {
+        bind(value) { cutoff = value; return this; },
+        first: async () => approvedMarketingEtsyProduct({ id: "seven-day-old-product" }),
+      };
+    },
+  };
+  const selected = await marketingTestHelpers.selectNextProduct(db, {
+    respectCooldown: true,
+    now: new Date("2026-08-20T12:00:00.000Z"),
+  });
+  assert.equal(selected.id, "seven-day-old-product");
+  assert.equal(cutoff, "2026-08-13T12:00:00.000Z");
+  assert.match(selectionSql, /mp\.created_at > \?/);
+  assert.doesNotMatch(selectionSql, /mp\.created_at >= \?/);
+});
+
+test("failed and manual posts do not count toward automatic cooldown", async () => {
+  let selectionSql = "";
+  const db = {
+    prepare(sql) {
+      selectionSql = sql;
+      return { bind() { return this; }, first: async () => approvedMarketingEtsyProduct({ id: "eligible-product" }) };
+    },
+  };
+  await marketingTestHelpers.selectNextProduct(db, { respectCooldown: true });
+  assert.match(selectionSql, /mp\.status IN \('success', 'partial'\)/);
+  assert.match(selectionSql, /mp\.trigger_type = 'scheduled'/);
+  assert.doesNotMatch(selectionSql, /mp\.status IN \([^)]*failed/);
+});
+
+test("manual test-post selection remains outside the automatic cooldown", async () => {
+  let selectionSql = "";
+  let bindCalls = 0;
+  const db = {
+    prepare(sql) {
+      selectionSql = sql;
+      return {
+        bind() { bindCalls += 1; return this; },
+        first: async () => approvedMarketingEtsyProduct({ id: "manual-product" }),
+      };
+    },
+  };
+  const selected = await marketingTestHelpers.selectNextProduct(db, { respectCooldown: false });
+  assert.equal(selected.id, "manual-product");
+  assert.equal(bindCalls, 0);
+  assert.doesNotMatch(selectionSql, /mp\.created_at > \?/);
+});
+
+test("all-cooling automatic products rotate to the least recent without repeating the latest", async () => {
+  const queries = [];
+  const results = [null, approvedMarketingEtsyProduct({ id: "least-recent-product", name: "Older eligible dog product", last_successful_at: "2026-08-19T08:00:00.000Z" })];
+  const db = {
+    prepare(sql) {
+      queries.push(sql);
+      return {
+        bind() { return this; },
+        first: async () => results.shift() || null,
+      };
+    },
+  };
+  const selected = await marketingTestHelpers.selectNextProduct(db, { respectCooldown: true });
+  assert.equal(selected.id, "least-recent-product");
+  assert.equal(selected.cooldownFallback, true);
+  assert.equal(queries.length, 2);
+  assert.match(queries[1], /etsy_products\.id <> COALESCE/);
+  assert.match(queries[1], /ORDER BY recent\.created_at DESC LIMIT 1/);
+  assert.match(queries[1], /COALESCE\(\(SELECT MAX\(mp\.created_at\)/);
+});
+
+test("automatic selection returns no product instead of consecutively reusing the only cooling product", async () => {
+  const db = {
+    prepare() {
+      return { bind() { return this; }, first: async () => null };
+    },
+  };
+  assert.equal(await marketingTestHelpers.selectNextProduct(db, { respectCooldown: true }), null);
+});
+
+test("Marketing Etsy affiliate validation fails closed for missing, plain, draft and mismatched evidence", () => {
+  const valid = approvedMarketingEtsyProduct();
+  assert.equal(marketingTestHelpers.canonicalEtsyAffiliateUrl(valid), valid.affiliate_url);
+  const trackedAffiliateUrl = new URL(marketingTestHelpers.trackedDestination(
+    marketingTestHelpers.campaignUrl(valid.affiliate_url, "affiliate-safe"),
+  ));
+  const approvedAffiliateUrl = new URL(valid.affiliate_url);
+  assert.equal(trackedAffiliateUrl.origin, approvedAffiliateUrl.origin);
+  assert.equal(trackedAffiliateUrl.pathname, approvedAffiliateUrl.pathname);
+  for (const parameter of ["id", "mid", "murl"]) {
+    assert.equal(trackedAffiliateUrl.searchParams.get(parameter), approvedAffiliateUrl.searchParams.get(parameter));
+  }
+  assert.equal(trackedAffiliateUrl.searchParams.get("utm_campaign"), "affiliate-safe");
+  for (const product of [
+    { ...valid, affiliate_url: "" },
+    { ...valid, affiliate_url: valid.listing_url, affiliate_verified_url: valid.listing_url },
+    { ...valid, affiliate_review_status: "draft" },
+    { ...valid, affiliate_verification_status: "mismatch" },
+    { ...valid, affiliate_destination_listing_id: "999999" },
+  ]) assert.equal(marketingTestHelpers.canonicalEtsyAffiliateUrl(product), "");
+});
+
+test("Instagram fallback candidates use the same public Concordia eligibility rule", async () => {
+  const originalFetch = globalThis.fetch;
+  let selectionSql = "";
+  globalThis.fetch = async () => new Response(null, { status: 404 });
+  const preferred = approvedMarketingEtsyProduct({ id: "preferred", name: "Preferred", image: "https://example.com/preferred.jpg" });
+  const db = {
+    prepare(sql) {
+      selectionSql = sql;
+      return { all: async () => ({ results: [] }) };
+    },
+  };
+  try {
+    await marketingTestHelpers.selectInstagramProduct(db, preferred);
+    assert.match(selectionSql, /public_visibility = 1 AND admin_status = 'published'/);
+    assert.match(selectionSql, /affiliate_storefront = 'Concordia Mercatura'/);
+    assert.match(selectionSql, /affiliate_verification_status = 'match'/);
+    assert.doesNotMatch(selectionSql, /etsy\.com\/search/i);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("scheduled Instagram fallback candidates cannot bypass the product cooldown", async () => {
+  const originalFetch = globalThis.fetch;
+  let selectionSql = "";
+  let cutoff = "";
+  globalThis.fetch = async () => new Response(null, { status: 404 });
+  const db = {
+    prepare(sql) {
+      selectionSql = sql;
+      return {
+        bind(value) { cutoff = value; return this; },
+        all: async () => ({ results: [] }),
+      };
+    },
+  };
+  try {
+    await marketingTestHelpers.selectInstagramProduct(
+      db,
+      approvedMarketingEtsyProduct({ id: "preferred", name: "Preferred", image: "https://example.com/preferred.jpg" }),
+      { respectCooldown: true, now: new Date("2026-08-20T12:00:00.000Z") }
+    );
+    assert.match(selectionSql, /mp\.product_id = etsy_products\.id/);
+    assert.match(selectionSql, /mp\.created_at > \?/);
+    assert.equal(cutoff, "2026-08-13T12:00:00.000Z");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("marketing admin API rejects requests without the existing admin token", async () => {
@@ -831,9 +1069,9 @@ test("Instagram image validation rejects local, forbidden, missing, timed-out an
 test("Instagram product selection skips unique failed products and records the successful fallback", async () => {
   const preferred = { id: "first", name: "First", image: "https://example.com/first.jpg" };
   const rows = [
-    { id: "first", name: "Duplicate first", image: "https://example.com/first.jpg" },
-    { id: "second", name: "Second", image: "https://example.com/second.jpg" },
-    { id: "third", name: "Third", image: "https://example.com/third.png" },
+    approvedMarketingEtsyProduct({ id: "first", name: "Duplicate first", image: "https://example.com/first.jpg" }),
+    approvedMarketingEtsyProduct({ id: "second", name: "Second", image: "https://example.com/second.jpg" }),
+    approvedMarketingEtsyProduct({ id: "third", name: "Third", image: "https://example.com/third.png" }),
   ];
   const db = { prepare: () => ({ all: async () => ({ results: rows }) }) };
   const originalFetch = globalThis.fetch;
@@ -855,7 +1093,7 @@ test("Instagram product selection skips unique failed products and records the s
 
 test("Instagram product selection terminates when every unique product image fails", async () => {
   const preferred = { id: "first", name: "First", image: "https://example.com/first.jpg" };
-  const rows = Array.from({ length: 5 }, (_, index) => ({ id: `fallback-${index}`, name: `Fallback ${index}`, image: `https://example.com/${index}.jpg` }));
+  const rows = Array.from({ length: 5 }, (_, index) => approvedMarketingEtsyProduct({ id: `fallback-${index}`, name: `Fallback ${index}`, image: `https://example.com/${index}.jpg` }));
   const db = { prepare: () => ({ all: async () => ({ results: rows }) }) };
   const originalFetch = globalThis.fetch;
   let requests = 0;
@@ -999,7 +1237,7 @@ test("authenticated controlled test can run while scheduling remains paused", as
   let queries = 0;
   const db = { prepare(sql) { queries += 1; return { first: async () => sql.includes("marketing_settings") ? ({ enabled: 0, schedule_hour_utc: 9, schedule_minute_utc: 0 }) : null }; } };
   const response = await handleMarketingRequest(new Request("https://bingodogwash.com/api/admin/marketing/test", { method: "POST", headers: { Authorization: "Bearer test-token" } }), { ADMIN_API_TOKEN: "test-token", GIFT_CARD_DB: db });
-  assert.deepEqual(await response.json(), { ok: false, error: "No published, in-stock products with an image and URL are available." });
+  assert.deepEqual(await response.json(), { ok: false, skipped: "no-affiliate-eligible-product", error: "No affiliate-eligible product available." });
   assert.equal(queries, 2);
 });
 
@@ -1075,7 +1313,7 @@ test("platform-specific failure produces a partial result with separated APIs an
     if (String(url).includes("/27879594505014566/media")) return new Response(JSON.stringify({ error: { code: 190, type: "OAuthException" } }), { status: 400 });
     return Response.json({ id: "facebook-post-id" });
   };
-  const product = { source: "etsy", id: "p1", name: "Dog Shampoo", description: "gentle cleaning", price: 999, currency: "GBP", category: "Grooming", stock: 2, url: "https://bingodogwash.com/product.html?id=p1", image: "https://bingodogwash.com/shampoo.jpg" };
+  const product = approvedMarketingEtsyProduct({ id: "p1", name: "Dog Shampoo", description: "gentle cleaning", price: 999, currency: "GBP", category: "Grooming", stock: 2, image: "https://bingodogwash.com/shampoo.jpg" });
   const db = { prepare(sql) { return { first: async () => sql.includes("marketing_settings") ? { enabled: 1, schedule_hour_utc: 9, schedule_minute_utc: 0 } : product, bind: () => ({ run: async () => ({ success: true }) }) }; } };
   try {
     const result = await runMarketingAutomation({ GIFT_CARD_DB: db, META_PAGE_ID: "1264938680034651", META_PAGE_ACCESS_TOKEN: "F".repeat(50), META_INSTAGRAM_USER_ID: "27879594505014566", INSTAGRAM_ACCESS_TOKEN: "I".repeat(50) }, { trigger: "test" });
@@ -1096,7 +1334,7 @@ test("Facebook publishing remains successful when every Instagram image candidat
     if (value.includes("graph.facebook.com")) return Response.json({ id: "facebook-post-id" });
     throw new Error(`Unexpected request: ${value}`);
   };
-  const product = { source: "etsy", id: "broken-product", name: "Broken image product", description: "Product description", price: 999, currency: "GBP", category: "Grooming", stock: 2, url: "https://bingodogwash.com/product.html?id=broken-product", image: "https://bingodogwash.com/broken.jpg" };
+  const product = approvedMarketingEtsyProduct({ id: "broken-product", name: "Broken image product", description: "Product description", price: 999, currency: "GBP", category: "Grooming", stock: 2, image: "https://bingodogwash.com/broken.jpg" });
   const db = { prepare(sql) { return {
     first: async () => sql.includes("marketing_settings") ? { enabled: 1, schedule_hour_utc: 9, schedule_minute_utc: 0 } : product,
     all: async () => ({ results: [] }),

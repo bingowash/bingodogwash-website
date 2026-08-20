@@ -152,7 +152,11 @@ function render() {
   qs("[data-marketing-dashboard]").hidden = false;
   const a = state.analytics || {}; const settings = state.settings || {};
   qs("[data-marketing-stats]").innerHTML = [["Products promoted",a.products_promoted],["Clicks",a.clicks],["Engagement",a.engagement],["Sales",a.sales]].map(([label,value]) => `<article class="card marketing-stat"><span>${label}</span><strong>${Number(value || 0)}</strong></article>`).join("");
-  qs("[data-marketing-status]").textContent = `${settings.enabled ? "Automation active" : "Automation paused"}. Posting every ${settings.intervalHours || 4} hours. Next scheduled post: ${settings.nextRunAt ? formatUtcDate(settings.nextRunAt) : "not scheduled"}. Last product: ${state.lastPost?.product_name || "none yet"}.`;
+  const nextProduct = state.nextEligibleProduct;
+  const rotationText = nextProduct
+    ? `Next eligible product: ${nextProduct.name}${nextProduct.cooldownFallback ? " (least recently posted; all other products are within the 7-day cooldown)" : ""}.`
+    : "Next eligible product: none currently eligible.";
+  qs("[data-marketing-status]").textContent = `${settings.enabled ? "Automation active" : "Automation paused"}. Posting every ${settings.intervalHours || 4} hours. Next scheduled post: ${settings.nextRunAt ? formatUtcDate(settings.nextRunAt) : "not scheduled"}. Last product: ${state.lastPost?.product_name || "none yet"}. ${rotationText}`;
   qs("[data-marketing-schedule] [name=hourUtc]").value = settings.hourUtc; qs("[data-marketing-schedule] [name=minuteUtc]").value = settings.minuteUtc;
   const platformStatus = state.platformStatus || {};
   const connectedPlatforms = state.connectedPlatforms || {};
