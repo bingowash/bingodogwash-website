@@ -2532,6 +2532,14 @@ document.addEventListener("click", (event) => {
     return;
   }
 
+  const clearEtsySearch = event.target.closest("[data-admin-etsy-search-clear]");
+  if (clearEtsySearch) {
+    const input = document.querySelector("[data-admin-etsy-search] [name='query']");
+    if (input) input.value = "";
+    searchAdminEtsyProducts();
+    return;
+  }
+
   const pageAction = event.target.closest("[data-admin-page-action]");
   if (pageAction) {
     handleAdminPageAction(pageAction.dataset.adminPageId, pageAction.dataset.adminPageAction);
@@ -2689,9 +2697,12 @@ async function loadAdminEtsy() {
   }
 
   try {
+    const searchQuery = document.querySelector("[data-admin-etsy-search] [name='query']")?.value.trim() || "";
+    const productUrl = new URL(`${adminEtsyApiBase}/products`, location.href);
+    if (searchQuery) productUrl.searchParams.set("q", searchQuery);
     const [dashboard, products, logs] = await Promise.all([
       adminCoreJson(adminEtsyApiBase),
-      adminCoreJson(`${adminEtsyApiBase}/products`),
+      adminCoreJson(productUrl.toString()),
       adminCoreJson(`${adminEtsyApiBase}/logs`)
     ]);
     renderAdminEtsySummary(dashboard.connection, dashboard);
@@ -2699,6 +2710,25 @@ async function loadAdminEtsy() {
     renderAdminEtsyLogs(logs.logs || []);
   } catch (error) {
     if (summaryTarget) summaryTarget.innerHTML = `<div class="mini-row"><strong>Etsy unavailable</strong><span>${escapeSvg(error.message)}</span></div>`;
+  }
+}
+
+async function searchAdminEtsyProducts() {
+  const form = document.querySelector("[data-admin-etsy-search]");
+  const target = document.querySelector("[data-admin-etsy-products]");
+  const status = document.querySelector("[data-admin-etsy-search-status]");
+  if (!form || !target) return;
+  const query = form.elements.query.value.trim();
+  const url = new URL(`${adminEtsyApiBase}/products`, location.href);
+  if (query) url.searchParams.set("q", query);
+  if (status) status.textContent = query ? "Searching the full Etsy catalogueâ€¦" : "Loading Etsy productsâ€¦";
+  try {
+    const data = await adminCoreJson(url.toString());
+    const productList = data.products || [];
+    renderAdminEtsyProducts(productList);
+    if (status) status.textContent = query ? `${productList.length} matching product${productList.length === 1 ? "" : "s"}.` : "Showing the latest Etsy products.";
+  } catch (error) {
+    if (status) status.textContent = error.message || "Etsy search failed.";
   }
 }
 
@@ -2725,7 +2755,7 @@ function renderAdminEtsyProducts(productList) {
 
   target.innerHTML = productList.map((product) => `
     <div class="row admin-row admin-product-row">
-      <label class="check-row"><input type="checkbox" data-admin-etsy-product-id="${escapeAttr(product.id)}"><span>${escapeSvg(product.title)}</span></label>
+      <label class="check-row"><input type="checkbox" data-admin-etsy-product-id="${escapeAttr(product.id)}"><span><strong>${escapeSvg(product.title)}</strong><small>Listing ID: ${escapeSvg(product.externalListingId || "Unknown")}</small></span></label>
       <span>${escapeSvg(product.category || "Etsy Products")}</span>
       <span>${escapeSvg(product.priceLabel || "Price on Etsy")}</span>
       <span>${escapeSvg(product.availability || "")}</span>
@@ -3275,6 +3305,11 @@ initAdminGiftCards();
 initAdminCoreControls();
 initGiveaway();
 initAdminGiveaway();
+document.querySelector("[data-admin-etsy-search]")?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  searchAdminEtsyProducts();
+});
+
 wireAdminPublicLinks();
 basketCount();
 renderCategories();

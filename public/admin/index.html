@@ -105,6 +105,13 @@
         <button class="btn btn-light" type="button" data-admin-etsy-action="test">Test connection</button>
         <button class="btn btn-secondary" type="button" data-admin-etsy-action="sync">Sync now</button>
       </div>
+      <form class="admin-filter-bar" data-admin-etsy-search>
+        <label for="admin-etsy-search">Find an Etsy product</label>
+        <input id="admin-etsy-search" type="search" name="query" placeholder="Listing ID or product title" autocomplete="off">
+        <button class="btn btn-secondary" type="submit">Search</button>
+        <button class="btn btn-light" type="button" data-admin-etsy-search-clear>Clear</button>
+        <span class="small-note" data-admin-etsy-search-status aria-live="polite"></span>
+      </form>
       <div class="dashboard-list" data-admin-etsy-products></div>
       <div class="button-row">
         <button class="btn btn-secondary" type="button" data-admin-etsy-product-action="affiliate-generate-verify">Generate &amp; Verify Etsy Affiliate Links</button>

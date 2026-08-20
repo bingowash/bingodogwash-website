@@ -1355,6 +1355,42 @@ test("Etsy admin routes allow only approved admin CORS origins", async () => {
   assert.equal(rejected.headers.get("Access-Control-Allow-Origin"), null);
 });
 
+test("admin Etsy search queries the full database read-only before applying its limit", async () => {
+  let selectSql = "";
+  let selectValues = [];
+  let mutationCalls = 0;
+  const target = {
+    id: "etsy-db-1473570446",
+    source: "etsy",
+    external_listing_id: "1473570446",
+    title: "Vintage RUSH tour concert shirt",
+    admin_status: "published",
+    public_visibility: 1
+  };
+  const db = {
+    prepare(sql) {
+      selectSql = sql;
+      const statement = {
+        bind(...values) { selectValues = values; return statement; },
+        async all() { return { results: [target] }; },
+        async run() { mutationCalls += 1; return { success: true }; }
+      };
+      return statement;
+    }
+  };
+  const response = await worker.fetch(new Request("https://bingodogwash.com/api/admin/etsy/products?q=1473570446", {
+    headers: { Authorization: "Bearer admin-token" }
+  }), { ADMIN_API_TOKEN: "admin-token", GIFT_CARD_DB: db });
+  const data = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(data.products[0].externalListingId, "1473570446");
+  assert.match(selectSql, /external_listing_id = \?/);
+  assert.match(selectSql, /LOWER\(title\) LIKE \?/);
+  assert.ok(selectSql.indexOf("external_listing_id = ?") < selectSql.indexOf("LIMIT 200"));
+  assert.equal(selectValues[0], "1473570446");
+  assert.equal(mutationCalls, 0);
+});
+
 test("Product Centre exposes an explicit validated Etsy import action on the main API origin", () => {
   const html = readFileSync(new URL("../public/admin/ai-drafts.html", import.meta.url), "utf8");
   const script = readFileSync(new URL("../public/admin/ai-drafts.js", import.meta.url), "utf8");

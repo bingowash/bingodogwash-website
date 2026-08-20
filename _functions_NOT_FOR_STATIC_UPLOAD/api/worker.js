@@ -2856,6 +2856,7 @@ async function adminEtsyDashboard(request) {
 async function adminEtsyProducts(request, url) {
   const status = cleanText(url.searchParams.get("status"), 40);
   const externalListingId = cleanText(url.searchParams.get("externalListingId"), 120);
+  const query = cleanText(url.searchParams.get("q"), 160);
   const values = [];
   let where = "WHERE source = 'etsy'";
   if (status) {
@@ -2866,13 +2867,18 @@ async function adminEtsyProducts(request, url) {
     where += " AND external_listing_id = ?";
     values.push(externalListingId);
   }
+  if (query) {
+    const titleQuery = `%${query.toLowerCase().replace(/[\\%_]/g, "\\$&")}%`;
+    where += " AND (external_listing_id = ? OR LOWER(title) LIKE ? ESCAPE '\\' OR LOWER(COALESCE(display_title, '')) LIKE ? ESCAPE '\\')";
+    values.push(query, titleQuery, titleQuery);
+  }
 
   const result = await giftCardDb()
     .prepare(`SELECT * FROM etsy_products ${where} ORDER BY updated_at DESC LIMIT 200`)
     .bind(...values)
     .all();
 
-  return corsResponse(request, { ok: true, products: (result.results || []).map(adminEtsyProductShape) });
+  return corsResponse(request, { ok: true, query, products: (result.results || []).map(adminEtsyProductShape) });
 }
 
 async function adminEtsyLogs(request) {
