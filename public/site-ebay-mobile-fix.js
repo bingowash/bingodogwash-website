@@ -180,14 +180,40 @@ const avasamStarterProducts = [
   }
 ];
 
-// Render a usable Avasam range immediately. The live supplier API can take
-// tens of seconds; it refreshes these products in the background.
+function serverRenderedAvasamProducts() {
+  const target = document.querySelector("[data-ssr-avasam-products]");
+  if (!target) return [];
+  try {
+    const serialized = (target.textContent || "[]").replace(/<!--[\s\S]*?-->/g, "").trim() || "[]";
+    const records = JSON.parse(serialized);
+    return Array.isArray(records) ? records.map(normalizeAvasamProduct).filter((product) => product.name) : [];
+  } catch { return []; }
+}
+
+const hydratedAvasamProducts = serverRenderedAvasamProducts();
+const hasServerRenderedShopProducts = Boolean(document.querySelector("[data-products] [data-ssr-product]"));
+const hasServerRenderedProductDetail = Boolean(document.querySelector("[data-product-detail] [data-ssr-product]"));
 avasamProducts = groupAvasamProductVariants(
-  avasamStarterProducts.map(normalizeAvasamProduct).filter((product) => product.name)
+  hydratedAvasamProducts.length
+    ? hydratedAvasamProducts
+    : avasamStarterProducts.map(normalizeAvasamProduct).filter((product) => product.name)
 );
 avasamState.loading = false;
+avasamState.live = Boolean(hydratedAvasamProducts.length);
+avasamState.liveConfigured = Boolean(hydratedAvasamProducts.length);
 avasamState.count = avasamProducts.length;
-avasamState.message = "Showing available products while the live Avasam catalogue refreshes.";
+avasamState.message = hydratedAvasamProducts.length ? "" : "Showing available products while the live Avasam catalogue refreshes.";
+
+function activateHydratedAvasamControls() {
+  document.querySelectorAll("button[data-awaiting-hydration]").forEach((button) => {
+    const id = button.dataset.add || button.dataset.buyNow || button.dataset.avasamBuy;
+    const product = avasamProducts.find((item) => item.id === id);
+    if (!product || /out of stock|unavailable/i.test(String(product.status || ""))) return;
+    button.disabled = false;
+    button.removeAttribute("aria-disabled");
+    button.removeAttribute("data-awaiting-hydration");
+  });
+}
 
 const shopFilters = {
   search: "",
@@ -3328,13 +3354,14 @@ document.querySelector("[data-admin-etsy-search]")?.addEventListener("submit", (
 wireAdminPublicLinks();
 basketCount();
 renderCategories();
-renderProducts();
+if (!hasServerRenderedShopProducts) renderProducts();
 renderAvasamCategories();
 renderAvasamProducts();
 initUniversalProductSearch();
 initShopFilters();
 initAvasamFilters();
-loadAvasamProducts();
+activateHydratedAvasamControls();
+if (!hydratedAvasamProducts.length) loadAvasamProducts();
 if (document.querySelector("[data-avasam-products], [data-products], [data-cart], [data-product-detail], [data-admin-product-feed], [data-account-orders]")) {
   setInterval(() => loadAvasamProducts({ silent: true }), avasamRefreshMs);
 }
@@ -3346,7 +3373,7 @@ loadEbayProducts();
 if (document.querySelector("[data-products], [data-admin-source-summary]")) {
   setInterval(() => loadEbayProducts({ silent: true }), ebayRefreshMs);
 }
-renderProductDetail();
+if (!hasServerRenderedProductDetail) renderProductDetail();
 renderCart();
 initAccount();
 renderAccount();

@@ -262,7 +262,122 @@ async function handleRequestWithAssets(request, env) {
     return response;
   }
 
-  return env.ASSETS ? env.ASSETS.fetch(request) : response;
+  if (!env.ASSETS) return response;
+
+  const storefrontRoute = publicStorefrontRoute(url.pathname);
+  const assetUrl = new URL(request.url);
+  if (storefrontRoute === "/shop") assetUrl.pathname = "/shop";
+  if (storefrontRoute === "/product") assetUrl.pathname = "/product";
+  const assetRequest = assetUrl.href === request.url ? request : new Request(assetUrl, request);
+  const assetResponse = await env.ASSETS.fetch(assetRequest);
+  return storefrontRoute && request.method === "GET"
+    ? renderStorefrontHtml(url, storefrontRoute, assetResponse)
+    : assetResponse;
+}
+
+function publicStorefrontRoute(pathname) {
+  const route = String(pathname || "").replace(/\.html$/i, "").replace(/\/$/, "") || "/";
+  return ["/", "/shop", "/product"].includes(route) ? route : "";
+}
+
+function avasamDogProductPriority(product) {
+  const text = [product?.name, product?.category, product?.description].filter(Boolean).join(" ").toLowerCase();
+  const dogMatches = text.match(/\b(dog|dogs|puppy|puppies|canine)\b/g)?.length || 0;
+  const careMatches = text.match(/\b(pet|pets|groom|grooming|lead|leash|collar|harness|bed|bedding|toy|treat|shampoo|brush|care)\w*\b/g)?.length || 0;
+  return (dogMatches * 10) + careMatches;
+}
+
+function prioritizeAvasamDogProducts(products) {
+  return products.map((product, index) => ({ product, index, priority: avasamDogProductPriority(product) }))
+    .sort((left, right) => right.priority - left.priority || left.index - right.index)
+    .map(({ product }) => product);
+}
+
+async function storefrontAvasamProducts(limit = 30) {
+  const consumerKey = envText("AVASAM_CONSUMER_KEY");
+  const secretKey = envText("AVASAM_SECRET_KEY");
+  if (!consumerKey || !secretKey) return [];
+  try {
+    const accessToken = await requestAvasamAccessToken(consumerKey, secretKey);
+    return prioritizeAvasamDogProducts(await requestAvasamProducts(accessToken, 0, cleanLimit(limit, 30, 100)));
+  } catch (error) {
+    logExternalError("Avasam storefront SSR error", { error });
+    return [];
+  }
+}
+
+function storefrontProductSlug(product) {
+  return String(product?.name || product?.sku || product?.id || "").toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80);
+}
+
+function storefrontProductKey(product) {
+  const key = String(product?.id || product?.sku || product?.name || "").toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return key.startsWith("avasam-") ? key : `avasam-${key}`;
+}
+
+function storefrontPrice(product) {
+  return new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(Number(product.price));
+}
+
+function storefrontProductAvailable(product) {
+  return Number.isFinite(Number(product?.price)) && !/out of stock|unavailable/i.test(String(product?.status || ""));
+}
+
+function storefrontProductCard(product, compact = false) {
+  const slug = storefrontProductSlug(product);
+  const key = storefrontProductKey(product);
+  const href = `/product.html?id=${encodeURIComponent(slug)}`;
+  const name = escapeHtml(product.name);
+  const image = escapeHtml(product.image || product.imageUrl || product.primaryImage || "");
+  const category = escapeHtml(product.category || "Dog essentials");
+  const available = storefrontProductAvailable(product);
+  return `<article class="${compact ? "home-product-card" : "card product-card product-card-direct"}" data-ssr-product="${escapeHtml(slug)}" data-product-key="${escapeHtml(key)}">
+    <a class="${compact ? "home-product-image" : "product-image"}" href="${href}"><img src="${image}" width="400" height="400" loading="lazy" decoding="async" alt="${name}"></a>
+    <div><span>${compact ? "Bingo shop" : category}</span><h3><a href="${href}">${name}</a></h3><p class="price">${storefrontPrice(product)}</p><a class="product-link" href="${href}">View product</a></div>
+    ${compact ? "" : (available ? `<button class="btn btn-primary" type="button" data-avasam-buy="${escapeHtml(key)}" data-awaiting-hydration="true" disabled aria-disabled="true">Buy</button>` : `<button class="btn btn-primary" type="button" disabled aria-disabled="true">Unavailable</button>`)}
+  </article>`;
+}
+
+function replaceStorefrontMarker(html, marker, content) {
+  const start = `<!-- ${marker}_START -->`;
+  const end = `<!-- ${marker}_END -->`;
+  const startIndex = html.indexOf(start);
+  const endIndex = html.indexOf(end);
+  if (startIndex < 0 || endIndex < startIndex) return html;
+  return `${html.slice(0, startIndex + start.length)}${content}${html.slice(endIndex)}`;
+}
+
+function storefrontHydrationJson(products) {
+  return JSON.stringify(products).replace(/</g, "\\u003c").replace(/>/g, "\\u003e").replace(/&/g, "\\u0026");
+}
+
+function injectStorefrontProducts(html, route, products, requestedId = "") {
+  if (!products.length) return html;
+  const prioritized = prioritizeAvasamDogProducts(products);
+  let rendered = replaceStorefrontMarker(html, "SSR_AVASAM_DATA", storefrontHydrationJson(prioritized));
+  if (route === "/") return replaceStorefrontMarker(rendered, "SSR_HOME_PRODUCTS", prioritized.slice(0, 3).map((product) => storefrontProductCard(product, true)).join(""));
+  if (route === "/shop") return replaceStorefrontMarker(rendered, "SSR_SHOP_PRODUCTS", prioritized.map((product) => storefrontProductCard(product)).join(""));
+  const product = prioritized.find((item) => storefrontProductSlug(item) === requestedId) || prioritized[0];
+  const available = storefrontProductAvailable(product);
+  const detail = `<div class="card"><div class="product-image product-image-large"><img src="${escapeHtml(product.image || product.imageUrl || product.primaryImage || "")}" width="800" height="800" alt="${escapeHtml(product.name)}"></div></div><div class="card" data-ssr-product="${escapeHtml(storefrontProductSlug(product))}"><h1>${escapeHtml(product.name)}</h1><p class="price">${storefrontPrice(product)}</p><p>${escapeHtml(product.description || product.category || "")}</p><div class="button-row">${available ? `<button class="btn btn-primary" type="button" data-add="${escapeHtml(storefrontProductKey(product))}" data-awaiting-hydration="true" disabled aria-disabled="true">Add to Cart</button><button class="btn btn-secondary" type="button" data-buy-now="${escapeHtml(storefrontProductKey(product))}" data-awaiting-hydration="true" disabled aria-disabled="true">Buy Now</button>` : `<button class="btn btn-primary" type="button" disabled aria-disabled="true">Unavailable</button>`}</div></div>`;
+  rendered = replaceStorefrontMarker(rendered, "SSR_PRODUCT_DETAIL", detail);
+  rendered = rendered.replace("<title>Product Detail | Bingo Dog Wash Shop</title>", `<title>${escapeHtml(product.name)} | Bingo Dog Wash Shop</title>`);
+  return rendered.replace('href="https://bingodogwash.com/product.html"', `href="https://bingodogwash.com/product.html?id=${encodeURIComponent(storefrontProductSlug(product))}"`);
+}
+
+async function renderStorefrontHtml(url, route, assetResponse) {
+  if (!assetResponse.ok || !String(assetResponse.headers.get("Content-Type") || "").includes("text/html")) return assetResponse;
+  const products = await storefrontAvasamProducts();
+  if (!products.length) return assetResponse;
+  const html = injectStorefrontProducts(await assetResponse.text(), route, products, url.searchParams.get("id") || "");
+  const headers = new Headers(assetResponse.headers);
+  headers.delete("Content-Length");
+  headers.delete("ETag");
+  headers.set("Cache-Control", "public, max-age=0, must-revalidate");
+  headers.set("X-Bingo-Catalogue-Source", "avasam-live");
+  return new Response(html, { status: assetResponse.status, statusText: assetResponse.statusText, headers });
 }
 
 async function enforcePublicPagePolicy(request, url) {
@@ -5588,4 +5703,11 @@ export const etsyTestHelpers = {
   etsyListingReference,
   fetchExactEtsyListing: (listingId, env) => requestEnvStorage.run(env || {}, () => fetchExactEtsyListing(listingId)),
   affiliateProductMatch,
+};
+
+export const storefrontSsrTestHelpers = {
+  injectStorefrontProducts,
+  prioritizeAvasamDogProducts,
+  publicStorefrontRoute,
+  storefrontProductSlug,
 };
