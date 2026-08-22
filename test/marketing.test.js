@@ -55,6 +55,31 @@ test("Marketing Admin exposes separate primary and secondary Facebook controls a
   assert.match(migration, /page_access_token TEXT NOT NULL/);
 });
 
+test("Facebook Primary collaboration follow-up is additive and local-only", () => {
+  const frontend = readFileSync(new URL("../public/admin/marketing.js", import.meta.url), "utf8");
+  const migration = readFileSync(new URL("../migrations/0025_facebook_collaboration_followups.sql", import.meta.url), "utf8");
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS marketing_facebook_collaboration_followups/);
+  assert.match(migration, /platform_result_id TEXT PRIMARY KEY/);
+  assert.match(migration, /CHECK \(collaboration_state IN \('pending', 'completed'\)\)/);
+  assert.doesNotMatch(migration, /\b(?:DELETE|DROP|ALTER)\b/i);
+  assert.match(frontend, /Mark completed/);
+  assert.match(frontend, /Reset pending/);
+  assert.match(frontend, /\/facebook-collaboration/);
+});
+
+test("Facebook history defaults successful Primary follow-up to pending and failures to not applicable", () => {
+  const primarySuccess = marketingTestHelpers.facebookHistoryDestination({ id: "r1", platform: "facebook:1264938680034651", status: "success", external_post_id: "photo-1", metadata: JSON.stringify({ connectionRole: "facebook_primary", pageId: "1264938680034651", pageName: "Bingo Dog Wash" }) });
+  const primaryFailure = marketingTestHelpers.facebookHistoryDestination({ id: "r2", platform: "facebook:1264938680034651", status: "failed", metadata: "{}" });
+  const secondarySuccess = marketingTestHelpers.facebookHistoryDestination({ id: "r3", platform: "facebook_secondary:2", status: "success", metadata: JSON.stringify({ connectionRole: "facebook_secondary", pageId: "2" }) });
+  const completed = marketingTestHelpers.facebookHistoryDestination({ id: "r4", platform: "facebook:1264938680034651", status: "success", metadata: "{}", collaboration_state: "completed", collaboration_completed_at: "2026-08-22T12:00:00.000Z" });
+  assert.equal(primarySuccess.collaborationState, "pending");
+  assert.equal(primarySuccess.postUrl, "");
+  assert.equal(primaryFailure.collaborationState, "not_applicable");
+  assert.equal(secondarySuccess.collaborationState, "not_applicable");
+  assert.equal(completed.collaborationState, "completed");
+  assert.equal(completed.collaborationCompletedAt, "2026-08-22T12:00:00.000Z");
+});
+
 test("OAuth start reuses the protected route and returns a Facebook authorization URL", async () => {
   let storedState = "";
   const db = { prepare: () => ({ bind: (key) => ({ run: async () => { storedState = key; return { success: true }; } }) }) };
@@ -626,6 +651,87 @@ test("marketing admin API rejects an invalid admin token", async () => {
   );
   assert.equal(response.status, 401);
   assert.equal((await response.json()).error, "Admin authorisation required.");
+});
+
+test("Facebook collaboration update requires admin authentication", async () => {
+  const response = await handleMarketingRequest(new Request("https://bingodogwash.com/api/admin/marketing/facebook-collaboration", {
+    method: "POST",
+    body: JSON.stringify({ platformResultId: "result-1", state: "completed" }),
+  }), { ADMIN_API_TOKEN: "secret", GIFT_CARD_DB: {} });
+  assert.equal(response.status, 401);
+});
+
+test("Facebook collaboration update marks only an owned successful Primary result", async () => {
+  const writes = [];
+  const database = {
+    prepare(sql) {
+      return {
+        bind(...values) {
+          return {
+            first: async () => ({
+              id: "result-1",
+              post_id: "post-1",
+              platform: "facebook:1264938680034651",
+              status: "success",
+              metadata: JSON.stringify({ connectionRole: "facebook_primary", pageId: "1264938680034651", pageName: "Bingo Dog Wash" }),
+            }),
+            run: async () => { writes.push({ sql, values }); return { success: true }; },
+          };
+        },
+      };
+    },
+  };
+  const originalFetch = globalThis.fetch;
+  let metaRequests = 0;
+  globalThis.fetch = async () => { metaRequests += 1; throw new Error("unexpected network request"); };
+  try {
+    const response = await handleMarketingRequest(new Request("https://bingodogwash.com/api/admin/marketing/facebook-collaboration", {
+      method: "POST",
+      headers: { Authorization: "Bearer admin-token", "Content-Type": "application/json" },
+      body: JSON.stringify({ platformResultId: "result-1", state: "completed" }),
+    }), { ADMIN_API_TOKEN: "admin-token", GIFT_CARD_DB: database, META_PAGE_ID: "1264938680034651", META_PAGE_ACCESS_TOKEN: "must-not-appear" });
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.ok, true);
+    assert.equal(body.collaborationState, "completed");
+    assert.equal(JSON.stringify(body).includes("must-not-appear"), false);
+    assert.equal(metaRequests, 0);
+    assert.equal(writes.length, 1);
+    assert.match(writes[0].sql, /marketing_facebook_collaboration_followups/);
+    assert.deepEqual(writes[0].values.slice(0, 3), ["result-1", "post-1", "completed"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Facebook collaboration update supports resetting a successful Primary result to pending", async () => {
+  let values = [];
+  const database = { prepare: (sql) => ({ bind: (...bound) => ({
+    first: async () => ({ id: "result-1", post_id: "post-1", platform: "facebook:1264938680034651", status: "success", metadata: "{}" }),
+    run: async () => { values = bound; return { success: true }; },
+  }) }) };
+  const response = await handleMarketingRequest(new Request("https://bingodogwash.com/api/admin/marketing/facebook-collaboration", {
+    method: "POST", headers: { Authorization: "Bearer admin-token", "Content-Type": "application/json" },
+    body: JSON.stringify({ platformResultId: "result-1", state: "pending" }),
+  }), { ADMIN_API_TOKEN: "admin-token", GIFT_CARD_DB: database, META_PAGE_ID: "1264938680034651" });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).collaborationState, "pending");
+  assert.equal(values[2], "pending");
+  assert.equal(values[3], null);
+});
+
+test("Facebook collaboration update fails closed for unknown, failed, Secondary, and unconfigured Page records", async () => {
+  async function requestFor(record, env = {}) {
+    const database = { prepare: () => ({ bind: () => ({ first: async () => record, run: async () => assert.fail("unexpected write") }) }) };
+    return handleMarketingRequest(new Request("https://bingodogwash.com/api/admin/marketing/facebook-collaboration", {
+      method: "POST", headers: { Authorization: "Bearer admin-token", "Content-Type": "application/json" },
+      body: JSON.stringify({ platformResultId: "result-1", state: "completed" }),
+    }), { ADMIN_API_TOKEN: "admin-token", GIFT_CARD_DB: database, META_PAGE_ID: "1264938680034651", ...env });
+  }
+  assert.equal((await requestFor(null)).status, 404);
+  assert.equal((await requestFor({ id: "result-1", post_id: "post-1", platform: "facebook:1264938680034651", status: "failed", metadata: "{}" })).status, 409);
+  assert.equal((await requestFor({ id: "result-1", post_id: "post-1", platform: "facebook_secondary:2", status: "success", metadata: JSON.stringify({ connectionRole: "facebook_secondary", pageId: "2" }) })).status, 404);
+  assert.equal((await requestFor({ id: "result-1", post_id: "post-1", platform: "facebook:999", status: "success", metadata: "{}" })).status, 404);
 });
 
 test("marketing admin API permits authenticated read-only status", async () => {
