@@ -56,6 +56,9 @@ export async function handleMarketingRequest(request, env, url = new URL(request
     return json(postingEndpointResponse(result, configuredFacebookPageIds(env)));
   }
   if (url.pathname === `${ADMIN_PATH}/oauth/start`) return oauthStart(request, env, url);
+  if (url.pathname === `${ADMIN_PATH}/oauth/secondary/start`) return oauthStart(request, env, url, "secondary");
+  if (url.pathname === `${ADMIN_PATH}/oauth/secondary/candidates`) return secondaryOAuthCandidates(request, env);
+  if (url.pathname === `${ADMIN_PATH}/oauth/secondary/select`) return selectSecondaryFacebookPage(request, env);
   if (url.pathname === `${ADMIN_PATH}/preflight`) return preflight(env);
   if (url.pathname === `${ADMIN_PATH}/diagnostics`) return json(await metaDiagnostics(env));
   if (url.pathname === `${ADMIN_PATH}/pause`) {
@@ -116,7 +119,8 @@ export async function runMarketingAutomation(env, options = {}) {
 
   const platforms = [];
   const facebookPageIds = configuredFacebookPageIds(env);
-  if (facebookPageIds.length) platforms.push("facebook");
+  const secondaryFacebookConfigured = Boolean(await storedSecondaryFacebookConnection(db));
+  if (facebookPageIds.length || secondaryFacebookConfigured) platforms.push("facebook");
   if (configured(env.META_INSTAGRAM_USER_ID)) platforms.push("instagram");
   if (!platforms.length) {
     await finishPost(db, postId, "failed", "Meta credentials are not configured.", {});
@@ -128,17 +132,9 @@ export async function runMarketingAutomation(env, options = {}) {
     if (platform === "facebook") {
       const facebookContext = await resolveFacebookPublishingContext(env, facebookPageIds);
       const connection = facebookContext.connection;
-      if (!connection.ok) {
-        const pages = {};
-        for (const pageId of facebookPageIds) {
-          pages[pageId] = { ok: false, error: connection.error, attempts: 0 };
-          await savePlatformResult(db, postId, `facebook:${pageId}`, "failed", "", 0, connection.error);
-          console.error(JSON.stringify({ event: "facebook_page_publish_result", pageId, success: false, facebookPostId: "", error: connection.error, timestamp: new Date().toISOString() }));
-        }
-        results.facebook = { ok: false, status: "failed", pages, error: connection.error, attempts: 0 };
-        continue;
-      }
-      const pageAccess = facebookContext.pageAccess;
+      const pageAccess = connection.ok ? facebookContext.pageAccess.map((entry) => ({ ...entry, connectionRole: "facebook_primary" })) : facebookPageIds.map((pageId) => ({ pageId, ok: false, error: connection.error, connectionRole: "facebook_primary", tokenSource: connection.source || "none" }));
+      const secondary = await secondaryFacebookPublishingEntry(env);
+      if (secondary) pageAccess.push(secondary);
       results.facebook = await publishFacebookPages(env, db, postId, pageAccess, product, platformCaption(caption, trackedUrl, "facebook"), platformCampaignUrl(trackedUrl, "facebook"), connection.source);
       continue;
     }
@@ -205,15 +201,16 @@ export async function distributePreparedProduct(env, input) {
   if (channels.includes("facebook")) {
     const configuredPages = configuredFacebookPageIds(env);
     const requestedPages = input.pageIds?.length ? input.pageIds.filter((id) => configuredPages.includes(id)) : configuredPages;
-    if (!requestedPages.length) {
+    const secondaryConfigured = Boolean(await storedSecondaryFacebookConnection(db));
+    if (!requestedPages.length && !secondaryConfigured) {
       results.facebook = { ok: false, status: "failed", error: "No configured Facebook Page was selected.", attempts: 0 };
       await savePlatformResult(db, postId, "facebook", "failed", "", 0, results.facebook.error);
     } else {
       const context = await resolveFacebookPublishingContext(env, requestedPages);
-      results.facebook = context.connection.ok
-        ? await publishFacebookPages(env, db, postId, context.pageAccess, product, input.content.facebook || fallbackCaption, platformCampaignUrl(trackedUrl, "facebook"), context.connection.source)
-        : { ok: false, status: "failed", error: context.connection.error, attempts: 0 };
-      if (!context.connection.ok) await savePlatformResult(db, postId, "facebook", "failed", "", 0, context.connection.error);
+      const pageAccess = context.connection.ok ? context.pageAccess.map((entry) => ({ ...entry, connectionRole: "facebook_primary" })) : requestedPages.map((pageId) => ({ pageId, ok: false, error: context.connection.error, connectionRole: "facebook_primary", tokenSource: context.connection.source || "none" }));
+      const secondary = await secondaryFacebookPublishingEntry(env);
+      if (secondary && (!input.pageIds?.length || input.pageIds.includes(secondary.pageId))) pageAccess.push(secondary);
+      results.facebook = await publishFacebookPages(env, db, postId, pageAccess, product, input.content.facebook || fallbackCaption, platformCampaignUrl(trackedUrl, "facebook"), context.connection.source);
     }
   }
   if (channels.includes("instagram")) {
@@ -262,7 +259,7 @@ function successfulScheduledProductSql(productIdExpression = "etsy_products.id")
           SELECT 1 FROM marketing_platform_results mpr
           WHERE mpr.post_id = mp.id
             AND mpr.status = 'success'
-            AND (mpr.platform = 'instagram' OR mpr.platform = 'facebook' OR mpr.platform LIKE 'facebook:%')
+            AND (mpr.platform = 'instagram' OR mpr.platform = 'facebook' OR mpr.platform LIKE 'facebook:%' OR mpr.platform LIKE 'facebook_secondary:%')
         )
       )`;
 }
@@ -343,7 +340,7 @@ function etsyMarketingProductSelectionSql({ excludeCooldown = false, excludeMost
               SELECT 1 FROM marketing_platform_results recent_result
               WHERE recent_result.post_id = recent.id
                 AND recent_result.status = 'success'
-                AND (recent_result.platform = 'instagram' OR recent_result.platform = 'facebook' OR recent_result.platform LIKE 'facebook:%')
+                AND (recent_result.platform = 'instagram' OR recent_result.platform = 'facebook' OR recent_result.platform LIKE 'facebook:%' OR recent_result.platform LIKE 'facebook_secondary:%')
             )
           )
         ORDER BY recent.created_at DESC LIMIT 1
@@ -498,53 +495,97 @@ async function resolveMetaConnection(env, platform, requiredSource = "") {
 }
 
 async function resolveFacebookPublishingContext(env, pageIds) {
-  const singlePageMode = pageIds.length === 1;
-  if (singlePageMode) {
-    const pageCredential = await resolveMetaConnection(env, "facebook", "secret");
-    const pageCredentialType = String(pageCredential.debug?.type || "").toUpperCase();
-    if (pageCredential.ok && pageCredentialType === "PAGE") {
-      const resolved = await resolveFacebookPageTokenAccess(pageCredential.token, pageIds, "secret");
-      return { connection: pageCredential, ...resolved, userCredentialSource: "none", d1CredentialType: "not-required", singlePageMode: true, statusMessage: `Single-Page mode active — Facebook Page ${pageIds[0]}` };
-    }
-  }
-
   const stored = await resolveMetaConnection(env, "facebook", "d1");
   const storedType = String(stored.debug?.type || "").toUpperCase();
   if (stored.ok && storedType === "USER") {
-    const resolved = await resolveFacebookPageAccess(stored.token, pageIds, "d1", true);
-    return { connection: stored, ...resolved, userCredentialSource: "d1", d1CredentialType: storedType, singlePageMode, statusMessage: singlePageMode ? `Single-Page mode active — Facebook Page ${pageIds[0]}` : "Multi-Page mode active" };
+    return resolveFacebookUserPublishingContext(env, pageIds, stored, "d1/meta_oauth", storedType);
   }
 
-  // A Page token stored by older deployments is not an OAuth user credential. Do not
-  // use it for discovery and never reuse it across configured Pages.
-  const fallback = await resolveMetaConnection(env, "facebook", "secret");
-  if (!fallback.ok) return { connection: stored.ok ? stored : fallback, pageAccess: [], accountsRequest: { ok: false, attempted: false }, userCredentialSource: "none", d1CredentialType: storedType || "unknown", singlePageMode, statusMessage: singlePageMode ? `Single-Page mode active — Facebook Page ${pageIds[0]}` : "Multi-Page mode active" };
-  const fallbackType = String(fallback.debug?.type || "").toUpperCase();
-  if (fallbackType === "USER") {
-    const resolved = await resolveFacebookPageAccess(fallback.token, pageIds, "secret", true);
-    return { connection: fallback, ...resolved, userCredentialSource: "secret", d1CredentialType: storedType || "none", singlePageMode, statusMessage: singlePageMode ? `Single-Page mode active — Facebook Page ${pageIds[0]}` : "Multi-Page mode active" };
+  const secret = await resolveMetaConnection(env, "facebook", "secret");
+  const secretType = String(secret.debug?.type || "").toUpperCase();
+  if (secret.ok && secretType === "USER") {
+    return resolveFacebookUserPublishingContext(env, pageIds, secret, "secret", storedType || "none");
   }
-  const resolved = await resolveFacebookPageTokenAccess(fallback.token, pageIds, "secret");
-  return { connection: fallback, ...resolved, userCredentialSource: "none", d1CredentialType: storedType || "none", singlePageMode, statusMessage: singlePageMode ? `Single-Page mode active — Facebook Page ${pageIds[0]}` : "Multi-Page mode active" };
+
+  // PAGE tokens are fallback-only: they represent exactly one Page and must never
+  // be used for /me/accounts discovery or reused across configured Pages.
+  const fallback = secret.ok && secretType === "PAGE"
+    ? { credential: secret, source: "secret" }
+    : stored.ok && storedType === "PAGE"
+      ? { credential: stored, source: "d1" }
+      : null;
+  const singlePageMode = pageIds.length === 1;
+  if (!fallback) return { connection: stored.ok ? stored : secret, pageAccess: [], accountsRequest: { ok: false, attempted: false }, userCredentialSource: "none", d1CredentialType: storedType || "unknown", singlePageMode, multiPageModeAvailable: false, fallbackPageTokenUsed: false, statusMessage: singlePageMode ? `Single-Page mode unavailable — Facebook Page ${pageIds[0]}` : "Multi-Page mode unavailable" };
+  const resolved = await resolveFacebookPageTokenAccess(fallback.credential.token, pageIds, fallback.source);
+  return { connection: fallback.credential, ...resolved, userCredentialSource: "none", d1CredentialType: storedType || "none", singlePageMode, multiPageModeAvailable: false, fallbackPageTokenUsed: true, statusMessage: singlePageMode ? `Single-Page fallback active — Facebook Page ${pageIds[0]}` : "Page-token fallback active" };
+}
+
+async function resolveFacebookUserPublishingContext(env, pageIds, userCredential, userCredentialSource, d1CredentialType) {
+  const discovered = await resolveFacebookPageAccess(userCredential.token, pageIds, userCredentialSource, true);
+  const fallbackSources = userCredential.source === "d1" ? ["secret"] : ["d1"];
+  let fallbackPageTokenUsed = false;
+  let fallbackPageTokenSource = "none";
+  let pageAccess = discovered.pageAccess;
+
+  if (pageAccess.some((entry) => !entry.ok)) {
+    for (const source of fallbackSources) {
+      const candidate = await resolveMetaConnection(env, "facebook", source);
+      if (!candidate.ok || String(candidate.debug?.type || "").toUpperCase() !== "PAGE") continue;
+      const fallback = await resolveFacebookPageTokenAccess(candidate.token, pageIds, source);
+      const fallbackById = new Map(fallback.pageAccess.filter((entry) => entry.ok).map((entry) => [entry.pageId, entry]));
+      pageAccess = pageAccess.map((entry) => entry.ok || !fallbackById.has(entry.pageId) ? entry : fallbackById.get(entry.pageId));
+      fallbackPageTokenUsed = fallbackById.size > 0;
+      fallbackPageTokenSource = fallbackPageTokenUsed ? source : "none";
+      if (fallbackPageTokenUsed) break;
+    }
+  }
+
+  return {
+    connection: userCredential,
+    pageAccess,
+    accountsRequest: discovered.accountsRequest,
+    userCredentialSource,
+    d1CredentialType,
+    singlePageMode: false,
+    multiPageModeAvailable: true,
+    fallbackPageTokenUsed,
+    fallbackPageTokenSource,
+    statusMessage: fallbackPageTokenUsed ? "User credential discovery active with Page-token fallback" : "User credential discovery active",
+  };
 }
 
 async function resolveFacebookPageAccess(token, pageIds, tokenSource = "unknown", includeContext = false) {
   const accessible = new Map();
   let accountsRequest;
   try {
-    const accounts = await graphGet(FACEBOOK_GRAPH_ORIGIN, `${GRAPH_VERSION}/me/accounts`, { fields: "id,name,access_token", limit: "100" }, token, "facebook_accounts", { tokenSource });
+    const accounts = await graphGet(FACEBOOK_GRAPH_ORIGIN, `${GRAPH_VERSION}/me/accounts`, { fields: "id,name,access_token,tasks", limit: "100" }, token, "facebook_accounts", { tokenSource });
+    const returnedPages = [];
     for (const page of accounts?.data || []) {
       const checked = metaAccessToken(page?.access_token);
-      if (checked.ok) accessible.set(String(page.id), checked.token);
+      const tasks = Array.isArray(page?.tasks) ? page.tasks.map((task) => clean(task, 80)).filter(Boolean) : [];
+      if (checked.ok) accessible.set(String(page.id), { token: checked.token, name: clean(page?.name, 160), tasks });
+      returnedPages.push({
+        id: String(page?.id || ""),
+        name: clean(page?.name, 160),
+        pageAccessTokenAvailable: checked.ok,
+        tasks,
+      });
     }
-    accountsRequest = { ok: true, attempted: true, returnedPageCount: accessible.size };
+    accountsRequest = {
+      ok: true,
+      attempted: true,
+      returnedPageCount: returnedPages.length,
+      returnedPageIds: returnedPages.map((page) => page.id).filter(Boolean),
+      returnedPageNames: returnedPages.map((page) => page.name).filter(Boolean),
+      pages: returnedPages,
+    };
   } catch (error) {
     accountsRequest = { ok: false, attempted: true, error: safeMetaError(error), diagnostic: error?.diagnostic || null };
     console.error(JSON.stringify({ event: "meta_page_discovery_failed", operation: "facebook_accounts", tokenSource, error: accountsRequest.error, diagnostic: accountsRequest.diagnostic }));
   }
 
   const pageAccess = pageIds.map((pageId) => accessible.has(pageId)
-    ? { ok: true, pageId, token: accessible.get(pageId), returnedByAccounts: true, tokenSource: `${tokenSource}:me/accounts` }
+    ? { ok: true, pageId, token: accessible.get(pageId).token, name: accessible.get(pageId).name, tasks: accessible.get(pageId).tasks, pageAccessTokenAvailable: true, returnedByAccounts: true, tokenSource: `${tokenSource}:me/accounts` }
     : { ok: false, pageId, returnedByAccounts: false, tokenSource: "none", classification: "not_managed_page_or_profile", possibleProfileId: true, error: "Configured ID was not returned by /me/accounts; it may be a Facebook profile ID or a Page this user does not manage.", diagnostic: accountsRequest?.diagnostic || null });
   return includeContext ? { pageAccess, accountsRequest } : pageAccess;
 }
@@ -598,12 +639,12 @@ async function publishWithRetry(env, db, postId, platform, product, caption, url
       const externalPostId = platform.startsWith("facebook")
         ? await publishFacebook(env, product.image, caption, url, token)
         : await publishInstagram(env, product.image, caption, token);
-      await savePlatformResult(db, postId, platform, "success", externalPostId, attempt, "");
+      await savePlatformResult(db, postId, platform, "success", externalPostId, attempt, "", env.META_DESTINATION_METADATA);
       return { ok: true, id: externalPostId, attempts: attempt };
     } catch (error) {
       lastError = clean(error?.message || error, 500);
       const retryable = error?.retryable !== false;
-      await savePlatformResult(db, postId, platform, !retryable || attempt === MAX_RETRIES ? "failed" : "retrying", "", attempt, lastError);
+      await savePlatformResult(db, postId, platform, !retryable || attempt === MAX_RETRIES ? "failed" : "retrying", "", attempt, lastError, env.META_DESTINATION_METADATA);
       if (!retryable) return { ok: false, error: lastError, attempts: attempt, diagnostic: error?.diagnostic || null };
     }
   }
@@ -614,15 +655,19 @@ async function publishFacebookPages(env, db, postId, pageAccess, product, captio
   const pages = {};
   for (const entry of pageAccess) {
     const { pageId } = entry;
+    const connectionRole = entry.connectionRole === "facebook_secondary" ? "facebook_secondary" : "facebook_primary";
+    const platformKey = connectionRole === "facebook_secondary" ? `facebook_secondary:${pageId}` : `facebook:${pageId}`;
+    const metadata = { connectionRole, pageId, pageName: clean(entry.name, 200) };
     if (!entry.ok) {
       pages[pageId] = { ok: false, error: entry.error, attempts: 0, diagnostic: entry.diagnostic, tokenSource: entry.tokenSource || "none", returnedByAccounts: entry.returnedByAccounts === true, classification: entry.classification || "" };
-      await savePlatformResult(db, postId, `facebook:${pageId}`, "failed", "", 0, entry.error);
+      await savePlatformResult(db, postId, platformKey, "failed", "", 0, entry.error, metadata);
     } else {
-      pages[pageId] = { ...await publishWithRetry({ ...env, META_PAGE_ID: pageId, META_TOKEN_SOURCE: entry.tokenSource || tokenSource }, db, postId, `facebook:${pageId}`, product, caption, url, entry.token), tokenSource: entry.tokenSource || tokenSource, returnedByAccounts: entry.returnedByAccounts === true };
+      pages[pageId] = { ...await publishWithRetry({ ...env, META_PAGE_ID: pageId, META_TOKEN_SOURCE: entry.tokenSource || tokenSource, META_DESTINATION_METADATA: metadata }, db, postId, platformKey, product, caption, url, entry.token), tokenSource: entry.tokenSource || tokenSource, returnedByAccounts: entry.returnedByAccounts === true, connectionRole };
     }
     console.error(JSON.stringify({
       event: "facebook_page_publish_result",
       pageId,
+      connectionRole,
       success: pages[pageId].ok,
       facebookPostId: pages[pageId].id || "",
       error: pages[pageId].error || "",
@@ -717,8 +762,11 @@ async function preflight(env) {
   const settings = await getSettings(env);
   if (settings?.enabled) return json({ ok: false, error: "Pause automation before running preflight.", paused: false }, 409);
   const instagram = await instagramPreflight(env);
-  const facebook = await facebookPreflight(env);
-  return json({ ok: instagram.ok && facebook.ok, paused: true, publishingAttempted: false, instagram, facebook }, instagram.ok && facebook.ok ? 200 : 422);
+  const facebookPrimary = await facebookPreflight(env);
+  const facebookSecondary = await secondaryFacebookPreflight(env);
+  const secondaryHealthy = !facebookSecondary.connected || facebookSecondary.ok === true;
+  const ok = instagram.ok && facebookPrimary.ok && secondaryHealthy;
+  return json({ ok, paused: true, publishingAttempted: false, instagram, facebook: facebookPrimary, facebookPrimary, facebookSecondary }, ok ? 200 : 422);
 }
 
 async function instagramPreflight(env) {
@@ -848,6 +896,9 @@ async function facebookPreflight(env) {
   const pageAccess = facebookContext.pageAccess;
   const pages = Object.fromEntries(pageAccess.map((entry) => [entry.pageId, {
     ok: entry.ok,
+    name: entry.name || "",
+    tasks: Array.isArray(entry.tasks) ? entry.tasks : [],
+    pageAccessTokenAvailable: entry.pageAccessTokenAvailable === true,
     returnedByAccounts: entry.returnedByAccounts === true,
     tokenSource: entry.tokenSource || "none",
     classification: entry.classification || "",
@@ -856,7 +907,7 @@ async function facebookPreflight(env) {
     diagnostic: entry.diagnostic || null,
   }]));
   const accessiblePageIds = pageAccess.filter((entry) => entry.ok).map((entry) => entry.pageId);
-  return { ok: accessiblePageIds.length > 0, pageId, pageIds, accessiblePageIds, pages, permissions, requiredPermissions, tokenStatus, tokenSource: connection.source, userCredentialSource: facebookContext.userCredentialSource, accountsRequest: facebookContext.accountsRequest, d1CredentialType: facebookContext.d1CredentialType, singlePageMode: facebookContext.singlePageMode === true, statusMessage: facebookContext.statusMessage || "", api: "Facebook Pages", id: accessiblePageIds[0] || "", error: accessiblePageIds.length ? "" : "No configured Facebook Pages are accessible with the selected credential." };
+  return { ok: accessiblePageIds.length > 0, pageId, pageIds, accessiblePageIds, pages, permissions, requiredPermissions, tokenStatus, tokenSource: connection.source, userCredentialSource: facebookContext.userCredentialSource, accountsRequest: facebookContext.accountsRequest, d1CredentialType: facebookContext.d1CredentialType, singlePageMode: facebookContext.singlePageMode === true, multiPageModeAvailable: facebookContext.multiPageModeAvailable === true, fallbackPageTokenUsed: facebookContext.fallbackPageTokenUsed === true, fallbackPageTokenSource: facebookContext.fallbackPageTokenSource || "none", statusMessage: facebookContext.statusMessage || "", api: "Facebook Pages", id: accessiblePageIds[0] || "", error: accessiblePageIds.length ? "" : "No configured Facebook Pages are accessible with the selected credential." };
 }
 
 async function metaDiagnostics(env) {
@@ -875,11 +926,14 @@ async function metaDiagnostics(env) {
       tokenValidated: facebook.ok,
       tokenSource: facebook.source || "none",
       singlePageMode: facebookContext.singlePageMode === true,
+      multiPageModeAvailable: facebookContext.multiPageModeAvailable === true,
+      fallbackPageTokenUsed: facebookContext.fallbackPageTokenUsed === true,
+      fallbackPageTokenSource: facebookContext.fallbackPageTokenSource || "none",
       statusMessage: facebookContext.statusMessage || "",
       userCredentialSource: facebookContext.userCredentialSource || "none",
       d1CredentialType: facebookContext.d1CredentialType || "unknown",
       accountsRequest: facebookContext.accountsRequest || { ok: false, attempted: false },
-      pages: Object.fromEntries((facebookContext.pageAccess || []).map((entry) => [entry.pageId, { ok: entry.ok, returnedByAccounts: entry.returnedByAccounts === true, tokenSource: entry.tokenSource || "none", classification: entry.classification || "", possibleProfileId: entry.possibleProfileId === true, error: entry.error || "" }])),
+      pages: Object.fromEntries((facebookContext.pageAccess || []).map((entry) => [entry.pageId, { ok: entry.ok, name: entry.name || "", tasks: Array.isArray(entry.tasks) ? entry.tasks : [], pageAccessTokenAvailable: entry.pageAccessTokenAvailable === true, returnedByAccounts: entry.returnedByAccounts === true, tokenSource: entry.tokenSource || "none", classification: entry.classification || "", possibleProfileId: entry.possibleProfileId === true, error: entry.error || "" }])),
       validationError: facebook.ok ? "" : facebook.error,
       diagnostic: facebook.diagnostic || null,
       debug: facebook.ok ? { tokenStatus: { valid: facebook.debug?.is_valid === true }, appId: clean(facebook.debug?.app_id, 80), type: clean(facebook.debug?.type, 40), expiresAt: Number.isFinite(facebook.debug?.expires_at) ? new Date(facebook.debug.expires_at * 1000).toISOString() : "" } : undefined,
@@ -897,12 +951,121 @@ async function metaDiagnostics(env) {
   };
 }
 
+async function storedSecondaryFacebookConnection(db) {
+  if (!db) return null;
+  const row = await db.prepare("SELECT * FROM marketing_facebook_connections WHERE role = 'facebook_secondary' LIMIT 1").first();
+  return row?.role === "facebook_secondary" && row.page_id && row.page_access_token ? row : null;
+}
+
+function secondaryConnectionPublic(row, extra = {}) {
+  if (!row) return { connected: false, role: "facebook_secondary", pageId: "", pageName: "", tokenPresent: false, ...extra };
+  let tasks = [];
+  try { tasks = JSON.parse(row.tasks || "[]"); } catch { tasks = []; }
+  return {
+    connected: true,
+    role: "facebook_secondary",
+    pageId: String(row.page_id || ""),
+    pageName: clean(row.page_name, 200),
+    tokenPresent: configured(row.page_access_token),
+    tokenType: clean(row.token_type, 40) || "PAGE",
+    tokenExpiresAt: row.token_expires_at || "",
+    tasks,
+    latestHealthStatus: clean(row.latest_health_status, 40) || "unknown",
+    latestError: safeStoredMetaError(row.latest_error),
+    ...extra,
+  };
+}
+
+async function secondaryOAuthCandidates(request, env) {
+  const input = await readJson(request);
+  const flowId = clean(input?.flowId, 100);
+  if (!flowId) return json({ ok: false, error: "Secondary Facebook selection has expired. Start again." }, 400);
+  const rows = await env.GIFT_CARD_DB.prepare("SELECT page_id, page_name, tasks, expires_at FROM marketing_facebook_oauth_pages WHERE flow_id = ? AND expires_at > ? ORDER BY page_name, page_id").bind(flowId, new Date().toISOString()).all();
+  const pages = (rows.results || []).map((row) => {
+    let tasks = [];
+    try { tasks = JSON.parse(row.tasks || "[]"); } catch { tasks = []; }
+    return { pageId: String(row.page_id), pageName: clean(row.page_name, 200), tasks, pageAccessTokenAvailable: true };
+  });
+  return json({ ok: true, flowId, pages });
+}
+
+async function selectSecondaryFacebookPage(request, env) {
+  const input = await readJson(request);
+  const flowId = clean(input?.flowId, 100);
+  const pageId = clean(input?.pageId, 80);
+  if (!flowId || !/^\d+$/.test(pageId)) return json({ ok: false, error: "Choose a Facebook Page returned by Meta." }, 400);
+  if (configuredFacebookPageIds(env).includes(pageId)) return json({ ok: false, error: "Already connected as Facebook Primary." }, 409);
+  const row = await env.GIFT_CARD_DB.prepare("SELECT * FROM marketing_facebook_oauth_pages WHERE flow_id = ? AND page_id = ? AND expires_at > ? LIMIT 1").bind(flowId, pageId, new Date().toISOString()).first();
+  if (!row) return json({ ok: false, error: "That Page was not returned by this Meta connection or the selection expired." }, 400);
+  let debug;
+  let identity;
+  try {
+    [debug, identity] = await Promise.all([
+      graphGet(FACEBOOK_GRAPH_ORIGIN, `${GRAPH_VERSION}/debug_token`, { input_token: row.page_access_token }, row.page_access_token, "secondary_facebook_token_debug", { accountId: pageId, tokenSource: "d1:facebook_secondary" }),
+      graphGet(FACEBOOK_GRAPH_ORIGIN, `${GRAPH_VERSION}/me`, { fields: "id,name" }, row.page_access_token, "secondary_facebook_identity", { accountId: pageId, tokenSource: "d1:facebook_secondary" }),
+    ]);
+  } catch (error) {
+    return json({ ok: false, error: safeMetaError(error), pageId }, 422);
+  }
+  const tokenData = debug?.data || {};
+  const scopes = Array.isArray(tokenData.scopes) ? tokenData.scopes : [];
+  if (tokenData.is_valid !== true || String(tokenData.type || "").toUpperCase() !== "PAGE" || String(identity?.id || "") !== pageId) {
+    return json({ ok: false, error: "Meta did not validate this selection as the returned Facebook Page.", pageId }, 422);
+  }
+  const missingPermissions = ["pages_manage_posts"].filter((permission) => !scopes.includes(permission));
+  if (missingPermissions.length) return json({ ok: false, error: "Facebook Page token is missing pages_manage_posts.", pageId, missingPermissions }, 422);
+  const now = new Date().toISOString();
+  const expiresAt = Number.isFinite(tokenData.expires_at) && tokenData.expires_at > 0 ? new Date(tokenData.expires_at * 1000).toISOString() : "";
+  await env.GIFT_CARD_DB.prepare(`INSERT INTO marketing_facebook_connections (role, page_id, page_name, page_access_token, token_expires_at, token_type, tasks, latest_health_status, latest_error, created_at, updated_at)
+    VALUES ('facebook_secondary', ?, ?, ?, ?, 'PAGE', ?, 'healthy', '', ?, ?)
+    ON CONFLICT(role) DO UPDATE SET page_id=excluded.page_id, page_name=excluded.page_name, page_access_token=excluded.page_access_token, token_expires_at=excluded.token_expires_at, token_type=excluded.token_type, tasks=excluded.tasks, latest_health_status='healthy', latest_error='', updated_at=excluded.updated_at`)
+    .bind(pageId, clean(identity.name || row.page_name, 200), row.page_access_token, expiresAt, row.tasks || "[]", now, now).run();
+  await env.GIFT_CARD_DB.prepare("DELETE FROM marketing_facebook_oauth_pages WHERE flow_id = ?").bind(flowId).run();
+  return json({ ok: true, connection: secondaryConnectionPublic({ ...row, page_id: pageId, page_name: identity.name || row.page_name, token_type: "PAGE", token_expires_at: expiresAt, latest_health_status: "healthy", latest_error: "" }) });
+}
+
+async function secondaryFacebookPreflight(env) {
+  const row = await storedSecondaryFacebookConnection(env.GIFT_CARD_DB);
+  if (!row) return secondaryConnectionPublic(null, { ok: false, status: "not_configured", error: "Secondary Facebook Page is not configured." });
+  try {
+    const [debug, identity] = await Promise.all([
+      graphGet(FACEBOOK_GRAPH_ORIGIN, `${GRAPH_VERSION}/debug_token`, { input_token: row.page_access_token }, row.page_access_token, "secondary_facebook_token_debug", { accountId: row.page_id, tokenSource: "d1:facebook_secondary" }),
+      graphGet(FACEBOOK_GRAPH_ORIGIN, `${GRAPH_VERSION}/me`, { fields: "id,name" }, row.page_access_token, "secondary_facebook_identity", { accountId: row.page_id, tokenSource: "d1:facebook_secondary" }),
+    ]);
+    const data = debug?.data || {};
+    const permissions = Array.isArray(data.scopes) ? data.scopes : [];
+    const ok = data.is_valid === true && String(data.type || "").toUpperCase() === "PAGE" && String(identity?.id || "") === String(row.page_id) && permissions.includes("pages_manage_posts");
+    return secondaryConnectionPublic(row, { ok, status: ok ? "healthy" : "invalid", identityOk: String(identity?.id || "") === String(row.page_id), permissions, tokenValid: data.is_valid === true, error: ok ? "" : "Secondary Facebook Page connection is invalid or missing publishing permission." });
+  } catch (error) {
+    return secondaryConnectionPublic(row, { ok: false, status: "unavailable", error: safeMetaError(error) });
+  }
+}
+
+async function secondaryFacebookPublishingEntry(env) {
+  const row = await storedSecondaryFacebookConnection(env.GIFT_CARD_DB);
+  if (!row) return null;
+  const health = await secondaryFacebookPreflight(env);
+  return {
+    pageId: String(row.page_id),
+    name: clean(row.page_name, 200),
+    tasks: health.tasks || [],
+    ok: health.ok === true,
+    error: health.ok ? "" : health.error,
+    token: health.ok ? row.page_access_token : "",
+    pageAccessTokenAvailable: configured(row.page_access_token),
+    tokenSource: "d1:facebook_secondary",
+    connectionRole: "facebook_secondary",
+    returnedByAccounts: true,
+    classification: "managed_page",
+  };
+}
+
 // Start OAuth: generate state and return Facebook OAuth URL
-async function oauthStart(request, env, url) {
+async function oauthStart(request, env, url, connectionRole = "primary") {
   const redirectUri = env.META_REDIRECT_URI || "https://admin.bingodogwash.com/api/admin/marketing/oauth/callback";
   const appId = env.META_APP_ID;
   if (!appId) return json({ ok: false, error: "META_APP_ID not configured." }, 400);
-  const state = crypto.randomUUID();
+  const state = connectionRole === "secondary" ? `secondary.${crypto.randomUUID()}` : crypto.randomUUID();
   const now = new Date().toISOString();
   try {
     await env.GIFT_CARD_DB.prepare("INSERT OR REPLACE INTO marketing_one_time_guards (action_key, created_at) VALUES (?, ?)")
@@ -916,7 +1079,7 @@ async function oauthStart(request, env, url) {
   authUrl.searchParams.set("redirect_uri", redirectUri);
   authUrl.searchParams.set("state", state);
   authUrl.searchParams.set("response_type", "code");
-  authUrl.searchParams.set("scope", [...FACEBOOK_REQUIRED_SCOPES, INSTAGRAM_PUBLISH_PERMISSION].join(","));
+  authUrl.searchParams.set("scope", (connectionRole === "secondary" ? FACEBOOK_REQUIRED_SCOPES : [...FACEBOOK_REQUIRED_SCOPES, INSTAGRAM_PUBLISH_PERMISSION]).join(","));
   return json({ ok: true, url: authUrl.toString(), state });
 }
 
@@ -994,6 +1157,23 @@ async function oauthCallback(request, env, url) {
     }
     const userLongToken = data.access_token;
     const userLongExpires = Number(data.expires_in) || 0;
+
+    const secondaryFlow = state.startsWith("secondary.");
+    if (secondaryFlow) {
+      callbackStage = "secondary_page_discovery";
+      const accounts = await graphGet(FACEBOOK_GRAPH_ORIGIN, `${GRAPH_VERSION}/me/accounts`, { fields: "id,name,access_token,tasks", limit: "100" }, userLongToken, "oauth_secondary_facebook_accounts", { tokenSource: "oauth:secondary:user" });
+      const pages = (Array.isArray(accounts?.data) ? accounts.data : []).filter((page) => /^\d+$/.test(String(page?.id || "")) && metaAccessToken(page?.access_token).ok);
+      const flowId = crypto.randomUUID();
+      const now = new Date().toISOString();
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+      await env.GIFT_CARD_DB.prepare("DELETE FROM marketing_facebook_oauth_pages WHERE expires_at <= ?").bind(now).run();
+      for (const page of pages) {
+        await env.GIFT_CARD_DB.prepare(`INSERT INTO marketing_facebook_oauth_pages (flow_id, page_id, page_name, page_access_token, tasks, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+          .bind(flowId, String(page.id), clean(page.name, 200), String(page.access_token), JSON.stringify(Array.isArray(page.tasks) ? page.tasks : []), now, expiresAt).run();
+      }
+      logMarketingSettings("marketing_admin_request", { action: "oauth_secondary_callback", returnedPageCount: pages.length, credentialStored: false });
+      return adminRedirect(`oauth=secondary_select&flow=${encodeURIComponent(flowId)}&pages=${pages.length}`);
+    }
 
     // Persist first. Page discovery must never prevent a valid OAuth user credential
     // from being saved, because preflight uses that credential to diagnose Page access.
@@ -1093,8 +1273,6 @@ function oauthDiagnosticRedirect(adminRedirect, diagnostic) {
 async function graphGet(origin, path, params, token, operation = "", context = {}) {
   const url = new URL(`${origin}/${path}`);
   Object.entries(params).forEach(([name, value]) => url.searchParams.set(name, value));
-  if (token) url.searchParams.set("access_token", token);
-  const endpoint = url.toString();
   let response;
   try {
     response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
@@ -1242,27 +1420,42 @@ async function dashboard(env) {
     COALESCE(SUM(CASE WHEN event_type = 'sale' THEN value ELSE 0 END), 0) AS sales
     FROM marketing_posts LEFT JOIN marketing_events ON marketing_events.post_id = marketing_posts.id
     GROUP BY product_source, product_id, product_name ORDER BY sales DESC, clicks DESC, engagement DESC LIMIT 8`).all());
-  const [settings, nextProduct, posts, totals, best] = await Promise.all([
+  const facebookResultsRequest = Promise.resolve().then(() => db.prepare(`SELECT post_id, platform, status, external_post_id, error_message, metadata, created_at
+    FROM marketing_platform_results WHERE platform LIKE 'facebook:%' OR platform LIKE 'facebook_secondary:%'
+    ORDER BY created_at DESC LIMIT 200`).all());
+  const [settings, nextProduct, posts, totals, best, facebookResults] = await Promise.all([
     settingsRequest,
     nextProductRequest,
     postsRequest,
     totalsRequest,
     bestRequest,
+    facebookResultsRequest,
   ]);
   const instagramStatus = await instagramPreflight(env);
   const facebookStatus = await facebookPreflight(env);
-  const history = (posts.results || []).map((post) => ({
-    ...post,
-    error_message: safeStoredMetaError(post.error_message),
-  }));
+  const facebookSecondaryStatus = await secondaryFacebookPreflight(env);
+  const destinationsByPost = new Map();
+  for (const result of facebookResults.results || []) {
+    let metadata = {};
+    try { metadata = JSON.parse(result.metadata || "{}"); } catch { metadata = {}; }
+    const pageId = String(metadata.pageId || result.platform.split(":")[1] || "");
+    const destination = { connectionRole: metadata.connectionRole || (result.platform.startsWith("facebook_secondary:") ? "facebook_secondary" : "facebook_primary"), pageId, pageName: clean(metadata.pageName, 200), status: result.status, externalPostId: result.external_post_id || "", error: safeStoredMetaError(result.error_message), createdAt: result.created_at };
+    if (!destinationsByPost.has(result.post_id)) destinationsByPost.set(result.post_id, []);
+    destinationsByPost.get(result.post_id).push(destination);
+  }
+  const history = (posts.results || []).map((post) => {
+    const destinations = destinationsByPost.get(post.id) || [];
+    return { ...post, error_message: safeStoredMetaError(post.error_message), ...(destinations.length ? { facebook_destinations: destinations } : {}) };
+  });
   return json({
     ok: true,
     settings: shapeSettings(settings),
     connectedPlatforms: {
       facebook: facebookStatus.ok === true,
+      facebookSecondary: facebookSecondaryStatus.ok === true,
       instagram: instagramStatus.ok === true
     },
-    platformStatus: { facebook: facebookStatus, instagram: instagramStatus },
+    platformStatus: { facebookPrimary: facebookStatus, facebookSecondary: facebookSecondaryStatus, instagram: instagramStatus },
     lastPost: history[0] || null,
     nextEligibleProduct: nextProduct ? {
       id: String(nextProduct.id || ""),
@@ -1367,7 +1560,7 @@ function logMarketingSettings(event, details = {}) {
   console.error(JSON.stringify({ event, ...details }));
 }
 async function finishPost(db, id, status, error, results) { const now = new Date().toISOString(); await db.prepare("UPDATE marketing_posts SET status = ?, error_message = ?, attempt_count = ?, facebook_post_id = ?, instagram_post_id = ?, posted_at = ?, updated_at = ? WHERE id = ?").bind(status, clean(error, 1000), Math.max(...Object.values(results).map((r) => r.attempts || 0), 0), results.facebook?.id || "", results.instagram?.id || "", status === "failed" ? "" : now, now, id).run(); }
-async function savePlatformResult(db, postId, platform, status, externalId, attempts, error) { const now = new Date().toISOString(); await db.prepare(`INSERT INTO marketing_platform_results (id, post_id, platform, status, external_post_id, attempt_count, error_message, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)` ).bind(crypto.randomUUID(), postId, platform, status, externalId, attempts, error, now, now).run(); }
+async function savePlatformResult(db, postId, platform, status, externalId, attempts, error, metadata = null) { const now = new Date().toISOString(); await db.prepare(`INSERT INTO marketing_platform_results (id, post_id, platform, status, external_post_id, attempt_count, error_message, metadata, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ).bind(crypto.randomUUID(), postId, platform, status, externalId, attempts, error, metadata ? JSON.stringify(metadata) : null, now, now).run(); }
 async function isAdmin(request, env) { const expected = String(env.ADMIN_API_TOKEN || ""); const auth = request.headers.get("Authorization") || ""; const received = auth.startsWith("Bearer ") ? auth.slice(7) : request.headers.get("X-Admin-Token") || ""; if (!expected || received.length !== expected.length) return false; const [a, b] = await Promise.all([crypto.subtle.digest("SHA-256", new TextEncoder().encode(received)), crypto.subtle.digest("SHA-256", new TextEncoder().encode(expected))]); const aa = new Uint8Array(a), bb = new Uint8Array(b); let diff = 0; for (let i = 0; i < aa.length; i += 1) diff |= aa[i] ^ bb[i]; return diff === 0; }
 async function hasTrackingSecret(request, env) { const expected = String(env.MARKETING_TRACKING_SECRET || ""); const received = request.headers.get("X-Marketing-Tracking-Secret") || ""; if (!expected || received.length !== expected.length) return false; const [a, b] = await Promise.all([crypto.subtle.digest("SHA-256", new TextEncoder().encode(received)), crypto.subtle.digest("SHA-256", new TextEncoder().encode(expected))]); const aa = new Uint8Array(a), bb = new Uint8Array(b); let diff = 0; for (let i = 0; i < aa.length; i += 1) diff |= aa[i] ^ bb[i]; return diff === 0; }
 function campaignUrl(productUrl, campaign, platform = "") { const destination = new URL(productUrl, "https://bingodogwash.com"); destination.searchParams.set("utm_source", platform || "social"); destination.searchParams.set("utm_medium", "organic"); destination.searchParams.set("utm_campaign", campaign); const tracker = new URL(TRACK_PATH, "https://bingodogwash.com"); tracker.searchParams.set("campaign", campaign); tracker.searchParams.set("event", "click"); if (platform) tracker.searchParams.set("platform", platform); tracker.searchParams.set("destination", destination.toString()); return tracker.toString(); }

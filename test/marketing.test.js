@@ -41,6 +41,20 @@ test("Marketing Admin always exposes the existing Meta reconnect flow", () => {
   assert.match(frontend, /return data;\/\/|return data;/);
 });
 
+test("Marketing Admin exposes separate primary and secondary Facebook controls and storage", () => {
+  const html = readFileSync(new URL("../public/admin/marketing.html", import.meta.url), "utf8");
+  const frontend = readFileSync(new URL("../public/admin/marketing.js", import.meta.url), "utf8");
+  const migration = readFileSync(new URL("../migrations/0024_secondary_facebook_connection.sql", import.meta.url), "utf8");
+  assert.match(html, /Facebook Primary/);
+  assert.match(html, /Facebook Secondary/);
+  assert.match(html, /data-action="oauth-secondary-start"/);
+  assert.match(frontend, /\/oauth\/secondary\/candidates/);
+  assert.match(frontend, /\/oauth\/secondary\/select/);
+  assert.match(migration, /marketing_facebook_connections/);
+  assert.match(migration, /marketing_facebook_oauth_pages/);
+  assert.match(migration, /page_access_token TEXT NOT NULL/);
+});
+
 test("OAuth start reuses the protected route and returns a Facebook authorization URL", async () => {
   let storedState = "";
   const db = { prepare: () => ({ bind: (key) => ({ run: async () => { storedState = key; return { success: true }; } }) }) };
@@ -53,6 +67,62 @@ test("OAuth start reuses the protected route and returns a Facebook authorizatio
   assert.equal(body.ok, true);
   assert.equal(new URL(body.url).hostname, "www.facebook.com");
   assert.match(storedState, /^oauth_state:/);
+});
+
+test("secondary Facebook OAuth is authenticated, Page-scoped, and does not request Instagram", async () => {
+  let storedState = "";
+  const db = { prepare: () => ({ bind: (key) => ({ run: async () => { storedState = key; return { success: true }; } }) }) };
+  const unauthorized = await handleMarketingRequest(new Request("https://admin.bingodogwash.com/api/admin/marketing/oauth/secondary/start", { method: "POST" }), { ADMIN_API_TOKEN: "admin", GIFT_CARD_DB: db, META_APP_ID: "app" });
+  assert.equal(unauthorized.status, 401);
+  const response = await handleMarketingRequest(new Request("https://admin.bingodogwash.com/api/admin/marketing/oauth/secondary/start", { method: "POST", headers: { Authorization: "Bearer admin" } }), { ADMIN_API_TOKEN: "admin", GIFT_CARD_DB: db, META_APP_ID: "app" });
+  const body = await response.json();
+  const scopes = new URL(body.url).searchParams.get("scope").split(",");
+  assert.match(storedState, /^oauth_state:secondary\./);
+  assert.deepEqual(scopes, ["pages_manage_posts", "pages_read_engagement", "pages_show_list"]);
+  assert.equal(scopes.includes("instagram_content_publish"), false);
+  assert.equal(scopes.includes("business_management"), false);
+});
+
+test("secondary OAuth callback stores only selectable managed Pages and never overwrites primary", async () => {
+  const originalFetch = globalThis.fetch;
+  const sqlWrites = [];
+  const pageToken = "P".repeat(50);
+  const db = { prepare(sql) { return {
+    bind(...values) {
+      if (sql.includes("RETURNING created_at")) return { first: async () => ({ created_at: new Date().toISOString() }) };
+      return { run: async () => { sqlWrites.push({ sql, values }); return { success: true }; } };
+    }, run: async () => ({ success: true }),
+  }; } };
+  let call = 0;
+  globalThis.fetch = async () => {
+    call += 1;
+    if (call === 1) return Response.json({ access_token: "short-user-token" });
+    if (call === 2) return Response.json({ access_token: "long-user-token", expires_in: 5000 });
+    return Response.json({ data: [{ id: "61592339597666", name: "Bingo Secondary", access_token: pageToken, tasks: ["CREATE_CONTENT"] }, { id: "personal-profile", name: "Profile", access_token: pageToken }] });
+  };
+  try {
+    const response = await handleMarketingRequest(new Request("https://admin.bingodogwash.com/api/admin/marketing/oauth/callback?state=secondary.valid&code=code"), { GIFT_CARD_DB: db, META_APP_ID: "app", META_APP_SECRET: "secret" });
+    const location = new URL(response.headers.get("Location"));
+    assert.equal(location.searchParams.get("oauth"), "secondary_select");
+    assert.equal(location.searchParams.get("pages"), "1");
+    assert.equal(sqlWrites.some((write) => write.sql.includes("INSERT INTO marketing_connections")), false);
+    const candidate = sqlWrites.find((write) => write.sql.includes("INSERT INTO marketing_facebook_oauth_pages"));
+    assert.equal(candidate.values[1], "61592339597666");
+    assert.equal(candidate.values.includes("personal-profile"), false);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("secondary selection rejects the configured primary Page without a Meta request", async () => {
+  const originalFetch = globalThis.fetch;
+  let requests = 0;
+  globalThis.fetch = async () => { requests += 1; throw new Error("unexpected"); };
+  try {
+    const db = { prepare: () => ({ bind: () => ({ first: async () => null }) }) };
+    const response = await handleMarketingRequest(new Request("https://admin.bingodogwash.com/api/admin/marketing/oauth/secondary/select", { method: "POST", headers: { Authorization: "Bearer admin", "Content-Type": "application/json" }, body: JSON.stringify({ flowId: "flow", pageId: "1264938680034651" }) }), { ADMIN_API_TOKEN: "admin", GIFT_CARD_DB: db, META_PAGE_ID: "1264938680034651" });
+    assert.equal(response.status, 409);
+    assert.match((await response.json()).error, /Already connected as Facebook Primary/);
+    assert.equal(requests, 0);
+  } finally { globalThis.fetch = originalFetch; }
 });
 
 test("OAuth callback uses its one-time state guard instead of a missing browser bearer header", async () => {
@@ -681,7 +751,8 @@ test("Facebook single-Page preflight validates only the primary Page without /me
     assert.equal(result.tokenStatus.type, "PAGE");
     assert.equal(result.pageId, "1264938680034651");
     assert.equal(result.singlePageMode, true);
-    assert.equal(result.statusMessage, "Single-Page mode active — Facebook Page 1264938680034651");
+    assert.equal(result.statusMessage, "Single-Page fallback active — Facebook Page 1264938680034651");
+    assert.equal(result.fallbackPageTokenUsed, true);
     assert.deepEqual(result.requiredPermissions, ["pages_manage_posts"]);
     assert.equal(urls.some((url) => url.includes("/debug_token")), true);
     assert.equal(urls.some((url) => url.includes("/me?")), true);
@@ -720,7 +791,9 @@ test("Facebook preflight reports missing page permissions clearly", async () => 
 test("successful Facebook publish uses Bearer auth and returns post ID", async () => {
   const originalFetch = globalThis.fetch;
   let requestedHeaders = null;
-  globalThis.fetch = async (_url, options) => {
+  let requestedUrl = "";
+  globalThis.fetch = async (url, options) => {
+    requestedUrl = String(url);
     requestedHeaders = options.headers;
     return Response.json({ id: "fb-photo-123" });
   };
@@ -728,6 +801,7 @@ test("successful Facebook publish uses Bearer auth and returns post ID", async (
     const result = await marketingTestHelpers.publishFacebook({ META_PAGE_ID: "1264938680034651" }, "https://example.com/image.jpg", "caption", "https://example.com/product", "B".repeat(50));
     assert.equal(result, "fb-photo-123");
     assert.equal(requestedHeaders.Authorization, `Bearer ${"B".repeat(50)}`);
+    assert.equal(requestedUrl.includes("access_token"), false);
   } finally { globalThis.fetch = originalFetch; }
 });
 
@@ -813,6 +887,29 @@ test("Facebook multi-page publishing continues after a page fails and reports ea
     assert.deepEqual(result.succeededPages, ["first-page", "last-page"]);
     assert.deepEqual(result.failedPages, ["failed-page"]);
     assert.equal(result.pages["failed-page"].error, "Page is unavailable");
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("primary and secondary Facebook destinations retain isolated platform keys and metadata", async () => {
+  const originalFetch = globalThis.fetch;
+  const writes = [];
+  globalThis.fetch = async (url) => String(url).includes("/secondary-page/")
+    ? new Response(JSON.stringify({ error: { code: 100, message: "Secondary unavailable" } }), { status: 400 })
+    : Response.json({ id: "primary-post" });
+  const db = { prepare: (sql) => ({ bind: (...values) => ({ run: async () => { writes.push({ sql, values }); return { success: true }; } }) }) };
+  try {
+    const result = await marketingTestHelpers.publishFacebookPages({}, db, "post-id", [
+      { ok: true, pageId: "primary-page", name: "Primary", token: "P".repeat(50), connectionRole: "facebook_primary" },
+      { ok: true, pageId: "secondary-page", name: "Secondary", token: "S".repeat(50), connectionRole: "facebook_secondary" },
+    ], { image: "https://example.com/dog.jpg" }, "caption", "https://bingodogwash.com/shop", "test");
+    assert.equal(result.status, "partial");
+    const platforms = writes.map((write) => write.values[2]);
+    assert.equal(platforms.includes("facebook:primary-page"), true);
+    assert.equal(platforms.includes("facebook_secondary:secondary-page"), true);
+    const secondaryMetadata = JSON.parse(writes.find((write) => write.values[2] === "facebook_secondary:secondary-page").values[7]);
+    assert.deepEqual(secondaryMetadata, { connectionRole: "facebook_secondary", pageId: "secondary-page", pageName: "Secondary" });
+    assert.equal(result.pages["primary-page"].ok, true);
+    assert.equal(result.pages["secondary-page"].ok, false);
   } finally { globalThis.fetch = originalFetch; }
 });
 
@@ -991,9 +1088,9 @@ test("D1 OAuth user credential is preferred and /me/accounts provides a separate
     const token = options.headers.Authorization.slice("Bearer ".length);
     if (String(url).includes("/debug_token")) return Response.json({ data: { is_valid: true, type: token === storedToken ? "USER" : "PAGE", scopes: ["pages_manage_posts", "pages_read_engagement", "pages_show_list"] } });
     if (String(url).includes("/me/accounts")) return Response.json({ data: [
-      { id: "page-1", access_token: "P".repeat(50) },
-      { id: "page-2", access_token: "Q".repeat(50) },
-      { id: "page-3", access_token: "R".repeat(50) },
+      { id: "page-1", name: "First Page", access_token: "P".repeat(50), tasks: ["CREATE_CONTENT"] },
+      { id: "page-2", name: "Second Page", access_token: "Q".repeat(50), tasks: ["CREATE_CONTENT"] },
+      { id: "page-3", name: "Third Page", access_token: "R".repeat(50), tasks: ["CREATE_CONTENT"] },
     ] });
     throw new Error("secret fallback must not be used");
   };
@@ -1001,11 +1098,89 @@ test("D1 OAuth user credential is preferred and /me/accounts provides a separate
   try {
     const result = await marketingTestHelpers.resolveFacebookPublishingContext({ GIFT_CARD_DB: db, META_PAGE_ACCESS_TOKEN: secretToken, META_PAGE_IDS: "page-1,page-2,page-3" }, ["page-1", "page-2", "page-3"]);
     assert.equal(result.connection.source, "d1");
-    assert.equal(result.userCredentialSource, "d1");
+    assert.equal(result.userCredentialSource, "d1/meta_oauth");
+    assert.equal(result.singlePageMode, false);
+    assert.equal(result.multiPageModeAvailable, true);
     assert.equal(result.accountsRequest.ok, true);
+    assert.deepEqual(result.accountsRequest.returnedPageIds, ["page-1", "page-2", "page-3"]);
+    assert.deepEqual(result.accountsRequest.returnedPageNames, ["First Page", "Second Page", "Third Page"]);
     assert.equal(result.pageAccess.every((page) => page.ok), true);
     assert.equal(new Set(result.pageAccess.map((page) => page.token)).size, 3);
-    assert.equal(result.pageAccess.every((page) => page.tokenSource === "d1:me/accounts"), true);
+    assert.equal(result.pageAccess.every((page) => page.tokenSource === "d1/meta_oauth:me/accounts"), true);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("single configured Page still prefers the stored USER credential over the legacy PAGE token", async () => {
+  const originalFetch = globalThis.fetch;
+  const storedToken = "D".repeat(50);
+  const secretToken = "S".repeat(50);
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    const token = options.headers.Authorization.slice("Bearer ".length);
+    calls.push({ url: String(url), token });
+    if (String(url).includes("/debug_token")) return Response.json({ data: { is_valid: true, type: token === storedToken ? "USER" : "PAGE", scopes: ["pages_manage_posts", "pages_read_engagement", "pages_show_list"] } });
+    if (String(url).includes("/me/accounts")) return Response.json({ data: [{ id: "1264938680034651", name: "Bingo Dog Wash", access_token: "P".repeat(50), tasks: ["CREATE_CONTENT"] }] });
+    throw new Error("legacy Page identity must not be queried when user discovery succeeds");
+  };
+  const db = { prepare: () => ({ first: async () => ({ page_access_token: storedToken }) }) };
+  try {
+    const result = await marketingTestHelpers.facebookPreflight({ GIFT_CARD_DB: db, META_PAGE_ACCESS_TOKEN: secretToken, META_PAGE_ID: "1264938680034651" });
+    assert.equal(result.ok, true);
+    assert.equal(result.userCredentialSource, "d1/meta_oauth");
+    assert.equal(result.accountsRequest.attempted, true);
+    assert.equal(result.singlePageMode, false);
+    assert.equal(result.multiPageModeAvailable, true);
+    assert.equal(result.pages["1264938680034651"].name, "Bingo Dog Wash");
+    assert.equal(calls.some((call) => call.url.includes("/me?") && call.token === secretToken), false);
+    assert.equal(JSON.stringify(result).includes(storedToken) || JSON.stringify(result).includes(secretToken) || JSON.stringify(result).includes("P".repeat(50)), false);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("empty user discovery preserves the configured working Page through PAGE-token fallback", async () => {
+  const originalFetch = globalThis.fetch;
+  const storedToken = "D".repeat(50);
+  const secretToken = "S".repeat(50);
+  globalThis.fetch = async (url, options) => {
+    const token = options.headers.Authorization.slice("Bearer ".length);
+    if (String(url).includes("/debug_token")) return Response.json({ data: { is_valid: true, type: token === storedToken ? "USER" : "PAGE", scopes: ["pages_manage_posts", "pages_read_engagement", "pages_show_list"] } });
+    if (String(url).includes("/me/accounts")) return Response.json({ data: [] });
+    if (String(url).includes("/me?")) return Response.json({ id: "1264938680034651", name: "Legacy Working Page" });
+    throw new Error("unexpected request");
+  };
+  const db = { prepare: () => ({ first: async () => ({ page_access_token: storedToken }) }) };
+  try {
+    const result = await marketingTestHelpers.facebookPreflight({ GIFT_CARD_DB: db, META_PAGE_ACCESS_TOKEN: secretToken, META_PAGE_ID: "1264938680034651" });
+    assert.equal(result.ok, true);
+    assert.equal(result.userCredentialSource, "d1/meta_oauth");
+    assert.equal(result.accountsRequest.attempted, true);
+    assert.equal(result.accountsRequest.returnedPageCount, 0);
+    assert.equal(result.fallbackPageTokenUsed, true);
+    assert.equal(result.pages["1264938680034651"].ok, true);
+    assert.equal(result.pages["1264938680034651"].tokenSource, "secret:page_token");
+    assert.equal(JSON.stringify(result).includes(storedToken) || JSON.stringify(result).includes(secretToken), false);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("failed user discovery falls back safely without exposing either credential", async () => {
+  const originalFetch = globalThis.fetch;
+  const storedToken = "D".repeat(50);
+  const secretToken = "S".repeat(50);
+  globalThis.fetch = async (url, options) => {
+    const token = options.headers.Authorization.slice("Bearer ".length);
+    if (String(url).includes("/debug_token")) return Response.json({ data: { is_valid: true, type: token === storedToken ? "USER" : "PAGE", scopes: ["pages_manage_posts", "pages_read_engagement", "pages_show_list"] } });
+    if (String(url).includes("/me/accounts")) return Response.json({ error: { message: "Temporary discovery failure", code: 2 } }, { status: 500 });
+    if (String(url).includes("/me?")) return Response.json({ id: "1264938680034651", name: "Legacy Working Page" });
+    throw new Error("unexpected request");
+  };
+  const db = { prepare: () => ({ first: async () => ({ page_access_token: storedToken }) }) };
+  try {
+    const result = await marketingTestHelpers.facebookPreflight({ GIFT_CARD_DB: db, META_PAGE_ACCESS_TOKEN: secretToken, META_PAGE_ID: "1264938680034651" });
+    assert.equal(result.ok, true);
+    assert.equal(result.accountsRequest.ok, false);
+    assert.equal(result.accountsRequest.attempted, true);
+    assert.equal(result.fallbackPageTokenUsed, true);
+    assert.equal(result.pages["1264938680034651"].ok, true);
+    assert.equal(JSON.stringify(result).includes(storedToken) || JSON.stringify(result).includes(secretToken), false);
   } finally { globalThis.fetch = originalFetch; }
 });
 

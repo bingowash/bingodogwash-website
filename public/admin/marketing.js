@@ -3,6 +3,7 @@ const tiktokApi = "/api/tiktok";
 let token = "";
 let state = null;
 let oauthCallbackResult = null;
+let secondaryOAuthFlow = "";
 const pending = new Set();
 const qs = (value) => document.querySelector(value);
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#039;" }[char]));
@@ -99,11 +100,12 @@ function showOAuthCallbackStatus() {
     invalid_state: "Meta reconnect state was invalid or already used. Start reconnect again from this page.",
     missing_code: "Facebook did not return an authorization code. Start reconnect again.",
     server_error: "Meta reconnect is not fully configured on the server.",
+    secondary_select: `Meta returned ${Number(params.get("pages") || 0)} manageable Page(s). Unlock marketing and choose Facebook Secondary.`,
   };
   const message = messages[oauth] || "Meta reconnect did not complete.";
   qs("[data-marketing-message]").textContent = message;
   oauthCallbackResult = {
-    ok: oauth === "success",
+    ok: oauth === "success" || oauth === "secondary_select",
     oauth,
     stage: params.get("stage") || "",
     providerHttpStatus,
@@ -124,7 +126,8 @@ function showOAuthCallbackStatus() {
     returnedPageCount: Number(params.get("pages") || 0),
     message,
   };
-  showResponse(oauthCallbackResult, oauth !== "success");
+  if (oauth === "secondary_select") secondaryOAuthFlow = params.get("flow") || "";
+  showResponse(oauthCallbackResult, !oauthCallbackResult.ok);
   history.replaceState({}, "", window.location.pathname);
 }
 
@@ -148,6 +151,15 @@ async function runOnce(key, button, task) {
 }
 
 async function refresh() { state = await call(); render(); await refreshTikTokStatus(); return state; }
+async function loadSecondaryCandidates() {
+  if (!secondaryOAuthFlow) return;
+  const result = await call("/oauth/secondary/candidates", { method: "POST", body: JSON.stringify({ flowId: secondaryOAuthFlow }) });
+  const panel = qs("[data-facebook-secondary-selector]");
+  panel.hidden = false;
+  panel.innerHTML = result.pages?.length
+    ? `<label>Managed Page<select data-facebook-secondary-page>${result.pages.map((page) => `<option value="${escapeHtml(page.pageId)}">${escapeHtml(page.pageName)} (${escapeHtml(page.pageId)})</option>`).join("")}</select></label><button class="btn btn-secondary" type="button" data-action="oauth-secondary-select">Use as Facebook Secondary</button>`
+    : "<p>Meta returned no manageable Facebook Pages. Profiles and manually entered IDs cannot be connected here.</p>";
+}
 function render() {
   qs("[data-marketing-dashboard]").hidden = false;
   const a = state.analytics || {}; const settings = state.settings || {};
@@ -160,6 +172,10 @@ function render() {
   qs("[data-marketing-schedule] [name=hourUtc]").value = settings.hourUtc; qs("[data-marketing-schedule] [name=minuteUtc]").value = settings.minuteUtc;
   const platformStatus = state.platformStatus || {};
   const connectedPlatforms = state.connectedPlatforms || {};
+  const primary = platformStatus.facebookPrimary || {};
+  const secondary = platformStatus.facebookSecondary || {};
+  qs("[data-facebook-primary-status]").textContent = `${primary.ok ? "Connected" : "Needs attention"} · Page ${primary.id || primary.pageId || "not available"}. ${primary.error || primary.statusMessage || "Primary credential verified."}`;
+  qs("[data-facebook-secondary-status]").textContent = `${secondary.connected ? secondary.ok ? "Connected" : "Needs attention" : "Not connected"} · ${secondary.pageName || "No Page selected"}${secondary.pageId ? ` (${secondary.pageId})` : ""}. ${secondary.error || "Independent secondary destination."}`;
   qs("[data-marketing-platforms]").innerHTML = Object.entries(platformStatus).length ? Object.entries(platformStatus).map(([name,status]) => {
     const connected = status?.ok === true;
     const label = connected ? "Connected" : (connectedPlatforms[name] ? "Configured" : "Not configured");
@@ -178,7 +194,7 @@ function render() {
   }).join("") : Object.entries(state.connectedPlatforms || {}).map(([name,connected]) => `<span class="platform-pill ${connected ? "connected" : ""}">${connected ? "Configured" : "Not configured"}: ${escapeHtml(name)}</span>`).join("");
   const best = a.bestProducts || []; const max = Math.max(1,...best.map((item) => Number(item.clicks)+Number(item.engagement)+Number(item.sales)*5));
   qs("[data-marketing-chart]").innerHTML = best.length ? best.map((item) => { const score=Number(item.clicks)+Number(item.engagement)+Number(item.sales)*5; return `<div class="marketing-bar"><strong>${escapeHtml(item.product_name)}</strong><div class="marketing-bar-track"><div class="marketing-bar-fill" style="width:${Math.max(3,score/max*100)}%"></div></div><span>${item.clicks} clicks · ${item.sales} sales</span></div>`; }).join("") : "<p>No campaign activity yet.</p>";
-  qs("[data-marketing-history]").innerHTML = `<table class="marketing-table"><thead><tr><th>Date</th><th>Product</th><th>Status</th><th>Platforms</th><th>Caption / error</th></tr></thead><tbody>${(state.history || []).map((post) => `<tr><td>${escapeHtml(new Date(post.created_at).toLocaleString())}</td><td>${escapeHtml(post.product_name)}</td><td class="status-${escapeHtml(post.status)}">${escapeHtml(post.status)}</td><td>${post.facebook_post_id ? "Facebook ✓ " : ""}${post.instagram_post_id ? "Instagram ✓ " : ""}${post.tiktok_status || String(post.trigger_type || "").includes("tiktok") ? `${tiktokAccountLabel(post)} ${post.tiktok_status === "success" || post.status === "success" ? "draft ✓" : "draft failed"}${post.tiktok_publish_id ? ` · ID ${escapeHtml(post.tiktok_publish_id)}` : ""}` : ""}</td><td><small>${escapeHtml(post.error_message || post.caption)}</small></td></tr>`).join("") || '<tr><td colspan="5">No posts yet.</td></tr>'}</tbody></table>`;
+  qs("[data-marketing-history]").innerHTML = `<table class="marketing-table"><thead><tr><th>Date</th><th>Product</th><th>Status</th><th>Platforms</th><th>Caption / error</th></tr></thead><tbody>${(state.history || []).map((post) => { const facebook = (post.facebook_destinations || []).map((item) => `${item.connectionRole === "facebook_secondary" ? "Facebook Secondary" : "Facebook Primary"}: ${escapeHtml(item.pageName || item.pageId)} (${escapeHtml(item.pageId)}) ${escapeHtml(item.status)}${item.externalPostId ? ` · ID ${escapeHtml(item.externalPostId)}` : ""}${item.error ? ` · ${escapeHtml(item.error)}` : ""}`).join("<br>"); return `<tr><td>${escapeHtml(new Date(post.created_at).toLocaleString())}</td><td>${escapeHtml(post.product_name)}</td><td class="status-${escapeHtml(post.status)}">${escapeHtml(post.status)}</td><td>${facebook}${facebook && (post.instagram_post_id || post.tiktok_status) ? "<br>" : ""}${post.instagram_post_id ? "Instagram ✓ " : ""}${post.tiktok_status || String(post.trigger_type || "").includes("tiktok") ? `${tiktokAccountLabel(post)} ${post.tiktok_status === "success" || post.status === "success" ? "draft ✓" : "draft failed"}${post.tiktok_publish_id ? ` · ID ${escapeHtml(post.tiktok_publish_id)}` : ""}` : ""}</td><td><small>${escapeHtml(post.error_message || post.caption)}</small></td></tr>`; }).join("") || '<tr><td colspan="5">No posts yet.</td></tr>'}</tbody></table>`;
 }
 
 const unlockForm = qs("[data-marketing-unlock]");
@@ -193,7 +209,7 @@ tokenInput.addEventListener("paste", (event) => {
     showResponse({ ok: false, error: message, status: 0 }, true);
   }
 });
-unlockForm.addEventListener("submit", (event) => { event.preventDefault(); const button = event.currentTarget.querySelector("button"); runOnce("unlock", button, async () => { token = validateToken(new FormData(event.currentTarget).get("token")); const result = await refresh(); if (oauthCallbackResult) { qs("[data-marketing-message]").textContent = oauthCallbackResult.message; showResponse(oauthCallbackResult, oauthCallbackResult.ok !== true); } else { qs("[data-marketing-message]").textContent = "Marketing controls unlocked."; showResponse({ ok: result.ok, settings: result.settings, connectedPlatforms: result.connectedPlatforms }); } }); });
+unlockForm.addEventListener("submit", (event) => { event.preventDefault(); const button = event.currentTarget.querySelector("button"); runOnce("unlock", button, async () => { token = validateToken(new FormData(event.currentTarget).get("token")); const result = await refresh(); await loadSecondaryCandidates(); if (oauthCallbackResult) { qs("[data-marketing-message]").textContent = oauthCallbackResult.message; showResponse(oauthCallbackResult, oauthCallbackResult.ok !== true); } else { qs("[data-marketing-message]").textContent = "Marketing controls unlocked."; showResponse({ ok: result.ok, settings: result.settings, connectedPlatforms: result.connectedPlatforms }); } }); });
 document.addEventListener("click", (event) => {
   const button = event.target.closest("[data-action]");
   const action = button?.dataset.action;
@@ -205,6 +221,25 @@ document.addEventListener("click", (event) => {
       if (!result?.url || !result.url.startsWith("https://www.facebook.com/")) throw safeError("Meta reconnect could not be started.");
       qs("[data-marketing-message]").textContent = "Opening Facebook to reconnect Metaâ€¦";
       window.location.assign(result.url);
+    });
+    return;
+  }
+  if (action === "oauth-secondary-start") {
+    runOnce(`action:${action}`, button, async () => {
+      const result = await call("/oauth/secondary/start", { method:"POST", body:"{}" });
+      if (!result?.url || !result.url.startsWith("https://www.facebook.com/")) throw safeError("Secondary Facebook connection could not be started.");
+      window.location.assign(result.url);
+    });
+    return;
+  }
+  if (action === "oauth-secondary-select") {
+    runOnce(`action:${action}`, button, async () => {
+      const pageId = qs("[data-facebook-secondary-page]")?.value || "";
+      const result = await call("/oauth/secondary/select", { method:"POST", body:JSON.stringify({ flowId: secondaryOAuthFlow, pageId }) });
+      secondaryOAuthFlow = "";
+      qs("[data-facebook-secondary-selector]").hidden = true;
+      showResponse(result);
+      await refresh();
     });
     return;
   }
