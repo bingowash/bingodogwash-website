@@ -76,11 +76,33 @@ test("secondary Facebook OAuth is authenticated, Page-scoped, and does not reque
   assert.equal(unauthorized.status, 401);
   const response = await handleMarketingRequest(new Request("https://admin.bingodogwash.com/api/admin/marketing/oauth/secondary/start", { method: "POST", headers: { Authorization: "Bearer admin" } }), { ADMIN_API_TOKEN: "admin", GIFT_CARD_DB: db, META_APP_ID: "app" });
   const body = await response.json();
-  const scopes = new URL(body.url).searchParams.get("scope").split(",");
+  const secondaryUrl = new URL(body.url);
+  const scopes = secondaryUrl.searchParams.get("scope").split(",");
   assert.match(storedState, /^oauth_state:secondary\./);
+  assert.equal(secondaryUrl.searchParams.get("auth_type"), "reauthorize");
+  assert.equal(secondaryUrl.searchParams.has("login_hint"), false);
+  assert.equal(secondaryUrl.searchParams.has("access_token"), false);
   assert.deepEqual(scopes, ["pages_manage_posts", "pages_read_engagement", "pages_show_list"]);
   assert.equal(scopes.includes("instagram_content_publish"), false);
   assert.equal(scopes.includes("business_management"), false);
+});
+
+test("primary OAuth remains session-compatible while secondary alone requires reauthorization", async () => {
+  const states = [];
+  const db = { prepare: () => ({ bind: (key) => ({ run: async () => { states.push(key); return { success: true }; } }) }) };
+  const env = { ADMIN_API_TOKEN: "admin", GIFT_CARD_DB: db, META_APP_ID: "app" };
+  const headers = { Authorization: "Bearer admin" };
+  const primaryResponse = await handleMarketingRequest(new Request("https://admin.bingodogwash.com/api/admin/marketing/oauth/start", { method: "POST", headers }), env);
+  const secondaryResponse = await handleMarketingRequest(new Request("https://admin.bingodogwash.com/api/admin/marketing/oauth/secondary/start", { method: "POST", headers }), env);
+  const primaryUrl = new URL((await primaryResponse.json()).url);
+  const secondaryUrl = new URL((await secondaryResponse.json()).url);
+  assert.equal(primaryUrl.searchParams.has("auth_type"), false);
+  assert.equal(secondaryUrl.searchParams.get("auth_type"), "reauthorize");
+  assert.equal(primaryUrl.searchParams.has("prompt"), false);
+  assert.equal(secondaryUrl.searchParams.has("prompt"), false);
+  assert.match(states[0], /^oauth_state:(?!secondary\.)/);
+  assert.match(states[1], /^oauth_state:secondary\./);
+  assert.notEqual(primaryUrl.searchParams.get("state"), secondaryUrl.searchParams.get("state"));
 });
 
 test("secondary OAuth callback stores only selectable managed Pages and never overwrites primary", async () => {
@@ -109,6 +131,34 @@ test("secondary OAuth callback stores only selectable managed Pages and never ov
     const candidate = sqlWrites.find((write) => write.sql.includes("INSERT INTO marketing_facebook_oauth_pages"));
     assert.equal(candidate.values[1], "61592339597666");
     assert.equal(candidate.values.includes("personal-profile"), false);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("secondary OAuth fails closed when Meta returns no real Pages or only profile IDs", async () => {
+  const originalFetch = globalThis.fetch;
+  const writes = [];
+  const db = { prepare(sql) { return {
+    bind(...values) {
+      if (sql.includes("RETURNING created_at")) return { first: async () => ({ created_at: new Date().toISOString() }) };
+      return { run: async () => { writes.push({ sql, values }); return { success: true }; } };
+    }, run: async () => ({ success: true }),
+  }; } };
+  let request = 0;
+  globalThis.fetch = async () => {
+    request += 1;
+    if (request === 1) return Response.json({ access_token: "short-user-token" });
+    if (request === 2) return Response.json({ access_token: "long-user-token", expires_in: 5000 });
+    return Response.json({ data: [{ id: "professional-profile", name: "Not a Page", access_token: "P".repeat(50) }] });
+  };
+  try {
+    const response = await handleMarketingRequest(new Request("https://admin.bingodogwash.com/api/admin/marketing/oauth/callback?state=secondary.profile-only&code=code"), { GIFT_CARD_DB: db, META_APP_ID: "app", META_APP_SECRET: "secret" });
+    const location = new URL(response.headers.get("Location"));
+    assert.equal(location.searchParams.get("oauth"), "secondary_select");
+    assert.equal(location.searchParams.get("pages"), "0");
+    assert.equal(writes.some((write) => write.sql.includes("INSERT INTO marketing_facebook_connections")), false);
+    assert.equal(writes.some((write) => write.sql.includes("INSERT INTO marketing_connections")), false);
+    assert.equal(writes.some((write) => /instagram|tiktok/i.test(write.sql)), false);
+    assert.equal(location.toString().includes("long-user-token"), false);
   } finally { globalThis.fetch = originalFetch; }
 });
 

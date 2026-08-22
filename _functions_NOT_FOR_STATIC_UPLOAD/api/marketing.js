@@ -1080,6 +1080,7 @@ async function oauthStart(request, env, url, connectionRole = "primary") {
   authUrl.searchParams.set("state", state);
   authUrl.searchParams.set("response_type", "code");
   authUrl.searchParams.set("scope", (connectionRole === "secondary" ? FACEBOOK_REQUIRED_SCOPES : [...FACEBOOK_REQUIRED_SCOPES, INSTAGRAM_PUBLISH_PERMISSION]).join(","));
+  if (connectionRole === "secondary") authUrl.searchParams.set("auth_type", "reauthorize");
   return json({ ok: true, url: authUrl.toString(), state });
 }
 
