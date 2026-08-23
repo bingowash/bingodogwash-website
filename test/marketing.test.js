@@ -55,21 +55,27 @@ test("Marketing Admin exposes separate primary and secondary Facebook controls a
   assert.match(migration, /page_access_token TEXT NOT NULL/);
 });
 
-test("Marketing Admin exposes a separate explicitly real Instagram sharing test without changing Safe Preflight or Run Test Post", () => {
+test("temporary Instagram sharing test is absent while normal marketing controls remain", () => {
   const html = readFileSync(new URL("../public/admin/marketing.html", import.meta.url), "utf8");
   const frontend = readFileSync(new URL("../public/admin/marketing.js", import.meta.url), "utf8");
   const worker = readFileSync(new URL("../_functions_NOT_FOR_STATIC_UPLOAD/api/marketing.js", import.meta.url), "utf8");
-  assert.match(html, /Run Instagram Sharing Test/);
-  assert.match(html, /This creates one real Instagram post/);
-  assert.match(frontend, /This creates ONE REAL Instagram post/);
-  assert.match(frontend, /call\("\/instagram-sharing-test"/);
-  assert.match(worker, /\/instagram-sharing-test/);
+  for (const source of [html, frontend, worker]) {
+    assert.doesNotMatch(source, /Instagram Accounts Centre sharing test/i);
+    assert.doesNotMatch(source, /instagram-sharing-test/);
+    assert.doesNotMatch(source, /instagram_accounts_centre_sharing/);
+  }
+  assert.match(html, /Run Safe Preflight/);
+  assert.match(html, /Run Test Post/);
+  assert.match(html, /Pause Automation/);
+  assert.match(html, /Resume Automation/);
+  assert.match(html, /View Logs/);
   assert.match(worker, /if \(url\.pathname === `\$\{ADMIN_PATH\}\/test`\)/);
   assert.match(worker, /publishingAttempted: false/);
   assert.match(worker, /return preflight\(env\)/);
+  assert.match(worker, /async function publishInstagram\(/);
 });
 
-test("Instagram sharing candidate preserves schedule, cron, supplier rotation, and Facebook collaboration controls", () => {
+test("Instagram sharing cleanup preserves schedule, cron, supplier rotation, and Facebook collaboration controls", () => {
   const worker = readFileSync(new URL("../_functions_NOT_FOR_STATIC_UPLOAD/api/marketing.js", import.meta.url), "utf8");
   const config = JSON.parse(readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8"));
   const frontend = readFileSync(new URL("../public/admin/marketing.js", import.meta.url), "utf8");
@@ -684,169 +690,6 @@ test("Facebook collaboration update requires admin authentication", async () => 
     body: JSON.stringify({ platformResultId: "result-1", state: "completed" }),
   }), { ADMIN_API_TOKEN: "secret", GIFT_CARD_DB: {} });
   assert.equal(response.status, 401);
-});
-
-test("Instagram sharing test requires existing admin authentication", async () => {
-  const response = await handleMarketingRequest(new Request("https://bingodogwash.com/api/admin/marketing/instagram-sharing-test", {
-    method: "POST",
-    body: "{}",
-  }), { ADMIN_API_TOKEN: "secret", GIFT_CARD_DB: {} });
-  assert.equal(response.status, 401);
-  assert.equal((await response.json()).error, "Admin authorisation required.");
-});
-
-function instagramSharingTestDatabase({ recent = null, guard = true, enabled = 0 } = {}) {
-  const writes = [];
-  const image = {
-    product_source: "etsy",
-    product_id: "existing-product",
-    product_name: "Existing Bingo Instagram product",
-    product_url: "https://bingodogwash.com/shop",
-    product_image: "https://images.example.com/existing-bingo.jpg",
-  };
-  return {
-    writes,
-    prepare(sql) {
-      const statement = {
-        bind(...values) {
-          return {
-            first: async () => {
-              if (sql.includes("marketing_settings")) return { enabled, schedule_hour_utc: 4, schedule_minute_utc: 15, next_run_at: "2099-01-01T04:15:00.000Z" };
-              if (sql.includes("trigger_type = 'instagram-sharing-test'")) return recent;
-              if (sql.includes("marketing_connections")) return null;
-              if (sql.includes("RETURNING action_key")) return guard ? { action_key: values[0] } : null;
-              return null;
-            },
-            all: async () => ({ results: sql.includes("marketing_platform_results") && sql.includes("product_image") ? [image] : [] }),
-            run: async () => { writes.push({ sql, values }); return { success: true }; },
-          };
-        },
-        first: async () => sql.includes("marketing_settings") ? { enabled, schedule_hour_utc: 4, schedule_minute_utc: 15, next_run_at: "2099-01-01T04:15:00.000Z" } : null,
-        all: async () => ({ results: sql.includes("marketing_platform_results") && sql.includes("product_image") ? [image] : [] }),
-      };
-      return statement;
-    },
-  };
-}
-
-test("explicit Instagram sharing test publishes once through Instagram only while automation stays paused", async () => {
-  const originalFetch = globalThis.fetch;
-  const requests = [];
-  globalThis.fetch = async (input, init = {}) => {
-    const url = String(input);
-    requests.push({ url, method: init.method || "GET", body: String(init.body || "") });
-    if (url === "https://images.example.com/existing-bingo.jpg") return new Response("", { status: 200, headers: { "Content-Type": "image/jpeg" } });
-    if (url.includes("graph.instagram.com/v26.0/me")) return new Response(JSON.stringify({ id: "27879594505014566", username: "bingo_dogwash", account_type: "MEDIA_CREATOR" }), { status: 200 });
-    if (url.endsWith("/27879594505014566/media")) return new Response(JSON.stringify({ id: "creation-1" }), { status: 200 });
-    if (url.includes("/creation-1?")) return new Response(JSON.stringify({ status_code: "FINISHED" }), { status: 200 });
-    if (url.endsWith("/27879594505014566/media_publish")) return new Response(JSON.stringify({ id: "instagram-media-1" }), { status: 200 });
-    throw new Error(`Unexpected request: ${url}`);
-  };
-  const database = instagramSharingTestDatabase();
-  try {
-    const response = await handleMarketingRequest(new Request("https://bingodogwash.com/api/admin/marketing/instagram-sharing-test", {
-      method: "POST", headers: { Authorization: "Bearer admin-token", "Content-Type": "application/json" }, body: "{}",
-    }), { ADMIN_API_TOKEN: "admin-token", GIFT_CARD_DB: database, INSTAGRAM_ACCESS_TOKEN: "I".repeat(50), META_INSTAGRAM_USER_ID: "27879594505014566", INSTAGRAM_MEDIA_STATUS_DELAY_MS: "0" });
-    const body = await response.json();
-    assert.equal(response.status, 200);
-    assert.equal(body.ok, true);
-    assert.equal(body.publishingAttempted, true);
-    assert.equal(body.instagramPublishingAttempted, true);
-    assert.deepEqual(body.instagram, { success: true, mediaId: "instagram-media-1" });
-    assert.equal(body.facebookDirectPublishingAttempted, false);
-    assert.equal(body.facebookSecondaryPublishingAttempted, false);
-    assert.equal(body.tiktokPublishingAttempted, false);
-    assert.equal(body.otherDestinationPublishingAttempted, false);
-    assert.equal(body.automationPaused, true);
-    assert.equal(body.caption, "Bingo Dog Wash automation sharing test 🐾\n\nTesting automated Instagram → Facebook sharing.");
-    assert.equal(body.imageSource.imageUrl, "https://images.example.com/existing-bingo.jpg");
-    assert.equal(JSON.stringify(body).includes("I".repeat(50)), false);
-    assert.equal(requests.filter(({ url }) => url.endsWith("/27879594505014566/media")).length, 1);
-    assert.equal(requests.some(({ url }) => url.includes("graph.facebook.com") || /facebook.*\/(?:photos|feed)/.test(url)), false);
-    assert.equal(requests.some(({ url }) => /tiktok|brevo/i.test(url)), false);
-    assert.equal(database.writes.some(({ sql }) => /UPDATE marketing_settings SET enabled/i.test(sql)), false);
-    assert.equal(database.writes.some(({ sql }) => /marketing_platform_results/.test(sql)), true);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test("Instagram sharing test blocks duplicates before any publishing request", async () => {
-  const originalFetch = globalThis.fetch;
-  let requests = 0;
-  globalThis.fetch = async () => { requests += 1; throw new Error("unexpected request"); };
-  try {
-    const response = await handleMarketingRequest(new Request("https://bingodogwash.com/api/admin/marketing/instagram-sharing-test", {
-      method: "POST", headers: { Authorization: "Bearer admin-token", "Content-Type": "application/json" }, body: "{}",
-    }), { ADMIN_API_TOKEN: "admin-token", GIFT_CARD_DB: instagramSharingTestDatabase({ recent: { id: "previous-test", status: "success", created_at: new Date().toISOString() } }), INSTAGRAM_ACCESS_TOKEN: "I".repeat(50), META_INSTAGRAM_USER_ID: "27879594505014566" });
-    const body = await response.json();
-    assert.equal(response.status, 409);
-    assert.equal(body.duplicateBlocked, true);
-    assert.equal(body.publishingAttempted, false);
-    assert.equal(requests, 0);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test("Instagram sharing test atomic guard blocks a concurrent double-click before media creation", async () => {
-  const originalFetch = globalThis.fetch;
-  const requests = [];
-  globalThis.fetch = async (input) => {
-    const url = String(input);
-    requests.push(url);
-    if (url === "https://images.example.com/existing-bingo.jpg") return new Response("", { status: 200, headers: { "Content-Type": "image/jpeg" } });
-    if (url.includes("graph.instagram.com/v26.0/me")) return new Response(JSON.stringify({ id: "27879594505014566", username: "bingo_dogwash", account_type: "MEDIA_CREATOR" }), { status: 200 });
-    throw new Error(`Unexpected request: ${url}`);
-  };
-  try {
-    const response = await handleMarketingRequest(new Request("https://bingodogwash.com/api/admin/marketing/instagram-sharing-test", {
-      method: "POST", headers: { Authorization: "Bearer admin-token", "Content-Type": "application/json" }, body: "{}",
-    }), { ADMIN_API_TOKEN: "admin-token", GIFT_CARD_DB: instagramSharingTestDatabase({ guard: false }), INSTAGRAM_ACCESS_TOKEN: "I".repeat(50), META_INSTAGRAM_USER_ID: "27879594505014566" });
-    const body = await response.json();
-    assert.equal(response.status, 409);
-    assert.equal(body.duplicateBlocked, true);
-    assert.equal(body.publishingAttempted, false);
-    assert.equal(requests.some((url) => url.endsWith("/27879594505014566/media") || url.endsWith("/27879594505014566/media_publish")), false);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test("Instagram sharing test leaves automation paused after a safe publishing failure", async () => {
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (input, init = {}) => {
-    const url = String(input);
-    if (url === "https://images.example.com/existing-bingo.jpg") return new Response("", { status: 200, headers: { "Content-Type": "image/jpeg" } });
-    if (url.includes("graph.instagram.com/v26.0/me")) return new Response(JSON.stringify({ id: "27879594505014566", username: "bingo_dogwash", account_type: "MEDIA_CREATOR" }), { status: 200 });
-    if (init.method === "POST") return new Response(JSON.stringify({ error: { code: 10, message: "permission denied" } }), { status: 400 });
-    throw new Error(`Unexpected request: ${url}`);
-  };
-  const database = instagramSharingTestDatabase();
-  try {
-    const response = await handleMarketingRequest(new Request("https://bingodogwash.com/api/admin/marketing/instagram-sharing-test", {
-      method: "POST", headers: { Authorization: "Bearer admin-token", "Content-Type": "application/json" }, body: "{}",
-    }), { ADMIN_API_TOKEN: "admin-token", GIFT_CARD_DB: database, INSTAGRAM_ACCESS_TOKEN: "I".repeat(50), META_INSTAGRAM_USER_ID: "27879594505014566", INSTAGRAM_MEDIA_STATUS_DELAY_MS: "0" });
-    const body = await response.json();
-    assert.equal(response.status, 502);
-    assert.equal(body.instagram.success, false);
-    assert.equal(body.automationPaused, true);
-    assert.equal(body.facebookDirectPublishingAttempted, false);
-    assert.equal(JSON.stringify(body).includes("I".repeat(50)), false);
-    assert.equal(database.writes.some(({ sql }) => /UPDATE marketing_settings SET enabled/i.test(sql)), false);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test("Instagram sharing test fails closed while automation is enabled", async () => {
-  const response = await handleMarketingRequest(new Request("https://bingodogwash.com/api/admin/marketing/instagram-sharing-test", {
-    method: "POST", headers: { Authorization: "Bearer admin-token", "Content-Type": "application/json" }, body: "{}",
-  }), { ADMIN_API_TOKEN: "admin-token", GIFT_CARD_DB: instagramSharingTestDatabase({ enabled: 1 }) });
-  const body = await response.json();
-  assert.equal(response.status, 409);
-  assert.equal(body.publishingAttempted, false);
-  assert.equal(body.automationPaused, false);
 });
 
 test("Facebook collaboration update marks only an owned successful Primary result", async () => {
