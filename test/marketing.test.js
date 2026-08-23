@@ -75,13 +75,18 @@ test("temporary Instagram sharing test is absent while normal marketing controls
   assert.match(worker, /async function publishInstagram\(/);
 });
 
-test("Instagram sharing cleanup preserves schedule, cron, supplier rotation, and Facebook collaboration controls", () => {
+test("hourly supplier rotation preserves cron, normal controls, and Facebook collaboration controls", () => {
   const worker = readFileSync(new URL("../_functions_NOT_FOR_STATIC_UPLOAD/api/marketing.js", import.meta.url), "utf8");
   const config = JSON.parse(readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8"));
+  const html = readFileSync(new URL("../public/admin/marketing.html", import.meta.url), "utf8");
   const frontend = readFileSync(new URL("../public/admin/marketing.js", import.meta.url), "utf8");
-  assert.match(worker, /const MARKETING_INTERVAL_HOURS = 4/);
+  assert.match(worker, /const MARKETING_INTERVAL_HOURS = 1/);
+  assert.match(html, /<h2>Every hour<\/h2>/);
+  assert.match(html, /Hourly product promotion/);
   assert.deepEqual(config.triggers.crons, ["*/15 * * * *", "0 2 * * *", "30 3 * * *"]);
+  assert.doesNotMatch(JSON.stringify(config.triggers.crons), /0 \* \* \* \*/);
   assert.match(worker, /selectNextProduct\(db, \{\s*respectCooldown: options\.trigger === "scheduled"/);
+  assert.match(worker, /catalogueProducts: options\.catalogueProducts/);
   assert.match(frontend, /Collaborator follow-up:/);
   assert.match(frontend, /Mark completed/);
 });
@@ -412,25 +417,57 @@ test("campaign links record a click before preserving product destination and UT
   assert.equal(destination.searchParams.get("utm_campaign"), "campaign-123");
 });
 
-test("next marketing run advances to the next four-hour slot", () => {
+test("next marketing run advances to the next hourly :15 slot", () => {
   assert.equal(
     marketingTestHelpers.nextRunAt({ schedule_hour_utc: 9, schedule_minute_utc: 15 }, new Date("2026-07-31T10:00:00Z")),
-    "2026-07-31T13:15:00.000Z"
+    "2026-07-31T10:15:00.000Z"
   );
   assert.equal(
     marketingTestHelpers.nextRunAt({ schedule_hour_utc: 4, schedule_minute_utc: 15 }, new Date("2026-07-31T21:00:00Z")),
-    "2026-08-01T00:15:00.000Z"
+    "2026-07-31T21:15:00.000Z"
   );
 });
 
-test("four-hour schedule recognises each slot and creates a per-slot duplicate key", () => {
+test("hourly schedule accepts only HH:15 and creates a per-slot duplicate key", () => {
   const settings = { schedule_hour_utc: 4, schedule_minute_utc: 15 };
-  for (const hour of [0, 4, 8, 12, 16, 20]) {
+  for (let hour = 0; hour < 24; hour += 1) {
     const date = new Date(`2026-08-06T${String(hour).padStart(2, "0")}:15:00Z`);
     assert.equal(marketingTestHelpers.isScheduledSlot(settings, date), true);
   }
-  assert.equal(marketingTestHelpers.isScheduledSlot(settings, new Date("2026-08-06T06:15:00Z")), false);
+  for (const minute of [0, 30, 45]) {
+    assert.equal(marketingTestHelpers.isScheduledSlot(settings, new Date(`2026-08-06T00:${String(minute).padStart(2, "0")}:00Z`)), false);
+  }
   assert.equal(marketingTestHelpers.scheduleSlotKey(settings, new Date("2026-08-06T08:19:30Z")), "2026-08-06T08:15");
+  assert.equal(marketingTestHelpers.scheduleSlotKey(settings, new Date("2026-08-06T09:19:30Z")), "2026-08-06T09:15");
+});
+
+test("hourly schedule atomically deduplicates replayed invocations before loading suppliers", async () => {
+  const settings = { enabled: 1, schedule_hour_utc: 4, schedule_minute_utc: 15, last_run_date: "", next_run_at: "2099-01-01T00:00:00.000Z" };
+  let claimed = false;
+  let supplierLoads = 0;
+  const db = {
+    prepare(sql) {
+      return {
+        bind() { return this; },
+        first: async () => {
+          if (sql.includes("marketing_settings")) return { ...settings };
+          if (sql.includes("marketing_one_time_guards")) {
+            if (claimed) return null;
+            claimed = true;
+            return { action_key: "marketing_schedule:2026-08-06T01:15" };
+          }
+          return null;
+        },
+      };
+    },
+  };
+  const options = { loadProducts: async () => { supplierLoads += 1; return []; } };
+  const event = { scheduledTime: Date.parse("2026-08-06T01:15:00Z") };
+  const first = await runMarketingSchedule(event, { GIFT_CARD_DB: db }, options);
+  const replay = await runMarketingSchedule(event, { GIFT_CARD_DB: db }, options);
+  assert.equal(first.skipped, "no-affiliate-eligible-product");
+  assert.deepEqual(replay, { ok: true, skipped: "already-posted-this-slot" });
+  assert.equal(supplierLoads, 1);
 });
 
 function approvedMarketingEtsyProduct(overrides = {}) {
@@ -448,6 +485,71 @@ function approvedMarketingEtsyProduct(overrides = {}) {
     affiliate_storefront: "Concordia Mercatura", image: "https://example.com/dog.jpg", ...overrides,
   };
 }
+
+function marketingCatalogueProduct(source, id, overrides = {}) {
+  const ebayUrl = `https://www.ebay.co.uk/itm/${id}?mkcid=1&mkrid=710-53481-19255-0&siteid=3&campid=5339164469&customid=&toolid=10001&mkevt=1`;
+  return {
+    source,
+    id,
+    name: `${source} dog product ${id}`,
+    image: `https://images.example.com/${id}.jpg`,
+    price: 12.99,
+    publicUrl: source === "ebay" ? ebayUrl : `https://bingodogwash.com/product.html?id=${id}`,
+    marketingApproved: true,
+    marketingDestinationVerified: true,
+    ...overrides,
+  };
+}
+
+function rotationDb({ etsy = null, lastSource = "", history = {} } = {}) {
+  return {
+    prepare(sql) {
+      let source = "";
+      return {
+        bind(value) { source = String(value || ""); return this; },
+        first: async () => {
+          if (/FROM etsy_products/.test(sql)) return etsy;
+          if (/SELECT product_source FROM marketing_posts/.test(sql)) return lastSource ? { product_source: lastSource } : null;
+          return null;
+        },
+        all: async () => ({ results: /SELECT product_id, created_at FROM marketing_posts/.test(sql) ? history[source] || [] : [] }),
+      };
+    },
+  };
+}
+
+test("supplier rotation persists across runs by using existing posting history", async () => {
+  const catalogueProducts = [marketingCatalogueProduct("avasam", "a1"), marketingCatalogueProduct("ebay", "e1")];
+  const etsy = approvedMarketingEtsyProduct();
+  assert.equal((await marketingTestHelpers.selectNextProduct(rotationDb({ etsy, lastSource: "avasam" }), { catalogueProducts })).source, "etsy");
+  assert.equal((await marketingTestHelpers.selectNextProduct(rotationDb({ etsy, lastSource: "etsy" }), { catalogueProducts })).source, "ebay");
+  assert.equal((await marketingTestHelpers.selectNextProduct(rotationDb({ etsy, lastSource: "ebay" }), { catalogueProducts })).source, "avasam");
+});
+
+test("ineligible or unavailable suppliers are skipped without resetting rotation", async () => {
+  const invalidAvasam = marketingCatalogueProduct("avasam", "fallback", { marketingApproved: false, marketingDestinationVerified: false });
+  const invalidEbay = marketingCatalogueProduct("ebay", "untracked", { publicUrl: "https://www.ebay.co.uk/itm/untracked" });
+  const validEbay = marketingCatalogueProduct("ebay", "tracked");
+  const selected = await marketingTestHelpers.selectNextProduct(rotationDb({ lastSource: "etsy" }), { catalogueProducts: [invalidAvasam, invalidEbay, validEbay] });
+  assert.equal(selected.id, "tracked");
+  assert.equal(marketingTestHelpers.eligibleCatalogueProduct(invalidAvasam), null);
+  assert.equal(marketingTestHelpers.hasEbayAffiliateTracking(invalidEbay.publicUrl), false);
+});
+
+test("catalogue rotation preserves cooldown and immediate-repeat prevention within a supplier", async () => {
+  const catalogueProducts = [marketingCatalogueProduct("avasam", "a1"), marketingCatalogueProduct("avasam", "a2")];
+  const db = rotationDb({
+    lastSource: "etsy",
+    history: { avasam: [{ product_id: "a1", created_at: "2026-08-20T10:00:00.000Z" }] },
+  });
+  const selected = await marketingTestHelpers.selectNextProduct(db, {
+    catalogueProducts,
+    respectCooldown: true,
+    now: new Date("2026-08-21T10:00:00.000Z"),
+  });
+  assert.equal(selected.id, "a2");
+  assert.equal(selected.cooldownFallback, false);
+});
 
 test("marketing Etsy selection is limited to public Concordia catalogue records", async () => {
   let selectionSql = "";

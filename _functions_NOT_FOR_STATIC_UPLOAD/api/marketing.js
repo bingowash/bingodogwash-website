@@ -8,7 +8,7 @@ const INSTAGRAM_PERMISSION_UNCONFIRMED = "Instagram identity verified, but publi
 const FACEBOOK_REQUIRED_SCOPES = ["pages_manage_posts", "pages_read_engagement", "pages_show_list"];
 const FACEBOOK_TOKEN_EXPIRED = "Facebook connection expired. Reconnect Meta account.";
 const MAX_RETRIES = 3;
-const MARKETING_INTERVAL_HOURS = 4;
+const MARKETING_INTERVAL_HOURS = 1;
 const PRODUCT_COOLDOWN_DAYS = 7;
 const ETSY_CONCORDIA_STOREFRONT = "Concordia Mercatura";
 const ETSY_AFFILIATE_PROVIDER = "rakuten";
@@ -82,16 +82,21 @@ export async function handleMarketingRequest(request, env, url = new URL(request
   return json({ ok: false, error: "Marketing endpoint not found." }, 404);
 }
 
-export async function runMarketingSchedule(event, env) {
+export async function runMarketingSchedule(event, env, options = {}) {
   if (publishingDisabled(env)) return { ok: true, skipped: "publishing-disabled" };
   if (!env.GIFT_CARD_DB) return { ok: false, skipped: "database-unavailable" };
+  const db = env.GIFT_CARD_DB;
   const settings = await getSettings(env);
   if (!settings || !settings.enabled) return { ok: true, skipped: "paused" };
   const now = new Date(event?.scheduledTime || Date.now());
   if (!isScheduledSlot(settings, now)) return { ok: true, skipped: "outside-schedule" };
   const slot = scheduleSlotKey(settings, now);
   if (settings.last_run_date === slot) return { ok: true, skipped: "already-posted-this-slot" };
-  return runMarketingAutomation(env, { trigger: "scheduled", scheduledAt: now });
+  const guard = await db.prepare("INSERT INTO marketing_one_time_guards (action_key, created_at) VALUES (?, ?) ON CONFLICT(action_key) DO NOTHING RETURNING action_key")
+    .bind(`marketing_schedule:${slot}`, now.toISOString()).first();
+  if (!guard) return { ok: true, skipped: "already-posted-this-slot" };
+  const catalogueProducts = typeof options.loadProducts === "function" ? await options.loadProducts() : [];
+  return runMarketingAutomation(env, { trigger: "scheduled", scheduledAt: now, catalogueProducts });
 }
 
 export async function runMarketingAutomation(env, options = {}) {
@@ -105,6 +110,7 @@ export async function runMarketingAutomation(env, options = {}) {
   const product = await selectNextProduct(db, {
     respectCooldown: options.trigger === "scheduled",
     now: options.scheduledAt instanceof Date ? options.scheduledAt : new Date(),
+    catalogueProducts: options.catalogueProducts,
   });
   if (!product) return { ok: false, skipped: "no-affiliate-eligible-product", error: "No affiliate-eligible product available." };
 
@@ -365,7 +371,7 @@ function firstCanonicalEtsyProduct(products) {
   return null;
 }
 
-async function selectNextProduct(db, { respectCooldown = false, now = new Date() } = {}) {
+async function selectNextEtsyProduct(db, { respectCooldown = false, now = new Date() } = {}) {
   if (!respectCooldown) {
     return firstCanonicalEtsyProduct(await marketingProductCandidates(db.prepare(etsyMarketingProductSelectionSql())));
   }
@@ -380,6 +386,126 @@ async function selectNextProduct(db, { respectCooldown = false, now = new Date()
   const fallback = firstCanonicalEtsyProduct(await marketingProductCandidates(db.prepare(etsyMarketingProductSelectionSql({ excludeMostRecent: true }))));
   if (fallback) fallback.cooldownFallback = true;
   return fallback || null;
+}
+
+const PREFERRED_SOURCE_ORDER = ["avasam", "etsy", "ebay"];
+const EBAY_AFFILIATE_PARAMS = {
+  mkcid: "1",
+  mkrid: "710-53481-19255-0",
+  siteid: "3",
+  campid: "5339164469",
+  customid: "",
+  toolid: "10001",
+  mkevt: "1",
+};
+
+function normalizedSource(value) {
+  return clean(value, 80).toLowerCase();
+}
+
+function hasEbayAffiliateTracking(value) {
+  try {
+    const url = new URL(String(value || ""));
+    return url.protocol === "https:" && Object.entries(EBAY_AFFILIATE_PARAMS)
+      .every(([key, expected]) => url.searchParams.has(key) && url.searchParams.get(key) === expected);
+  } catch {
+    return false;
+  }
+}
+
+function isBingoDestination(value) {
+  try {
+    const url = new URL(String(value || ""));
+    return url.protocol === "https:" && /(^|\.)bingodogwash\.com$/i.test(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function eligibleCatalogueProduct(product) {
+  const source = normalizedSource(product?.source || product?.supplier);
+  const url = clean(product?.publicUrl || product?.public_url || product?.url || product?.itemUrl || product?.externalUrl, 1000);
+  const id = clean(product?.id || product?.sku || product?.sourceProductId, 180);
+  const name = clean(product?.name || product?.title, 200);
+  const image = clean(product?.image || product?.imageUrl || product?.primaryImage, 1000);
+  const price = Number(product?.price?.value ?? product?.price);
+  if (!source || source === "etsy" || !id || !name || !image || !Number.isFinite(price) || price <= 0 || !url) return null;
+  if (source === "ebay" && !(product?.marketingApproved === true && product?.marketingDestinationVerified === true && hasEbayAffiliateTracking(url))) return null;
+  if (source === "avasam" && !(product?.marketingApproved === true && product?.marketingDestinationVerified === true && isBingoDestination(url))) return null;
+  if (source !== "ebay" && source !== "avasam" && !isBingoDestination(url)
+    && !(product?.marketingApproved === true && product?.marketingDestinationVerified === true)) return null;
+  return { ...product, source, id, name, image, url, price };
+}
+
+function orderedSources(sources) {
+  const unique = [...new Set(sources.map(normalizedSource).filter(Boolean))];
+  return [
+    ...PREFERRED_SOURCE_ORDER.filter((source) => unique.includes(source)),
+    ...unique.filter((source) => !PREFERRED_SOURCE_ORDER.includes(source)).sort(),
+  ];
+}
+
+async function latestScheduledSource(db) {
+  try {
+    const row = await db.prepare(`SELECT product_source FROM marketing_posts
+      WHERE trigger_type = 'scheduled' ORDER BY created_at DESC LIMIT 1`).first();
+    return normalizedSource(row?.product_source);
+  } catch {
+    return "";
+  }
+}
+
+async function selectCatalogueProduct(db, source, products, { respectCooldown, now }) {
+  let history = [];
+  try {
+    const result = await db.prepare(`SELECT product_id, created_at FROM marketing_posts
+      WHERE product_source = ? AND trigger_type = 'scheduled' AND status IN ('success', 'partial')
+      ORDER BY created_at DESC`).bind(source).all();
+    history = result?.results || [];
+  } catch {
+    history = [];
+  }
+  const lastByProduct = new Map();
+  for (const row of history) if (!lastByProduct.has(String(row.product_id))) lastByProduct.set(String(row.product_id), row.created_at);
+  const latestId = String(history[0]?.product_id || "");
+  const cutoff = now.getTime() - PRODUCT_COOLDOWN_DAYS * 24 * 60 * 60 * 1000;
+  const ranked = [...products].sort((left, right) => {
+    const leftAt = Date.parse(lastByProduct.get(String(left.id)) || "") || 0;
+    const rightAt = Date.parse(lastByProduct.get(String(right.id)) || "") || 0;
+    return leftAt - rightAt || String(left.id).localeCompare(String(right.id));
+  });
+  const available = respectCooldown
+    ? ranked.filter((product) => (Date.parse(lastByProduct.get(String(product.id)) || "") || 0) <= cutoff)
+    : ranked;
+  const selected = available.find((product) => String(product.id) !== latestId) || (latestId ? null : available[0]);
+  if (selected) return { ...selected, cooldownFallback: false };
+  const fallback = ranked.find((product) => String(product.id) !== latestId);
+  return fallback ? { ...fallback, cooldownFallback: true } : null;
+}
+
+async function selectNextProduct(db, { respectCooldown = false, now = new Date(), catalogueProducts = [] } = {}) {
+  const catalogue = (Array.isArray(catalogueProducts) ? catalogueProducts : [])
+    .map(eligibleCatalogueProduct).filter(Boolean);
+  if (!catalogue.length) return selectNextEtsyProduct(db, { respectCooldown, now });
+
+  const etsy = await selectNextEtsyProduct(db, { respectCooldown, now });
+  const grouped = new Map();
+  for (const product of catalogue) {
+    if (!grouped.has(product.source)) grouped.set(product.source, []);
+    grouped.get(product.source).push(product);
+  }
+  if (etsy) grouped.set("etsy", [etsy]);
+  const sources = orderedSources([...grouped.keys()]);
+  const previous = await latestScheduledSource(db);
+  const previousIndex = sources.indexOf(previous);
+  const start = previousIndex >= 0 ? (previousIndex + 1) % sources.length : 0;
+  for (let offset = 0; offset < sources.length; offset += 1) {
+    const source = sources[(start + offset) % sources.length];
+    if (source === "etsy") return grouped.get(source)[0];
+    const selected = await selectCatalogueProduct(db, source, grouped.get(source), { respectCooldown, now });
+    if (selected) return selected;
+  }
+  return null;
 }
 
 async function selectInstagramProduct(db, preferredProduct, { respectCooldown = false, now = new Date() } = {}) {
@@ -1648,4 +1774,4 @@ function clean(value, max = 500) { return String(value || "").replace(/\s+/g, " 
 async function readJson(request) { try { return await request.json(); } catch { return null; } }
 function json(body, status = 200) { return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" } }); }
 
-export const marketingTestHelpers = { campaignUrl, trackedDestination, nextRunAt, isScheduledSlot, scheduleSlotKey, hash, benefit, metaAccessToken, resolveMetaConnection, resolveFacebookPublishingContext, resolveFacebookPageAccess, publishWithRetry, publishFacebook, publishInstagram, waitForInstagramMedia, publishFacebookPages, validateInstagramImage, selectNextProduct, selectInstagramProduct, canonicalEtsyAffiliateUrl, instagramFeedCaption, configuredFacebookPageIds, postingEndpointResponse, redirectPage, instagramPreflight, facebookPreflight, facebookHistoryDestination, publishingDisabled };
+export const marketingTestHelpers = { campaignUrl, trackedDestination, nextRunAt, isScheduledSlot, scheduleSlotKey, hash, benefit, metaAccessToken, resolveMetaConnection, resolveFacebookPublishingContext, resolveFacebookPageAccess, publishWithRetry, publishFacebook, publishInstagram, waitForInstagramMedia, publishFacebookPages, validateInstagramImage, selectNextProduct, selectInstagramProduct, canonicalEtsyAffiliateUrl, hasEbayAffiliateTracking, eligibleCatalogueProduct, orderedSources, instagramFeedCaption, configuredFacebookPageIds, postingEndpointResponse, redirectPage, instagramPreflight, facebookPreflight, facebookHistoryDestination, publishingDisabled };

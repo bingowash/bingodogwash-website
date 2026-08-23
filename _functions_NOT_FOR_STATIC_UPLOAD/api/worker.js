@@ -223,7 +223,9 @@ export default {
     });
   },
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(runMarketingSchedule(event, env || {}).catch((error) => logError("Marketing schedule failed", error)));
+    ctx.waitUntil(runMarketingSchedule(event, env || {}, {
+      loadProducts: () => requestEnvStorage.run(env || {}, () => loadProspectingCatalogue()),
+    }).catch((error) => logError("Marketing schedule failed", error)));
     const prospectingEnabled = /^(1|true|yes|on)$/i.test(String(env?.AI_PROSPECTING_ENABLED || "").trim());
     const catalogue = event.cron === "0 2 * * *" && prospectingEnabled
       ? requestEnvStorage.run(env || {}, () => loadProspectingCatalogue())
@@ -5041,7 +5043,14 @@ async function loadProspectingCatalogue(query="dog products") {
     const source = sources[index];
     const data = result.status === "fulfilled" ? await catalogueFeedData(result.value) : { ok: false, products: [] };
     const mapped = (Array.isArray(data.products) ? data.products : [])
-      .map((item, productIndex) => adminCatalogueProduct(item, source, productIndex))
+      .map((item, productIndex) => {
+        const product = adminCatalogueProduct(item, source, productIndex);
+        return product ? {
+          ...product,
+          marketingApproved: source === "avasam" ? data.live === true : source === "ebay" ? data.ok === true : false,
+          marketingDestinationVerified: source === "avasam" ? data.live === true : source === "ebay" ? data.ok === true : false,
+        } : null;
+      })
       .filter(Boolean);
     products.push(...mapped);
     sourceStatus[source] = { available: Boolean(mapped.length), count: mapped.length };
