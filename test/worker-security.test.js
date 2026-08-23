@@ -21,6 +21,20 @@ import {
 } from "../_functions_NOT_FOR_STATIC_UPLOAD/api/competition.js";
 import { nativeShareMode, shareCaption, shareTargets } from "../public/competition-sharing.js";
 
+test("Worker dispatch preserves protected Distribution Channels routing", async () => {
+  const db = { prepare(sql) { return { bind() { return this; }, first: async () => sql.includes("newsletter_subscribers") ? { total: 2 } : null }; } };
+  const env = { ADMIN_API_TOKEN:"admin-token", EMAIL:{ send() { throw new Error("status route must not send"); } }, GIFT_CARD_DB:db, AI_EMAIL_SENDER_NAME:"Bingo Dog Wash", AI_EMAIL_SENDER_EMAIL:"hello@bingodogwash.com", AI_EMAIL_RECIPIENT_SOURCE:"newsletter_subscribers", AI_EMAIL_SENDING_ENABLED:"false" };
+  for (const path of ["/api/admin/distribution-channels", "/api/admin/distribution-channels/"]) {
+    const unauthenticated = await worker.fetch(new Request(`https://admin.bingodogwash.com${path}`), env);
+    assert.equal(unauthenticated.status, 401);
+    const authenticated = await worker.fetch(new Request(`https://admin.bingodogwash.com${path}`, { headers:{ Authorization:"Bearer admin-token" } }), env);
+    assert.equal(authenticated.status, 200);
+    const body = await authenticated.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.channels.email.label, "Sending disabled");
+  }
+});
+
 test("admin hostname root serves the consolidated admin dashboard", async () => {
   let assetPath = "";
   const response = await worker.fetch(new Request("https://admin.bingodogwash.com/"), {

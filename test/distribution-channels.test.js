@@ -13,6 +13,26 @@ test("distribution channel status is admin protected", async () => {
   assert.equal(response.status, 401);
 });
 
+test("canonical and trailing-slash status routes reach the protected handler", async () => {
+  const configured = readyEmailEnv({ AI_EMAIL_SENDING_ENABLED:"false" });
+  for (const path of ["", "/"]) {
+    const unauthenticated = await handleDistributionChannelRequest(new Request(`https://bingodogwash.com/api/admin/distribution-channels${path}`), configured);
+    assert.equal(unauthenticated.status, 401);
+    const authenticated = await handleDistributionChannelRequest(request(path), configured);
+    assert.equal(authenticated.status, 200);
+    const body = await authenticated.json();
+    assert.equal(body.ok, true);
+    assert.deepEqual(Object.keys(body.channels), ["email", "googleMerchant", "ebay"]);
+    assert.equal(body.channels.email.label, "Sending disabled");
+  }
+});
+
+test("production routes explicitly select the Distribution Channels Worker path", () => {
+  const config = readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8");
+  assert.match(config, /"pattern": "bingodogwash\.com\/api\/admin\/distribution-channels\*"/);
+  assert.match(config, /"pattern": "admin\.bingodogwash\.com\/api\/admin\/distribution-channels\*"/);
+});
+
 test("missing production configuration reports real disconnected states", () => {
   const channels = distributionChannelTestHelpers.capabilities({});
   assert.equal(channels.email.label, "Draft only");

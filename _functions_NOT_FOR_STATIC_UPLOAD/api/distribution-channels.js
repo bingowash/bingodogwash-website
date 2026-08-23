@@ -7,7 +7,7 @@ export function isDistributionChannelPath(pathname) {
 
 export async function handleDistributionChannelRequest(request, env, url = new URL(request.url)) {
   if (!(await isAdmin(request, env))) return json({ ok: false, error: "Admin authorisation required." }, 401);
-  if (request.method === "GET" && url.pathname === BASE_PATH) return status(env);
+  if (request.method === "GET" && (url.pathname === BASE_PATH || url.pathname === `${BASE_PATH}/`)) return status(env);
   const parts = url.pathname.slice(`${BASE_PATH}/`.length).split("/");
   const channel = parts[0];
   const action = parts[1];
