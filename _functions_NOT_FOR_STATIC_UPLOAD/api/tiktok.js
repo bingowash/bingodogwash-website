@@ -130,7 +130,7 @@ async function status(env) {
   let connections = [];
   if (env.GIFT_CARD_DB) {
     try {
-      connections = (await env.GIFT_CARD_DB.prepare("SELECT account_role, status, open_id, access_token, access_token_expires_at, scopes, display_name, username, updated_at FROM tiktok_connections WHERE account_role IN ('creator', 'marketing')").all()).results || [];
+      connections = (await env.GIFT_CARD_DB.prepare("SELECT account_role, status, open_id, access_token, refresh_token, access_token_expires_at, scopes, display_name, username, updated_at FROM tiktok_connections WHERE account_role IN ('creator', 'marketing')").all()).results || [];
     } catch {
       connections = [];
     }
@@ -139,8 +139,9 @@ async function status(env) {
     const connection = connections.find((item) => item.account_role === role);
     const scopes = String(connection?.scopes || "").split(/[ ,]+/).filter(Boolean);
     const tokenPresent = Boolean(connection?.access_token);
+    const refreshTokenPresent = Boolean(connection?.refresh_token);
     const tokenUnexpired = tokenPresent && (!connection.access_token_expires_at || Date.parse(connection.access_token_expires_at) > Date.now());
-    return { role, connected: connection?.status === "Connected" && tokenUnexpired && scopes.includes("video.upload"), tokenPresent, scopesAvailable: scopes, displayName: connection?.display_name || "", username: connection?.username || "", openId: connection?.open_id || "", updatedAt: connection?.updated_at || "" };
+    return { role, connected: connection?.status === "Connected" && tokenUnexpired && scopes.includes("video.upload"), tokenPresent, refreshTokenPresent, storedConnectionRetained: tokenPresent || refreshTokenPresent, accessTokenExpired: tokenPresent && !tokenUnexpired, scopesAvailable: scopes, displayName: connection?.display_name || "", username: connection?.username || "", openId: connection?.open_id || "", updatedAt: connection?.updated_at || "" };
   };
   const creator = shape("creator");
   const marketing = shape("marketing");

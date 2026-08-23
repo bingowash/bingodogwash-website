@@ -24,7 +24,7 @@ const contentFields = [
 ];
 const channelDefinitions = [
   ["website", "Bingo Dog Wash Website", "draft"], ["facebook", "Facebook", "needs"], ["instagram", "Instagram", "needs"],
-  ["tiktok", "TikTok", "needs"], ["tiktokShop", "TikTok Shop", "needs"], ["email", "Email", "draft"],
+  ["tiktokCreator", "TikTok Creator", "needs"], ["tiktok", "TikTok Marketing", "needs"], ["tiktokShop", "TikTok Shop", "needs"], ["email", "Email / Brevo", "draft"],
   ["googleMerchant", "Google Merchant", "needs"], ["ebay", "eBay", "draft"], ["amazon", "Amazon Affiliate", "draft"],
   ["etsy", "Etsy", "draft"], ["shopline", "Shopline", "needs"], ["shopwired", "ShopWired", "needs"],
   ["bigcommerce", "BigCommerce", "needs"], ["wish", "Wish", "needs"], ["woocommerce", "WooCommerce", "needs"],
@@ -67,7 +67,7 @@ function renderChannels() {
   host.replaceChildren(...channelDefinitions.map(([id, label, fallback]) => {
     const info = state.channels[id] || { status:fallback, label:fallback === "draft" ? "Draft only" : fallback === "unavailable" ? "Unavailable" : "Needs connection" };
     const item = document.createElement("label"); item.className="channel-card";
-    const input = document.createElement("input"); input.type="checkbox"; input.value=id; input.dataset.channel=id; input.disabled=info.status === "unavailable" || info.status === "needs";
+    const input = document.createElement("input"); input.type="checkbox"; input.value=id; input.dataset.channel=id; input.disabled=info.selectable === false || info.status === "unavailable" || info.status === "needs";
     input.addEventListener("change", () => { renderPreviews(); qs("[data-facebook-pages]").hidden = !(id === "facebook" && input.checked && state.facebookPageIds.length > 1); });
     const strong=document.createElement("strong"); strong.textContent=label; const status=document.createElement("span"); status.className=`channel-status ${info.status}`; status.textContent=info.label;
     item.append(input,strong,status); if(info.missing?.length)item.title=`Missing: ${info.missing.join(", ")}`;
@@ -123,15 +123,15 @@ function updateProductImage(value) { const image=qs("[data-product-image]");cons
 
 async function loadChannels() {
   const [metaResult,tiktokResult,channelResult]=await Promise.allSettled([
-    fetch(marketingApi,{headers:authHeaders()}).then(async(response)=>{const data=await response.json().catch(()=>({}));if(!response.ok||!data.ok)throw new Error(data.error||"Meta status unavailable.");return data;}),
-    fetch(`${tiktokApi}/status`,{headers:authHeaders()}).then(async(response)=>{const data=await response.json().catch(()=>({}));if(!response.ok||!data.ok)throw new Error(data.error||"TikTok status unavailable.");return data;}),
-    fetch(distributionChannelsApi,{headers:authHeaders()}).then(async(response)=>{const data=await response.json().catch(()=>({}));if(!response.ok||!data.ok)throw new Error(data.error||"Distribution channel status unavailable.");return data;}),
+    adminRequest(marketingApi,{headers:{Accept:"application/json"}}).then(async(response)=>{const data=await response.json().catch(()=>({}));if(!response.ok||!data.ok)throw new Error(data.error||"Meta status unavailable.");return data;}),
+    adminRequest(`${tiktokApi}/status`,{headers:{Accept:"application/json"}}).then(async(response)=>{const data=await response.json().catch(()=>({}));if(!response.ok||!data.ok)throw new Error(data.error||"TikTok status unavailable.");return data;}),
+    adminRequest(distributionChannelsApi,{headers:{Accept:"application/json"}}).then(async(response)=>{const data=await response.json().catch(()=>({}));if(!response.ok||!data.ok)throw new Error(data.error||"Distribution channel status unavailable.");return data;}),
   ]);
-  if(metaResult.status==="fulfilled"){const fb=metaResult.value.platformStatus?.facebook;const ig=metaResult.value.platformStatus?.instagram;state.channels.facebook={status:fb?.ok?"connected":"needs",label:fb?.ok?"Connected":"Needs connection"};state.channels.instagram={status:ig?.ok?"connected":"needs",label:ig?.ok?"Connected":"Needs connection"};state.facebookPageIds=fb?.accessiblePageIds||[];}
+  if(metaResult.status==="fulfilled"){const fb=metaResult.value.platformStatus?.facebookPrimary;const ig=metaResult.value.platformStatus?.instagram;state.channels.facebook={status:fb?.ok?"connected":"needs",label:fb?.ok?"Connected":"Needs connection"};state.channels.instagram={status:ig?.ok?"connected":"needs",label:ig?.ok?"Connected":"Needs connection"};state.facebookPageIds=fb?.accessiblePageIds||[];}
   else{state.channels.facebook={status:"needs",label:"Needs connection"};state.channels.instagram={status:"needs",label:"Needs connection"};state.facebookPageIds=[];setMessage(`Channel status unavailable: ${metaResult.reason.message}. Publishing remains disabled.`);}
-  if(tiktokResult.status==="fulfilled"){const tiktok=tiktokResult.value.tiktok||{};const connected=tiktok.connected===true;state.tiktokDirectPostEnabled=tiktok.directPostEnabled===true;state.tiktokDirectPostReady=tiktok.directPostReady===true;state.channels.tiktok={status:connected?"connected":"needs",label:connected?(state.tiktokDirectPostReady?"Direct Post ready":"Connected · Draft only"):"Needs connection"};}
-  else{state.channels.tiktok={status:"needs",label:"Needs connection"};if(metaResult.status==="fulfilled")setMessage(`TikTok status unavailable: ${tiktokResult.reason.message}.`);}
-  if(channelResult.status==="fulfilled"){for(const id of ["email","googleMerchant","ebay"]){const info=channelResult.value.channels?.[id];if(info){const blocked=id!=="email"&&(info.status==="configuration_error"||info.status==="needs_connection");state.channels[id]={status:info.status==="ready"?"connected":blocked?"needs":"draft",label:info.label,ready:info.ready===true,missing:info.missing||[]};}}}
+  if(tiktokResult.status==="fulfilled"){const tiktok=tiktokResult.value.tiktok||{};const creator=tiktok.accounts?.creator||{};const marketing=tiktok.accounts?.marketing||{};const roleState=(account,role)=>account.connected===true?{status:"connected",label:"Connected",selectable:role==="marketing"}:{status:"needs",label:account.accessTokenExpired&&account.storedConnectionRetained?"Access token expired · Stored connection retained":"Not connected",selectable:false};state.tiktokDirectPostEnabled=tiktok.directPostEnabled===true;state.tiktokDirectPostReady=tiktok.directPostReady===true;state.channels.tiktokCreator=roleState(creator,"creator");state.channels.tiktok={...roleState(marketing,"marketing"),label:marketing.connected===true?(state.tiktokDirectPostReady?"Connected · Direct Post ready":"Connected · Draft only"):marketing.accessTokenExpired&&marketing.storedConnectionRetained?`Access token expired · Stored connection retained${state.tiktokDirectPostEnabled?" · Direct Post configured":""}`:"Not connected"};}
+  else{state.channels.tiktokCreator={status:"unavailable",label:"Status unavailable",selectable:false};state.channels.tiktok={status:"unavailable",label:"Status unavailable",selectable:false};if(metaResult.status==="fulfilled")setMessage(`TikTok status unavailable: ${tiktokResult.reason.message}.`);}
+  if(channelResult.status==="fulfilled"){for(const id of ["email","googleMerchant","ebay"]){const info=channelResult.value.channels?.[id];if(info){const blocked=id!=="email"&&(info.status==="configuration_error"||info.status==="needs_connection");const unavailable=info.status==="status_unavailable";state.channels[id]={status:info.status==="ready"?"connected":unavailable?"unavailable":blocked?"needs":"draft",label:info.label,ready:info.ready===true,missing:info.missing||[]};}}}
   else{for(const id of ["email","googleMerchant","ebay"])state.channels[id]={status:"draft",label:"Status unavailable",ready:false,missing:[channelResult.reason.message]};}
   renderChannels();
 }

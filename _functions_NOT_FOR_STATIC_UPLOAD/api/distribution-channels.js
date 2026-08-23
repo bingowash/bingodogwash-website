@@ -18,10 +18,25 @@ export async function handleDistributionChannelRequest(request, env, url = new U
 }
 
 async function status(env) {
-  const connections = await storedConnections(env.GIFT_CARD_DB);
-  const channels = capabilities(env, connections);
-  channels.email = await emailCapability(env);
+  const ids = ["email", "googleMerchant", "ebay"];
+  const results = await Promise.allSettled([
+    emailCapability(env),
+    storedChannelCapability(env, "googleMerchant"),
+    storedChannelCapability(env, "ebay"),
+  ]);
+  const channels = Object.fromEntries(ids.map((id, index) => [id,
+    results[index].status === "fulfilled" ? results[index].value : unavailableChannel(id)
+  ]));
   return json({ ok: true, channels });
+}
+
+async function storedChannelCapability(env, channel) {
+  const connection = await storedConnection(env.GIFT_CARD_DB, channel);
+  return capabilities(env, connection ? { [channel]: connection } : {})[channel];
+}
+
+function unavailableChannel(channel) {
+  return { status: "status_unavailable", label: "Status unavailable", ready: false, connected: false, actionAvailable: false, connectAvailable: false, provider: channel };
 }
 
 function capabilities(env, connections = {}) {
@@ -102,12 +117,9 @@ async function approvedRecipients(db) {
   return [...new Set((result.results || []).map((row) => String(row.email || "").trim().toLowerCase()).filter(validEmail))];
 }
 
-async function storedConnections(db) {
-  if (!db) return {};
-  try {
-    const rows = (await db.prepare("SELECT channel, access_token, refresh_token FROM distribution_channel_connections WHERE channel IN ('googleMerchant','ebay')").all()).results || [];
-    return Object.fromEntries(rows.map((row) => [row.channel, row]));
-  } catch { return {}; }
+async function storedConnection(db, channel) {
+  if (!db) return null;
+  return db.prepare("SELECT channel, access_token, refresh_token FROM distribution_channel_connections WHERE channel = ? LIMIT 1").bind(channel).first();
 }
 
 function connectionMessage(channel, env) {
@@ -130,4 +142,4 @@ function mapGoogleProduct(product) {
 function mapEbayInventoryItem(product) { return { sku:String(product?.sku||product?.id||"").slice(0,50), availability:{ shipToLocationAvailability:{ quantity:Number.isInteger(product?.stock)&&product.stock>=0?product.stock:0 } }, condition:"NEW", product:{ title:String(product?.name||"").slice(0,80), description:String(product?.description||"").slice(0,4000), imageUrls:[httpsUrl(product?.image)].filter(Boolean) } }; }
 function httpsUrl(value) { try { const url=new URL(String(value||""));return url.protocol==="https:"?url.toString():""; } catch { return ""; } }
 
-export const distributionChannelTestHelpers = { capabilities, emailCapability, mapGoogleProduct, mapEbayInventoryItem };
+export const distributionChannelTestHelpers = { capabilities, emailCapability, storedChannelCapability, unavailableChannel, mapGoogleProduct, mapEbayInventoryItem };

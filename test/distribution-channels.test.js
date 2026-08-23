@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { handleDistributionChannelRequest, distributionChannelTestHelpers } from "../_functions_NOT_FOR_STATIC_UPLOAD/api/distribution-channels.js";
 
 const request = (path="", options={}) => new Request(`https://bingodogwash.com/api/admin/distribution-channels${path}`, { headers: { Authorization:"Bearer admin-token", "Content-Type":"application/json", ...(options.headers||{}) }, ...options });
@@ -88,6 +89,46 @@ test("channel failures are represented independently", () => {
   const channels = distributionChannelTestHelpers.capabilities(env({ EMAIL:{} }));
   assert.deepEqual(Object.keys(channels),["email","googleMerchant","ebay"]);
   assert.equal(channels.email.ready,false);
+});
+
+test("Product Centre status reads retain the canonical authenticated admin wrapper", () => {
+  const source=readFileSync(new URL("../public/admin/ai-drafts.js",import.meta.url),"utf8");
+  const body=source.slice(source.indexOf("async function loadChannels()"),source.indexOf("async function connectTikTok"));
+  assert.match(body,/adminRequest\(marketingApi/);assert.match(body,/adminRequest\(`\$\{tiktokApi\}\/status`/);assert.match(body,/adminRequest\(distributionChannelsApi/);assert.doesNotMatch(body,/\bfetch\(/);
+});
+
+function isolatedStatusDb(failingChannel = "") {
+  return { prepare(sql) { let channel=""; return {
+    bind(value){channel=String(value||"");return this;},
+    async first(){
+      if(sql.includes("newsletter_subscribers")) return {total:1};
+      if(channel===failingChannel) throw new Error(`${channel} unavailable`);
+      if(channel==="googleMerchant") return {channel,refresh_token:"stored-google-reference"};
+      return null;
+    },
+  }; } };
+}
+
+const isolatedStatusEnv = (failingChannel="") => readyEmailEnv({
+  GIFT_CARD_DB: isolatedStatusDb(failingChannel),
+  GOOGLE_MERCHANT_CLIENT_ID:"id", GOOGLE_MERCHANT_CLIENT_SECRET:"secret", GOOGLE_MERCHANT_REDIRECT_URI:"https://bingodogwash.com/callback",
+  GOOGLE_MERCHANT_ACCOUNT_ID:"1", GOOGLE_MERCHANT_DATA_SOURCE:"2",
+  EBAY_BROWSE_CLIENT_ID:"browse", EBAY_BROWSE_CLIENT_SECRET:"browse-secret",
+});
+
+test("Google status failure does not blank Email or eBay", async () => {
+  const response=await handleDistributionChannelRequest(request(),isolatedStatusEnv("googleMerchant"));const channels=(await response.json()).channels;
+  assert.equal(channels.email.label,"Ready");assert.equal(channels.googleMerchant.label,"Status unavailable");assert.equal(channels.ebay.label,"Draft only");
+});
+
+test("eBay status failure does not blank Email or Google", async () => {
+  const response=await handleDistributionChannelRequest(request(),isolatedStatusEnv("ebay"));const channels=(await response.json()).channels;
+  assert.equal(channels.email.label,"Ready");assert.equal(channels.googleMerchant.label,"Connected");assert.equal(channels.ebay.label,"Status unavailable");
+});
+
+test("Email configuration failure does not blank Google or eBay", async () => {
+  const response=await handleDistributionChannelRequest(request(),{...isolatedStatusEnv(),AI_EMAIL_SENDER_NAME:""});const channels=(await response.json()).channels;
+  assert.equal(channels.email.label,"Needs configuration");assert.equal(channels.googleMerchant.label,"Connected");assert.equal(channels.ebay.label,"Draft only");
 });
 
 test("shop products map to safe Google Merchant and eBay inventory payloads", () => {

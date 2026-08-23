@@ -171,6 +171,21 @@ test("status reports Creator and Marketing identities independently", async () =
   assert.equal(JSON.stringify(body).includes("creator-secret"), false);
 });
 
+test("status reports expired Creator and Marketing access without refreshing or losing stored connections", async () => {
+  const originalFetch=globalThis.fetch;let requests=0;globalThis.fetch=async()=>{requests+=1;throw new Error("status must not refresh");};
+  const expired=new Date(Date.now()-60000).toISOString();
+  const db=oauthDb({connections:{
+    creator:{status:"Connected",access_token:"creator-secret",refresh_token:"creator-refresh",access_token_expires_at:expired,scopes:"video.upload"},
+    marketing:{status:"Connected",access_token:"marketing-secret",refresh_token:"marketing-refresh",access_token_expires_at:expired,scopes:"video.upload,video.publish"},
+  }});
+  try{
+    const response=await handleTikTokRequest(new Request("https://bingodogwash.com/api/tiktok/status",{headers:{Authorization:"Bearer admin-token"}}),{...configuredEnv(db),TIKTOK_DIRECT_POST_ENABLED:"true"});
+    const body=await response.json();
+    for(const role of ["creator","marketing"]){const account=body.tiktok.accounts[role];assert.equal(account.connected,false);assert.equal(account.accessTokenExpired,true);assert.equal(account.storedConnectionRetained,true);assert.equal(account.refreshTokenPresent,true);}
+    assert.equal(body.tiktok.directPostEnabled,true);assert.equal(body.tiktok.directPostReady,false);assert.equal(requests,0);assert.equal(db.saved.length,0);assert.equal(JSON.stringify(body).includes("creator-secret"),false);assert.equal(JSON.stringify(body).includes("marketing-refresh"),false);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
 test("status never rewrites a missing Creator identity outside explicit OAuth", async () => {
   const originalFetch = globalThis.fetch;
   const future = new Date(Date.now() + 60000).toISOString();
@@ -546,7 +561,7 @@ test("Marketing admin UI provides safe TikTok connect, refresh and callback hand
   assert.match(frontend, /params\.get\("tiktok"\)/);
   assert.match(frontend, /tiktokApi\}\/draft\?filename=/);
   assert.match(frontend, /64\*1024\*1024/);
-  assert.match(productCentre, /fetch\(`\$\{tiktokApi\}\/status`/);
+  assert.match(productCentre, /adminRequest\(`\$\{tiktokApi\}\/status`/);
   assert.match(productCentre, /connect\?accountRole=marketing/);
   assert.match(productCentre, /tiktok\.directPostEnabled===true/);
   assert.match(productCentre, /direct\?"direct-post":"draft"/);
