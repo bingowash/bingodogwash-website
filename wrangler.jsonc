@@ -33,7 +33,7 @@
 		]
 	},
 	"vars": {
-		"AI_EMAIL_SENDING_ENABLED": "false",
+		"AI_EMAIL_SENDING_ENABLED": "true",
 		"AI_EMAIL_SENDER_NAME": "Bingo Dog Wash",
 		"AI_EMAIL_SENDER_EMAIL": "hello@bingodogwash.com",
 		"AI_EMAIL_RECIPIENT_SOURCE": "newsletter_subscribers",
