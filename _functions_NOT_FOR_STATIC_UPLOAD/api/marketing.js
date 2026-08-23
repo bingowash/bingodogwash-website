@@ -10,6 +10,8 @@ const FACEBOOK_TOKEN_EXPIRED = "Facebook connection expired. Reconnect Meta acco
 const MAX_RETRIES = 3;
 const MARKETING_INTERVAL_HOURS = 4;
 const PRODUCT_COOLDOWN_DAYS = 7;
+const INSTAGRAM_SHARING_TEST_COOLDOWN_HOURS = 24;
+const INSTAGRAM_SHARING_TEST_CAPTION = "Bingo Dog Wash automation sharing test 🐾\n\nTesting automated Instagram → Facebook sharing.";
 const ETSY_CONCORDIA_STOREFRONT = "Concordia Mercatura";
 const ETSY_AFFILIATE_PROVIDER = "rakuten";
 const ETSY_AFFILIATE_PROGRAM = "etsy_creator_collective_uk";
@@ -55,6 +57,10 @@ export async function handleMarketingRequest(request, env, url = new URL(request
     const result = await runMarketingAutomation(env, { trigger: "test", allowWhilePaused: true });
     return json(postingEndpointResponse(result, configuredFacebookPageIds(env)));
   }
+  if (url.pathname === `${ADMIN_PATH}/instagram-sharing-test`) {
+    if (publishingDisabled(env)) return publishingDisabledResponse();
+    return runInstagramSharingTest(env);
+  }
   if (url.pathname === `${ADMIN_PATH}/oauth/start`) return oauthStart(request, env, url);
   if (url.pathname === `${ADMIN_PATH}/oauth/secondary/start`) return oauthStart(request, env, url, "secondary");
   if (url.pathname === `${ADMIN_PATH}/oauth/secondary/candidates`) return secondaryOAuthCandidates(request, env);
@@ -92,6 +98,79 @@ export async function runMarketingSchedule(event, env) {
   const slot = scheduleSlotKey(settings, now);
   if (settings.last_run_date === slot) return { ok: true, skipped: "already-posted-this-slot" };
   return runMarketingAutomation(env, { trigger: "scheduled", scheduledAt: now });
+}
+
+async function runInstagramSharingTest(env, now = new Date()) {
+  const db = env.GIFT_CARD_DB;
+  const settings = await getSettings(env);
+  const safeBase = {
+    testType: "instagram_accounts_centre_sharing",
+    publishingAttempted: false,
+    instagramPublishingAttempted: false,
+    facebookDirectPublishingAttempted: false,
+    facebookSecondaryPublishingAttempted: false,
+    tiktokPublishingAttempted: false,
+    otherDestinationPublishingAttempted: false,
+    automationPaused: !settings?.enabled,
+  };
+  if (settings?.enabled) return json({ ok: false, ...safeBase, error: "Pause marketing automation before running the Instagram sharing test." }, 409);
+
+  const recentCutoff = new Date(now.getTime() - INSTAGRAM_SHARING_TEST_COOLDOWN_HOURS * 60 * 60 * 1000).toISOString();
+  const recent = await db.prepare("SELECT id, created_at, status FROM marketing_posts WHERE trigger_type = 'instagram-sharing-test' AND created_at > ? ORDER BY created_at DESC LIMIT 1").bind(recentCutoff).first();
+  if (recent) return json({ ok: false, ...safeBase, duplicateBlocked: true, cooldownHours: INSTAGRAM_SHARING_TEST_COOLDOWN_HOURS, previousTestId: recent.id, previousStatus: recent.status, error: "An Instagram sharing test has already been recorded within the 24-hour safety cooldown." }, 409);
+
+  const connection = await resolveMetaConnection(env, "instagram");
+  if (!connection.ok) return json({ ok: false, ...safeBase, error: connection.error }, 422);
+  const imageSelection = await selectInstagramSharingTestImage(db);
+  if (!imageSelection.product) return json({ ok: false, ...safeBase, error: "No previously successful Instagram marketing image is currently available for the sharing test.", rejectedImages: imageSelection.rejections.length }, 422);
+
+  const day = now.toISOString().slice(0, 10);
+  const guard = await db.prepare("INSERT INTO marketing_one_time_guards (action_key, created_at) VALUES (?, ?) ON CONFLICT(action_key) DO NOTHING RETURNING action_key")
+    .bind(`instagram_sharing_test:${day}`, now.toISOString()).first();
+  if (!guard) return json({ ok: false, ...safeBase, duplicateBlocked: true, cooldownHours: INSTAGRAM_SHARING_TEST_COOLDOWN_HOURS, error: "This Instagram sharing test request was already accepted. No duplicate post was created." }, 409);
+
+  const product = imageSelection.product;
+  const testId = crypto.randomUUID();
+  const timestamp = now.toISOString();
+  const campaignCode = `bdw-instagram-sharing-test-${day.replaceAll("-", "")}`;
+  await db.prepare(`INSERT INTO marketing_posts
+    (id, product_source, product_id, product_name, product_url, product_image, caption, campaign_code, status, trigger_type, attempt_count, scheduled_at, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'processing', 'instagram-sharing-test', 0, ?, ?, ?)`)
+    .bind(testId, product.source, product.id, product.name, product.url, product.image, INSTAGRAM_SHARING_TEST_CAPTION, campaignCode, timestamp, timestamp, timestamp).run();
+
+  const imageSource = { source: product.source, productId: String(product.id), productName: product.name, imageUrl: product.image };
+  try {
+    const mediaId = await publishInstagram({ ...env, META_TOKEN_SOURCE: connection.source }, product.image, INSTAGRAM_SHARING_TEST_CAPTION, connection.token);
+    await savePlatformResult(db, testId, "instagram", "success", mediaId, 1, "", { testType: "instagram_accounts_centre_sharing" });
+    await finishPost(db, testId, "success", "", { instagram: { id: mediaId, attempts: 1 } });
+    const after = await getSettings(env);
+    return json({ ok: true, ...safeBase, publishingAttempted: true, instagramPublishingAttempted: true, automationPaused: !after?.enabled, instagram: { success: true, mediaId }, testId, timestamp, caption: INSTAGRAM_SHARING_TEST_CAPTION, imageSource });
+  } catch (error) {
+    const safeError = safeMetaError(error);
+    await savePlatformResult(db, testId, "instagram", "failed", "", 1, safeError, { testType: "instagram_accounts_centre_sharing" });
+    await finishPost(db, testId, "failed", safeError, { instagram: { id: "", attempts: 1 } });
+    const after = await getSettings(env);
+    return json({ ok: false, ...safeBase, publishingAttempted: true, instagramPublishingAttempted: true, automationPaused: !after?.enabled, instagram: { success: false, error: safeError }, testId, timestamp, caption: INSTAGRAM_SHARING_TEST_CAPTION, imageSource }, 502);
+  }
+}
+
+async function selectInstagramSharingTestImage(db) {
+  const rows = await db.prepare(`SELECT marketing_posts.product_source, marketing_posts.product_id, marketing_posts.product_name,
+    marketing_posts.product_url, marketing_posts.product_image
+    FROM marketing_posts INNER JOIN marketing_platform_results
+      ON marketing_platform_results.post_id = marketing_posts.id
+    WHERE marketing_platform_results.platform = 'instagram'
+      AND marketing_platform_results.status = 'success'
+      AND TRIM(COALESCE(marketing_posts.product_image, '')) <> ''
+    ORDER BY marketing_platform_results.created_at DESC LIMIT 10`).all();
+  const rejections = [];
+  for (const row of rows.results || []) {
+    const product = { source: clean(row.product_source, 40), id: String(row.product_id || ""), name: clean(row.product_name, 300), url: clean(row.product_url, 1000), image: clean(row.product_image, 1000) };
+    const validation = await validateInstagramImage(product.image);
+    if (validation.ok) return { product, rejections };
+    rejections.push({ productId: product.id, reason: validation.reason });
+  }
+  return { product: null, rejections };
 }
 
 export async function runMarketingAutomation(env, options = {}) {
@@ -1648,4 +1727,4 @@ function clean(value, max = 500) { return String(value || "").replace(/\s+/g, " 
 async function readJson(request) { try { return await request.json(); } catch { return null; } }
 function json(body, status = 200) { return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" } }); }
 
-export const marketingTestHelpers = { campaignUrl, trackedDestination, nextRunAt, isScheduledSlot, scheduleSlotKey, hash, benefit, metaAccessToken, resolveMetaConnection, resolveFacebookPublishingContext, resolveFacebookPageAccess, publishWithRetry, publishFacebook, publishInstagram, waitForInstagramMedia, publishFacebookPages, validateInstagramImage, selectNextProduct, selectInstagramProduct, canonicalEtsyAffiliateUrl, instagramFeedCaption, configuredFacebookPageIds, postingEndpointResponse, redirectPage, instagramPreflight, facebookPreflight, facebookHistoryDestination, publishingDisabled };
+export const marketingTestHelpers = { campaignUrl, trackedDestination, nextRunAt, isScheduledSlot, scheduleSlotKey, hash, benefit, metaAccessToken, resolveMetaConnection, resolveFacebookPublishingContext, resolveFacebookPageAccess, publishWithRetry, publishFacebook, publishInstagram, waitForInstagramMedia, publishFacebookPages, validateInstagramImage, selectNextProduct, selectInstagramProduct, selectInstagramSharingTestImage, runInstagramSharingTest, canonicalEtsyAffiliateUrl, instagramFeedCaption, configuredFacebookPageIds, postingEndpointResponse, redirectPage, instagramPreflight, facebookPreflight, facebookHistoryDestination, publishingDisabled };

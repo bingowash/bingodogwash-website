@@ -224,6 +224,18 @@ document.addEventListener("click", (event) => {
     });
     return;
   }
+  if (action === "instagram-sharing-test") {
+    if (!window.confirm("This creates ONE REAL Instagram post on bingo_dogwash. Continue with the Instagram-only sharing test?")) return;
+    runOnce(`action:${action}`, button, async () => {
+      const result = await call("/instagram-sharing-test", { method:"POST", body:"{}" });
+      showResponse(result);
+      await refresh();
+      qs("[data-marketing-message]").textContent = result.instagram?.success
+        ? "Instagram sharing test published. Manually check Bingodog Wash on Facebook for Accounts Centre sharing."
+        : "Instagram sharing test did not publish.";
+    });
+    return;
+  }
   if (action === "oauth-start") {
     runOnce(`action:${action}`, button, async () => {
       const result = await call("/oauth/start", { method:"POST", body:"{}" });
