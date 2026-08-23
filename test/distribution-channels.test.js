@@ -1,12 +1,33 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { handleDistributionChannelRequest, distributionChannelTestHelpers } from "../_functions_NOT_FOR_STATIC_UPLOAD/api/distribution-channels.js";
+import { handleDistributionChannelRequest, handleGoogleMerchantOAuthRequest, distributionChannelTestHelpers } from "../_functions_NOT_FOR_STATIC_UPLOAD/api/distribution-channels.js";
 
 const request = (path="", options={}) => new Request(`https://bingodogwash.com/api/admin/distribution-channels${path}`, { headers: { Authorization:"Bearer admin-token", "Content-Type":"application/json", ...(options.headers||{}) }, ...options });
 const env = (extra={}) => ({ ADMIN_API_TOKEN:"admin-token", ...extra });
 const emailDb = (emails=["subscriber@example.com"], fail=false) => ({ prepare(sql) { return { async first(){if(fail)throw new Error("missing table");return {total:emails.length};}, async all(){if(sql.includes("distribution_channel_connections"))return {results:[]};if(fail)throw new Error("missing table");return {results:emails.map((email)=>({email}))};} }; } });
 const readyEmailEnv = (extra={}) => env({ EMAIL:{async send(){}}, GIFT_CARD_DB:emailDb(), AI_EMAIL_SENDER_NAME:"Bingo Dog Wash", AI_EMAIL_SENDER_EMAIL:"campaigns@bingodogwash.com", AI_EMAIL_RECIPIENT_SOURCE:"newsletter_subscribers", AI_EMAIL_SENDING_ENABLED:"true", ...extra });
+const googleEnv = (extra={}) => env({ GOOGLE_MERCHANT_CLIENT_ID:"google-client-private", GOOGLE_MERCHANT_CLIENT_SECRET:"google-secret-private", GOOGLE_MERCHANT_REDIRECT_URI:"https://admin.bingodogwash.com/api/google/merchant/oauth/callback", GOOGLE_MERCHANT_ACCOUNT_ID:"5838153095", GOOGLE_MERCHANT_DATA_SOURCE:"10705932259", ...extra });
+
+function googleConnectionDb(overrides={}) {
+  const row={channel:"googleMerchant",status:"Connected",access_token:"",refresh_token:"refresh-existing",token_type:"Bearer",token_expires_at:"",scopes:"https://www.googleapis.com/auth/content",oauth_state:"",oauth_state_expires_at:"",connected_at:"",disconnected_at:"",updated_at:"",...overrides};
+  return {row,prepare(sql){return{bind(...values){return{
+    async run(){
+      if(sql.includes("INSERT INTO distribution_channel_connections")){[row.oauth_state,row.oauth_state_expires_at,row.updated_at]=values;return{success:true};}
+      if(sql.includes("refresh_token=?")){[row.access_token,row.refresh_token,row.token_type,row.token_expires_at,row.scopes,row.connected_at,row.updated_at]=values;row.status="Connected";return{success:true};}
+      if(sql.includes("token_type=?")){[row.access_token,row.token_type,row.token_expires_at,,row.scopes,row.updated_at]=values;row.status="Connected";return{success:true};}
+      throw new Error(`Unexpected write: ${sql}`);
+    },
+    async first(){
+      if(sql.includes("RETURNING refresh_token")){const [,state]=values;if(row.oauth_state!==state)return null;const result={refresh_token:row.refresh_token,oauth_state_expires_at:row.oauth_state_expires_at};row.oauth_state="";return result;}
+      if(sql.includes("distribution_channel_connections")) return row;
+      return null;
+    },
+  };}};}};
+}
+
+const merchantRequest=(path,headers={})=>new Request(`https://admin.bingodogwash.com/api/google/merchant/oauth/${path}`,{headers});
+const redirectCode=(response)=>new URL(response.headers.get("location")).searchParams.get("merchant");
 
 test("distribution channel status is admin protected", async () => {
   const response = await handleDistributionChannelRequest(new Request("https://bingodogwash.com/api/admin/distribution-channels"), env());
@@ -111,6 +132,34 @@ test("channel failures are represented independently", () => {
   assert.equal(channels.email.ready,false);
 });
 
+test("expired Google access token refreshes, persists, and verifies the exact Merchant account", async () => {
+  const db=googleConnectionDb({access_token:"expired-private",token_expires_at:"2020-01-01T00:00:00.000Z"});
+  const originalFetch=globalThis.fetch;const calls=[];
+  globalThis.fetch=async(url,options={})=>{calls.push({url:String(url),options});return String(url).includes("oauth2.googleapis.com")?Response.json({access_token:"refreshed-private",expires_in:3600,token_type:"Bearer"}):Response.json({name:"accounts/5838153095"});};
+  try {
+    const state=await distributionChannelTestHelpers.googleMerchantCapability(googleEnv(),db.row,false,db);
+    assert.equal(state.label,"Connected");assert.equal(db.row.access_token,"refreshed-private");assert.equal(calls[1].url,"https://merchantapi.googleapis.com/accounts/v1/accounts/5838153095");assert.doesNotMatch(JSON.stringify(state),/private/);
+  } finally {globalThis.fetch=originalFetch;}
+});
+
+test("Google refresh distinguishes revoked authorization without exposing credentials", async () => {
+  const originalFetch=globalThis.fetch;globalThis.fetch=async()=>Response.json({error:"invalid_grant",error_description:"private detail"},{status:400});
+  try {const result=await distributionChannelTestHelpers.refreshGoogleAccessToken(googleEnv(),"refresh-private");assert.deepEqual(result,{status:"reconnect_required",accessToken:""});assert.doesNotMatch(JSON.stringify(result),/private/);} finally {globalThis.fetch=originalFetch;}
+});
+
+test("Google OAuth start is admin protected and callback state is fail-closed", async () => {
+  const db=googleConnectionDb();const configured=googleEnv({GIFT_CARD_DB:db});
+  assert.equal((await handleGoogleMerchantOAuthRequest(merchantRequest("start"),configured)).status,401);
+  const start=await handleGoogleMerchantOAuthRequest(merchantRequest("start",{Authorization:"Bearer admin-token"}),configured);const authorize=new URL((await start.json()).url);
+  assert.equal(authorize.searchParams.get("redirect_uri"),configured.GOOGLE_MERCHANT_REDIRECT_URI);assert.equal(authorize.searchParams.get("scope"),"https://www.googleapis.com/auth/content");assert.equal(authorize.searchParams.get("access_type"),"offline");assert.ok(db.row.oauth_state.length>=40);
+  assert.equal(redirectCode(await handleGoogleMerchantOAuthRequest(merchantRequest("callback?state=wrong&code=private"),configured)),"invalid_state");
+});
+
+test("production Google config preserves the proven account, source, redirect, and OAuth routes", () => {
+  const config=readFileSync(new URL("../wrangler.jsonc",import.meta.url),"utf8");
+  assert.match(config,/"GOOGLE_MERCHANT_ACCOUNT_ID": "5838153095"/);assert.match(config,/"GOOGLE_MERCHANT_DATA_SOURCE": "10705932259"/);assert.match(config,/"GOOGLE_MERCHANT_REDIRECT_URI": "https:\/\/admin\.bingodogwash\.com\/api\/google\/merchant\/oauth\/callback"/);assert.match(config,/admin\.bingodogwash\.com\/api\/google\/merchant\/oauth\/callback\*"/);
+});
+
 test("Product Centre status reads retain the canonical authenticated admin wrapper", () => {
   const source=readFileSync(new URL("../public/admin/ai-drafts.js",import.meta.url),"utf8");
   const body=source.slice(source.indexOf("async function loadChannels()"),source.indexOf("async function connectTikTok"));
@@ -123,7 +172,7 @@ function isolatedStatusDb(failingChannel = "") {
     async first(){
       if(sql.includes("newsletter_subscribers")) return {total:1};
       if(channel===failingChannel) throw new Error(`${channel} unavailable`);
-      if(channel==="googleMerchant") return {channel,refresh_token:"stored-google-reference"};
+      if(channel==="googleMerchant") return {channel,status:"Connected",access_token:"stored-google-reference",refresh_token:"stored-refresh-reference",token_expires_at:"2999-01-01T00:00:00.000Z",scopes:"https://www.googleapis.com/auth/content"};
       return null;
     },
   }; } };
@@ -142,13 +191,13 @@ test("Google status failure does not blank Email or eBay", async () => {
 });
 
 test("eBay status failure does not blank Email or Google", async () => {
-  const response=await handleDistributionChannelRequest(request(),isolatedStatusEnv("ebay"));const channels=(await response.json()).channels;
-  assert.equal(channels.email.label,"Ready");assert.equal(channels.googleMerchant.label,"Connected");assert.equal(channels.ebay.label,"Status unavailable");
+  const originalFetch=globalThis.fetch;globalThis.fetch=async()=>Response.json({name:"accounts/1"});
+  try {const response=await handleDistributionChannelRequest(request(),isolatedStatusEnv("ebay"));const channels=(await response.json()).channels;assert.equal(channels.email.label,"Ready");assert.equal(channels.googleMerchant.label,"Connected");assert.equal(channels.ebay.label,"Status unavailable");} finally {globalThis.fetch=originalFetch;}
 });
 
 test("Email configuration failure does not blank Google or eBay", async () => {
-  const response=await handleDistributionChannelRequest(request(),{...isolatedStatusEnv(),AI_EMAIL_SENDER_NAME:""});const channels=(await response.json()).channels;
-  assert.equal(channels.email.label,"Needs configuration");assert.equal(channels.googleMerchant.label,"Connected");assert.equal(channels.ebay.label,"Draft only");
+  const originalFetch=globalThis.fetch;globalThis.fetch=async()=>Response.json({name:"accounts/1"});
+  try {const response=await handleDistributionChannelRequest(request(),{...isolatedStatusEnv(),AI_EMAIL_SENDER_NAME:""});const channels=(await response.json()).channels;assert.equal(channels.email.label,"Needs configuration");assert.equal(channels.googleMerchant.label,"Connected");assert.equal(channels.ebay.label,"Draft only");} finally {globalThis.fetch=originalFetch;}
 });
 
 test("shop products map to safe Google Merchant and eBay inventory payloads", () => {

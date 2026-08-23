@@ -35,6 +35,14 @@ test("Worker dispatch preserves protected Distribution Channels routing", async 
   }
 });
 
+test("Worker dispatch preserves Google Merchant OAuth authentication and callback isolation", async () => {
+  const env={ADMIN_API_TOKEN:"admin-token",GIFT_CARD_DB:{prepare(){throw new Error("missing state must not query");}}};
+  const start=await worker.fetch(new Request("https://admin.bingodogwash.com/api/google/merchant/oauth/start"),env);
+  assert.equal(start.status,401);
+  const callback=await worker.fetch(new Request("https://admin.bingodogwash.com/api/google/merchant/oauth/callback?code=private"),env);
+  assert.equal(callback.status,302);assert.equal(new URL(callback.headers.get("location")).searchParams.get("merchant"),"invalid_state");assert.doesNotMatch(callback.headers.get("location"),/private/);
+});
+
 test("admin hostname root serves the consolidated admin dashboard", async () => {
   let assetPath = "";
   const response = await worker.fetch(new Request("https://admin.bingodogwash.com/"), {

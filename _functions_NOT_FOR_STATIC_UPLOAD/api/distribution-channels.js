@@ -1,8 +1,27 @@
 const BASE_PATH = "/api/admin/distribution-channels";
 const CHANNELS = new Set(["email", "googleMerchant", "ebay"]);
+const GOOGLE_OAUTH_START_PATH = "/api/google/merchant/oauth/start";
+const GOOGLE_OAUTH_CALLBACK_PATH = "/api/google/merchant/oauth/callback";
+const GOOGLE_AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth";
+const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
+const GOOGLE_MERCHANT_SCOPE = "https://www.googleapis.com/auth/content";
+const GOOGLE_STATE_TTL_MS = 10 * 60 * 1000;
+const GOOGLE_REFRESH_SKEW_MS = 60 * 1000;
 
 export function isDistributionChannelPath(pathname) {
   return pathname === BASE_PATH || pathname.startsWith(`${BASE_PATH}/`);
+}
+
+export function isGoogleMerchantOAuthPath(pathname) {
+  return pathname === GOOGLE_OAUTH_START_PATH || pathname === GOOGLE_OAUTH_CALLBACK_PATH;
+}
+
+export async function handleGoogleMerchantOAuthRequest(request, env, url = new URL(request.url)) {
+  if (request.method === "GET" && url.pathname === GOOGLE_OAUTH_CALLBACK_PATH) return googleOAuthCallback(env, url);
+  if (!(await isAdmin(request, env))) return json({ ok: false, error: "Admin authorisation required." }, 401);
+  if (request.method === "GET" && url.pathname === GOOGLE_OAUTH_START_PATH) return googleOAuthStart(env);
+  if (isGoogleMerchantOAuthPath(url.pathname)) return json({ ok: false, error: "Method not allowed." }, 405);
+  return json({ ok: false, error: "Google Merchant OAuth endpoint not found." }, 404);
 }
 
 export async function handleDistributionChannelRequest(request, env, url = new URL(request.url)) {
@@ -32,6 +51,7 @@ async function status(env) {
 
 async function storedChannelCapability(env, channel) {
   const connection = await storedConnection(env.GIFT_CARD_DB, channel);
+  if (channel === "googleMerchant") return googleMerchantCapability(env, connection, false, env.GIFT_CARD_DB);
   return capabilities(env, connection ? { [channel]: connection } : {})[channel];
 }
 
@@ -58,6 +78,136 @@ function capabilities(env, connections = {}) {
     ebay: { status: "draft_only", label: "Draft only", ready: ebayReady, connected: ebayConnected, actionAvailable: false, connectAvailable: false, provider: ebayConnected ? "eBay Sell APIs" : (configured(env.EBAY_BROWSE_CLIENT_ID) && configured(env.EBAY_BROWSE_CLIENT_SECRET) ? "eBay Browse API only" : "None"), missing: [...ebayConfigMissing, ...ebayListingMissing, "eBay seller OAuth/Inventory connector"] },
   };
 }
+
+async function googleMerchantCapability(env, connection, connectionLookupError = false, db = null) {
+  const configMissing = missing(env, ["GOOGLE_MERCHANT_CLIENT_ID", "GOOGLE_MERCHANT_CLIENT_SECRET", "GOOGLE_MERCHANT_REDIRECT_URI", "GOOGLE_MERCHANT_ACCOUNT_ID"]);
+  if (configMissing.length) return integrationState("not_configured", "Not configured", false, "Google Merchant API", configMissing, { connected: Boolean(connection?.access_token || connection?.refresh_token) });
+  if (connectionLookupError) return integrationState("connection_error", "Connection error", false, "Google Merchant API", ["OAuth connection status unavailable"]);
+  if (!connection?.access_token && !connection?.refresh_token) return integrationState("reconnect_required", "Reconnect required", false, "Google Merchant API", ["Google Merchant OAuth connection"], { connected: false });
+  if (String(connection.status || "").toLowerCase() === "disconnected") return integrationState("reconnect_required", "Reconnect required", false, "Google Merchant API", ["Google Merchant OAuth connection"], { connected: false });
+
+  let accessToken = String(connection.access_token || "").trim();
+  const expiresAt = Date.parse(connection.token_expires_at || "");
+  if (!accessToken || !Number.isFinite(expiresAt) || expiresAt <= Date.now() + GOOGLE_REFRESH_SKEW_MS) {
+    if (!connection.refresh_token) return integrationState("reconnect_required", "Reconnect required", false, "Google Merchant API", ["Google Merchant refresh token"], { connected: false });
+    const refreshed = await refreshGoogleAccessToken(env, connection.refresh_token);
+    if (refreshed.status === "reconnect_required") return integrationState("reconnect_required", "Reconnect required", false, "Google Merchant API", ["Google Merchant OAuth connection"], { connected: false });
+    if (refreshed.status === "connection_error") return integrationState("connection_error", "Connection error", false, "Google Merchant API", ["Google OAuth token refresh unavailable"]);
+    accessToken = refreshed.accessToken;
+    if (db) {
+      try { await persistRefreshedGoogleToken(db, refreshed); }
+      catch { return integrationState("connection_error", "Connection error", false, "Google Merchant API", ["Google OAuth token persistence unavailable"]); }
+    }
+  }
+
+  const health = await googleMerchantHealth(env, accessToken);
+  if (health === "connected") return integrationState("connected", "Connected", true, "Google Merchant API", [], { connected: true, accountConfigured: true });
+  if (health === "reconnect_required") return integrationState("reconnect_required", "Reconnect required", false, "Google Merchant API", ["Google Merchant OAuth connection"], { connected: false, accountConfigured: true });
+  return integrationState("connection_error", "Connection error", false, "Google Merchant API", ["Google Merchant account health check failed"], { connected: true, accountConfigured: true });
+}
+
+async function refreshGoogleAccessToken(env, refreshToken) {
+  try {
+    const response = await fetch(GOOGLE_TOKEN_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+      body: new URLSearchParams({
+        client_id: String(env.GOOGLE_MERCHANT_CLIENT_ID),
+        client_secret: String(env.GOOGLE_MERCHANT_CLIENT_SECRET),
+        refresh_token: String(refreshToken),
+        grant_type: "refresh_token",
+      }),
+    });
+    const body = await response.json().catch(() => null);
+    if (!response.ok) return { status: body?.error === "invalid_grant" || response.status === 401 ? "reconnect_required" : "connection_error", accessToken: "" };
+    const accessToken = String(body?.access_token || "").trim();
+    return accessToken ? { status: "connected", accessToken, expiresIn: positiveSeconds(body?.expires_in, 3600), tokenType: clean(body?.token_type || "Bearer", 40), scope: clean(body?.scope, 1000) } : { status: "connection_error", accessToken: "" };
+  } catch {
+    return { status: "connection_error", accessToken: "" };
+  }
+}
+
+async function googleOAuthStart(env) {
+  const configMissing = missing(env, ["GOOGLE_MERCHANT_CLIENT_ID", "GOOGLE_MERCHANT_CLIENT_SECRET", "GOOGLE_MERCHANT_REDIRECT_URI", "GOOGLE_MERCHANT_ACCOUNT_ID"]);
+  if (configMissing.length || !env.GIFT_CARD_DB) return json({ ok: false, error: "Google Merchant OAuth is not configured." }, 503);
+  const state = randomToken(32);
+  const now = new Date().toISOString();
+  const expiresAt = new Date(Date.now() + GOOGLE_STATE_TTL_MS).toISOString();
+  try {
+    await env.GIFT_CARD_DB.prepare(`INSERT INTO distribution_channel_connections (channel, status, oauth_state, oauth_state_expires_at, updated_at)
+      VALUES ('googleMerchant', 'Disconnected', ?, ?, ?)
+      ON CONFLICT(channel) DO UPDATE SET oauth_state=excluded.oauth_state, oauth_state_expires_at=excluded.oauth_state_expires_at, updated_at=excluded.updated_at`)
+      .bind(state, expiresAt, now).run();
+  } catch { return json({ ok: false, error: "Google Merchant OAuth state could not be initialised." }, 500); }
+  const authorize = new URL(GOOGLE_AUTHORIZE_URL);
+  authorize.searchParams.set("client_id", String(env.GOOGLE_MERCHANT_CLIENT_ID));
+  authorize.searchParams.set("redirect_uri", String(env.GOOGLE_MERCHANT_REDIRECT_URI));
+  authorize.searchParams.set("response_type", "code");
+  authorize.searchParams.set("scope", GOOGLE_MERCHANT_SCOPE);
+  authorize.searchParams.set("access_type", "offline");
+  authorize.searchParams.set("prompt", "consent");
+  authorize.searchParams.set("include_granted_scopes", "true");
+  authorize.searchParams.set("state", state);
+  return json({ ok: true, url: authorize.toString() });
+}
+
+async function googleOAuthCallback(env, url) {
+  const result = (value) => Response.redirect(`https://admin.bingodogwash.com/admin/ai-drafts.html?merchant=${encodeURIComponent(value)}`, 302);
+  if (!env.GIFT_CARD_DB) return result("connection_error");
+  const state = clean(url.searchParams.get("state"), 512);
+  if (!state) return result("invalid_state");
+  let guard;
+  try {
+    guard = await env.GIFT_CARD_DB.prepare(`UPDATE distribution_channel_connections
+      SET oauth_state='', updated_at=?
+      WHERE channel='googleMerchant' AND oauth_state=?
+      RETURNING refresh_token, oauth_state_expires_at`).bind(new Date().toISOString(), state).first();
+  } catch { return result("connection_error"); }
+  if (!guard) return result("invalid_state");
+  if (!guard.oauth_state_expires_at || Date.parse(guard.oauth_state_expires_at) <= Date.now()) return result("expired_state");
+  if (url.searchParams.get("error")) return result("denied");
+  const code = clean(url.searchParams.get("code"), 4096);
+  if (!code) return result("missing_code");
+  if (missing(env, ["GOOGLE_MERCHANT_CLIENT_ID", "GOOGLE_MERCHANT_CLIENT_SECRET", "GOOGLE_MERCHANT_REDIRECT_URI", "GOOGLE_MERCHANT_ACCOUNT_ID"]).length) return result("not_configured");
+  let response;
+  let token;
+  try {
+    response = await fetch(GOOGLE_TOKEN_URL, { method:"POST", headers:{"Content-Type":"application/x-www-form-urlencoded", Accept:"application/json"}, body:new URLSearchParams({ client_id:String(env.GOOGLE_MERCHANT_CLIENT_ID), client_secret:String(env.GOOGLE_MERCHANT_CLIENT_SECRET), code, grant_type:"authorization_code", redirect_uri:String(env.GOOGLE_MERCHANT_REDIRECT_URI) }) });
+    token = await response.json().catch(() => null);
+  } catch { return result("connection_error"); }
+  if (!response.ok || !configured(token?.access_token)) return result(token?.error === "invalid_grant" ? "reconnect_required" : "connection_error");
+  const refreshToken = clean(token?.refresh_token, 4096) || clean(guard.refresh_token, 4096);
+  if (!refreshToken) return result("reconnect_required");
+  const now = new Date().toISOString();
+  const expiresAt = new Date(Date.now() + positiveSeconds(token?.expires_in, 3600) * 1000).toISOString();
+  try {
+    await env.GIFT_CARD_DB.prepare(`UPDATE distribution_channel_connections SET status='Connected', access_token=?, refresh_token=?, token_type=?, token_expires_at=?, scopes=?, connected_at=CASE WHEN connected_at='' THEN ? ELSE connected_at END, disconnected_at='', updated_at=? WHERE channel='googleMerchant'`)
+      .bind(clean(token.access_token, 4096), refreshToken, clean(token.token_type || "Bearer", 40), expiresAt, clean(token.scope, 1000) || GOOGLE_MERCHANT_SCOPE, now, now).run();
+  } catch { return result("connection_error"); }
+  const health = await googleMerchantHealth(env, token.access_token);
+  return result(health === "connected" ? "connected" : health);
+}
+
+async function persistRefreshedGoogleToken(db, refreshed) {
+  const now = new Date().toISOString();
+  const expiresAt = new Date(Date.now() + positiveSeconds(refreshed.expiresIn, 3600) * 1000).toISOString();
+  await db.prepare(`UPDATE distribution_channel_connections SET status='Connected', access_token=?, token_type=?, token_expires_at=?, scopes=CASE WHEN ?='' THEN scopes ELSE ? END, updated_at=? WHERE channel='googleMerchant'`)
+    .bind(clean(refreshed.accessToken, 4096), clean(refreshed.tokenType || "Bearer", 40), expiresAt, clean(refreshed.scope, 1000), clean(refreshed.scope, 1000), now).run();
+}
+
+async function googleMerchantHealth(env, accessToken) {
+  try {
+    const accountId = String(env.GOOGLE_MERCHANT_ACCOUNT_ID || "").trim().replace(/^accounts\//, "");
+    const response = await fetch(`https://merchantapi.googleapis.com/accounts/v1/accounts/${encodeURIComponent(accountId)}`, { method:"GET", headers:{Authorization:`Bearer ${accessToken}`, Accept:"application/json"} });
+    if (response.ok) return "connected";
+    return response.status === 401 || response.status === 403 ? "reconnect_required" : "connection_error";
+  } catch { return "connection_error"; }
+}
+
+function randomToken(bytes) { const value=new Uint8Array(bytes);crypto.getRandomValues(value);return btoa(String.fromCharCode(...value)).replaceAll("+","-").replaceAll("/","_").replace(/=+$/g,""); }
+function positiveSeconds(value, fallback) { const number=Number(value);return Number.isFinite(number)&&number>0?Math.floor(number):fallback; }
+function clean(value, max=500) { return String(value||"").replace(/[\r\n\0]/g,"").trim().slice(0,max); }
+function integrationState(status, label, connected, provider, missingItems, extra = {}) { return { status, label, ready: false, connected, actionAvailable: false, connectAvailable: false, provider, missing: missingItems, ...extra }; }
 
 async function distribute(request, channel, env) {
   const channelStatus = channel === "email" ? await emailCapability(env) : capabilities(env)[channel];
@@ -119,7 +269,7 @@ async function approvedRecipients(db) {
 
 async function storedConnection(db, channel) {
   if (!db) return null;
-  return db.prepare("SELECT channel, access_token, refresh_token FROM distribution_channel_connections WHERE channel = ? LIMIT 1").bind(channel).first();
+  return db.prepare("SELECT channel, status, access_token, refresh_token, token_expires_at, scopes, connected_at, updated_at FROM distribution_channel_connections WHERE channel = ? LIMIT 1").bind(channel).first();
 }
 
 function connectionMessage(channel, env) {
@@ -142,4 +292,4 @@ function mapGoogleProduct(product) {
 function mapEbayInventoryItem(product) { return { sku:String(product?.sku||product?.id||"").slice(0,50), availability:{ shipToLocationAvailability:{ quantity:Number.isInteger(product?.stock)&&product.stock>=0?product.stock:0 } }, condition:"NEW", product:{ title:String(product?.name||"").slice(0,80), description:String(product?.description||"").slice(0,4000), imageUrls:[httpsUrl(product?.image)].filter(Boolean) } }; }
 function httpsUrl(value) { try { const url=new URL(String(value||""));return url.protocol==="https:"?url.toString():""; } catch { return ""; } }
 
-export const distributionChannelTestHelpers = { capabilities, emailCapability, storedChannelCapability, unavailableChannel, mapGoogleProduct, mapEbayInventoryItem };
+export const distributionChannelTestHelpers = { capabilities, emailCapability, storedChannelCapability, unavailableChannel, googleMerchantCapability, refreshGoogleAccessToken, googleMerchantHealth, mapGoogleProduct, mapEbayInventoryItem };

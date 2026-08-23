@@ -27,7 +27,9 @@
 			"TIKTOK_CLIENT_SECRET",
 			"TIKTOK_SANDBOX_CLIENT_KEY",
 			"TIKTOK_SANDBOX_CLIENT_SECRET",
-			"BREVO_API_KEY"
+			"BREVO_API_KEY",
+			"GOOGLE_MERCHANT_CLIENT_ID",
+			"GOOGLE_MERCHANT_CLIENT_SECRET"
 		]
 	},
 	"vars": {
@@ -36,6 +38,8 @@
 		"AI_EMAIL_SENDER_EMAIL": "hello@bingodogwash.com",
 		"AI_EMAIL_RECIPIENT_SOURCE": "newsletter_subscribers",
 		"AI_EMAIL_CAMPAIGN_PROVIDER": "brevo",
+		"BREVO_OUTREACH_TEMPLATE_ID": "1",
+		"BREVO_OUTREACH_LIST_ID": "2",
 		"AI_PROSPECTING_ENABLED": "false",
 		"AI_MANUAL_PROSPECTING_ENABLED": "true",
 		"AI_PROSPECTING_MAX_COST_GBP": "1.00",
@@ -58,7 +62,10 @@
 		"META_APP_ID": "896943866344102",
 		"TIKTOK_REDIRECT_URI": "https://bingodogwash.com/api/tiktok/callback",
 		"TIKTOK_OAUTH_ENVIRONMENT": "sandbox",
-		"TIKTOK_DIRECT_POST_ENABLED": "true"
+		"TIKTOK_DIRECT_POST_ENABLED": "true",
+		"GOOGLE_MERCHANT_ACCOUNT_ID": "5838153095",
+		"GOOGLE_MERCHANT_DATA_SOURCE": "10705932259",
+		"GOOGLE_MERCHANT_REDIRECT_URI": "https://admin.bingodogwash.com/api/google/merchant/oauth/callback"
 	},
 	"ai": {
 		"binding": "AI"
@@ -74,6 +81,14 @@
 		},
 		{
 			"pattern": "admin.bingodogwash.com/*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "admin.bingodogwash.com/api/google/merchant/oauth/start",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "admin.bingodogwash.com/api/google/merchant/oauth/callback*",
 			"zone_name": "bingodogwash.com"
 		},
 		{

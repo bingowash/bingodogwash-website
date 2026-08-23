@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { handleCompetition, processCompetitionStripeEvent } from "./competition.js";
 import { distributePreparedProduct, handleMarketingRequest, isMarketingPath, runMarketingSchedule } from "./marketing.js";
 import { handleTikTokRequest, isTikTokPath } from "./tiktok.js";
-import { handleDistributionChannelRequest, isDistributionChannelPath } from "./distribution-channels.js";
+import { handleDistributionChannelRequest, handleGoogleMerchantOAuthRequest, isDistributionChannelPath, isGoogleMerchantOAuthPath } from "./distribution-channels.js";
 import { handleBrevoWebhook, handleProspectingRequest, isBrevoWebhookPath, isProspectingPath, runProspectingSchedule } from "./prospecting.js";
 
 const ALLOWED_ORIGINS = new Set([
@@ -487,6 +487,7 @@ async function handleRequest(request) {
 
   if (isBrevoWebhookPath(url.pathname)) return handleBrevoWebhook(request, requestEnvStorage.getStore() || {});
   if (isProspectingPath(url.pathname)) return handleProspectingRequest(request, requestEnvStorage.getStore() || {}, url, { loadProducts: loadProspectingCatalogue });
+  if (isGoogleMerchantOAuthPath(url.pathname)) return handleGoogleMerchantOAuthRequest(request, requestEnvStorage.getStore() || {}, url);
   if (isDistributionChannelPath(url.pathname)) return handleDistributionChannelRequest(request, requestEnvStorage.getStore() || {}, url);
 
   if (request.method === "OPTIONS") {
