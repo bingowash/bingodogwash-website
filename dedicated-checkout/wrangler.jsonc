@@ -1,0 +1,9 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "bingo-checkout",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-07-06",
+  "secrets": {
+    "required": ["STRIPE_SECRET_KEY"]
+  }
+}
