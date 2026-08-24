@@ -83,7 +83,7 @@ test("hourly supplier rotation preserves cron, normal controls, and Facebook col
   assert.match(worker, /const MARKETING_INTERVAL_HOURS = 1/);
   assert.match(html, /<h2>Every hour<\/h2>/);
   assert.match(html, /Hourly product promotion/);
-  assert.deepEqual(config.triggers.crons, ["*/15 * * * *", "0 2 * * *", "30 3 * * *"]);
+  assert.deepEqual(config.triggers.crons, ["*/5 * * * *", "*/15 * * * *", "0 2 * * *", "30 3 * * *"]);
   assert.doesNotMatch(JSON.stringify(config.triggers.crons), /0 \* \* \* \*/);
   assert.match(worker, /selectNextProduct\(db, \{\s*respectCooldown: options\.trigger === "scheduled"/);
   assert.match(worker, /catalogueProducts: options\.catalogueProducts/);

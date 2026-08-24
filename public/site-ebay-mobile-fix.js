@@ -186,7 +186,7 @@ function serverRenderedAvasamProducts() {
   try {
     const serialized = (target.textContent || "[]").replace(/<!--[\s\S]*?-->/g, "").trim() || "[]";
     const records = JSON.parse(serialized);
-    return Array.isArray(records) ? records.map(normalizeAvasamProduct).filter((product) => product.name) : [];
+    return Array.isArray(records) ? records.map(normalizeAvasamProduct).filter(Boolean) : [];
   } catch { return []; }
 }
 
@@ -196,7 +196,7 @@ const hasServerRenderedProductDetail = Boolean(document.querySelector("[data-pro
 avasamProducts = groupAvasamProductVariants(
   hydratedAvasamProducts.length
     ? hydratedAvasamProducts
-    : avasamStarterProducts.map(normalizeAvasamProduct).filter((product) => product.name)
+    : avasamStarterProducts.map(normalizeAvasamProduct).filter(Boolean)
 );
 avasamState.loading = false;
 avasamState.live = Boolean(hydratedAvasamProducts.length);
@@ -700,7 +700,7 @@ function cleanBasket() {
   const cleaned = basket.filter(
     (id) =>
       liveIds.has(id) ||
-      Boolean(cachedProducts[id])
+      ((/^avasam-s\d+$/i.test(String(id || "")) || !/^avasam-/i.test(String(id || ""))) && Boolean(cachedProducts[id]))
   );
 
   if (cleaned.length !== basket.length) {
@@ -828,6 +828,18 @@ function productHandle(value, fallback) {
     .slice(0, 80) || fallback;
 }
 
+function canonicalAvasamCheckoutId(raw, variant = {}) {
+  const publicId = firstValue(
+    raw.public_id, raw.publicId, raw.bingoPublicId, raw.bingo_public_id,
+    variant.public_id, variant.publicId, variant.bingoPublicId, variant.bingo_public_id
+  );
+  const publicMatch = String(publicId || "").trim().match(/^avasam-(s\d+)$/i);
+  if (publicMatch) return `avasam-${publicMatch[1].toUpperCase()}`;
+  const sku = firstValue(raw.sku, raw.SKU, variant.sku, variant.SKU);
+  const skuMatch = String(sku || "").trim().match(/^(s\d+)$/i);
+  return skuMatch ? `avasam-${skuMatch[1].toUpperCase()}` : "";
+}
+
 function mediaUrl(value) {
   if (!value) return "";
   if (typeof value === "string") return value.trim();
@@ -869,14 +881,15 @@ function normalizeAvasamProduct(raw, index) {
   const variant = Array.isArray(raw.variants) ? raw.variants[0] || {} : {};
   const name = firstValue(raw.name, raw.title, raw.productName, variant.name, `Avasam product ${index + 1}`);
   const price = Number(firstValue(raw.price, raw.retailPrice, raw.salePrice, raw.sellPrice, raw.rrp, variant.price));
-  const sourceId = productHandle(firstValue(raw.id, raw.sku, raw.productId, variant.sku, name), `product-${index + 1}`);
+  const checkoutId = canonicalAvasamCheckoutId(raw, variant);
+  if (!checkoutId) return null;
   const listingUrl = firstValue(
     raw.externalUrl, raw.productUrl, raw.product_url, raw.listingUrl,
     raw.webUrl, raw.checkoutUrl, raw.url, raw.link, raw.href,
     variant.productUrl, variant.url
   );
   return {
-    id: sourceId.startsWith("avasam-") ? sourceId : `avasam-${sourceId}`,
+    id: checkoutId,
     sku: firstValue(raw.sku, raw.SKU, variant.sku, ""),
     name,
     category: firstValue(raw.category, raw.categoryName, raw.type, raw.collection, "Avasam Pet Products"),
@@ -968,7 +981,7 @@ async function readProductFeed(primaryUrl, fallbackUrl, starterProducts, normali
       console.warn("Product feed unavailable", url, error);
     }
   }
-  return starterProducts.map(normalizeProduct).filter((product) => product.name);
+  return starterProducts.map(normalizeProduct).filter(Boolean);
 }
 
 async function readLiveProductFeed(url, normalizeProduct) {
@@ -982,7 +995,7 @@ async function readLiveProductFeed(url, normalizeProduct) {
   }
 
   const records = Array.isArray(data) ? data : data.products || data.items || data.data || [];
-  const normalized = records.map(normalizeProduct).filter((product) => product.name);
+  const normalized = records.map(normalizeProduct).filter(Boolean);
   return {
     products: normalized,
     status: data
@@ -1037,7 +1050,7 @@ async function loadAvasamProducts({ silent = false } = {}) {
   } catch (error) {
     const fallbackProducts = avasamStarterProducts
       .map(normalizeAvasamProduct)
-      .filter((product) => product.name);
+      .filter(Boolean);
     avasamProducts = groupAvasamProductVariants(fallbackProducts);
     avasamState.error = !avasamProducts.length;
     avasamState.live = false;

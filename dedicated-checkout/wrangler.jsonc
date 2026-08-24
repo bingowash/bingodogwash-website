@@ -11,5 +11,13 @@
   ],
   "secrets": {
     "required": ["STRIPE_SECRET_KEY"]
-  }
+  },
+  "d1_databases": [
+    {
+      "binding": "AVASAM_CATALOGUE_DB",
+      "database_name": "bingo-avasam-catalogue",
+      "database_id": "2e509f9b-9f1b-47e5-9f44-81d5214b2e03",
+      "migrations_dir": "../migrations/avasam-catalogue"
+    }
+  ]
 }

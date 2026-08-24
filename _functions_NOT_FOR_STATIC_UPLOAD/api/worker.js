@@ -211,8 +211,8 @@ const SECURITY_HEADERS = {
 const requestEnvStorage = new AsyncLocalStorage();
 
 export default {
-  async fetch(request, env) {
-    return requestEnvStorage.run(env || {}, async () => {
+  async fetch(request, env, ctx) {
+    return requestEnvStorage.run({ ...(env || {}), __executionCtx: ctx }, async () => {
       try {
         const response = await handleRequestWithAssets(request, env || {});
         return withSecurityHeaders(response, request);
@@ -227,6 +227,10 @@ export default {
     });
   },
   async scheduled(event, env, ctx) {
+    if (event.cron === "*/5 * * * *") {
+      ctx.waitUntil(requestEnvStorage.run({ ...(env || {}), __executionCtx: ctx }, () => refreshAvasamCatalogue()).catch((error) => logError("Avasam catalogue refresh failed", error)));
+      return;
+    }
     ctx.waitUntil(runMarketingSchedule(event, env || {}, {
       loadProducts: () => requestEnvStorage.run(env || {}, () => loadProspectingCatalogue()),
     }).catch((error) => logError("Marketing schedule failed", error)));
@@ -1198,6 +1202,10 @@ async function handleAvasamProducts(request, url) {
       );
     }
 
+    const persistence = persistAvasamCatalogue(products);
+    const executionCtx = requestEnvStorage.getStore()?.__executionCtx;
+    if (executionCtx?.waitUntil) executionCtx.waitUntil(persistence.catch((error) => logError("Avasam catalogue persistence failed", error)));
+
     return corsResponse(request, {
       ok: true,
       source: "Avasam",
@@ -1219,6 +1227,34 @@ async function handleAvasamProducts(request, url) {
         : "Avasam products are temporarily unavailable."
     );
   }
+}
+
+function persistedAvasamProduct(product, now) {
+  const suppliedSku = cleanText(product?.sku, 180);
+  const suppliedId = cleanText(product?.id, 180);
+  const sku = (suppliedSku || suppliedId).replace(/^avasam-/i, "").toUpperCase();
+  const publicId = `avasam-${sku}`;
+  const pricePence = Math.round(Number(product?.price) * 100);
+  if (!/^S\d+$/.test(sku) || !publicId || !cleanText(product?.name, 500) || !Number.isInteger(pricePence) || pricePence <= 0) return null;
+  return [sku, publicId, cleanText(product.name, 500), pricePence, cleanText(product.supplier || "Avasam", 120), cleanText(product.status, 160), cleanText(product.availability, 160), cleanUrl(product.image || product.imageUrl || ""), cleanText(product.description, 2000), now, now];
+}
+
+async function persistAvasamCatalogue(products) {
+  const database = requestEnvStorage.getStore()?.AVASAM_CATALOGUE_DB;
+  if (!database?.prepare || !Array.isArray(products) || !products.length) return;
+  const now = new Date().toISOString();
+  const rows = products.map((product) => persistedAvasamProduct(product, now)).filter(Boolean);
+  if (!rows.length) return;
+  const sql = `INSERT INTO avasam_catalogue_cache (sku, public_id, name, price_pence, supplier, status, availability, image, description, updated_at, last_seen_at, active)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+    ON CONFLICT(sku) DO UPDATE SET public_id = excluded.public_id, name = excluded.name, price_pence = excluded.price_pence, supplier = excluded.supplier, status = excluded.status, availability = excluded.availability, image = excluded.image, description = excluded.description, updated_at = excluded.updated_at, last_seen_at = excluded.last_seen_at, active = 1`;
+  await database.batch(rows.map((row) => database.prepare(sql).bind(...row)));
+}
+
+async function refreshAvasamCatalogue() {
+  const url = new URL(AVASAM_PRODUCTS_PATH, "https://bingodogwash.com");
+  url.searchParams.set("limit", "100");
+  await handleAvasamProducts(new Request(url, { method: "GET", headers: { Accept: "application/json" } }), url);
 }
 
 let avasamTokenCache = null;
@@ -1576,9 +1612,12 @@ function normalizeAvasamProduct(item, index) {
   const sku = cleanText(
     item.SKU ||
     item.sku ||
-    `product-${index + 1}`,
+    "",
     120
-  );
+  ).toUpperCase();
+
+  // Avasam checkout identity must come from the supplier, never a title/index fallback.
+  if (!/^S\d+$/.test(sku)) return null;
 
   const name = cleanText(
     item.Title ||
@@ -1674,6 +1713,7 @@ const image = uniqueImages[0] || "";
 
   return {
     id: `avasam-${sku}`,
+    public_id: `avasam-${sku}`,
     sku,
     name,
     category: cleanText(
@@ -5886,6 +5926,9 @@ export const avasamTestHelpers = {
   avasamRetryAfterMs,
   resetAvasamTokenState,
   resetAvasamCatalogueState,
+  persistedAvasamProduct,
+  persistAvasamCatalogue: (products, env) => requestEnvStorage.run(env || {}, () => persistAvasamCatalogue(products)),
+  refreshAvasamCatalogue: (env) => requestEnvStorage.run(env || {}, () => refreshAvasamCatalogue()),
 };
 
 export const storefrontSsrTestHelpers = {

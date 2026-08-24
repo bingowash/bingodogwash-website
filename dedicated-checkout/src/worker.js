@@ -1,9 +1,6 @@
 const PUBLIC_SITE_ORIGIN = "https://bingodogwash.com";
-const CATALOGUE_TIMEOUT_MS = 5000;
-const AVASAM_FRESH_CACHE_TTL_MS = 60 * 1000;
-const AVASAM_LAST_KNOWN_GOOD_TTL_MS = 5 * 60 * 1000;
 const MAX_QUANTITY = 20;
-const sharedAvasamCatalogueCache = { value: null };
+const AVASAM_RECORD_MAX_AGE_MS = 5 * 60 * 1000;
 
 const FALLBACK_PRODUCTS = [
   { id: "self-service-dog-wash", name: "Self-Service Dog Wash", price: 10, supplier: "Bingo Dog Wash" },
@@ -30,6 +27,9 @@ function available(product) { return Number.isFinite(Number(product?.price)) && 
 export function productKeys(product) {
   const id = String(product?.id || "").trim();
   const sku = String(product?.sku || "").trim();
+  const canonicalAvasamSku = String(product?.supplier || "").toLowerCase().includes("avasam")
+    ? avasamSku(sku || id)
+    : "";
   const keys = new Set();
   if (id) {
     keys.add(id);
@@ -40,26 +40,15 @@ export function productKeys(product) {
     keys.add(sku);
     if (String(product?.supplier || "").toLowerCase().includes("avasam")) keys.add(`avasam-${sku}`);
   }
+  if (canonicalAvasamSku) {
+    keys.add(canonicalAvasamSku);
+    keys.add(`avasam-${canonicalAvasamSku}`);
+    keys.add(`avasam-${canonicalAvasamSku.toLowerCase()}`);
+  }
   return [...keys].filter(Boolean);
 }
 
-function isAvasamId(id) { return String(id).startsWith("avasam-"); }
-function normalizeAvasamProduct(product) {
-  const sku = cleanText(product?.sku, "");
-  const id = cleanText(product?.id || (sku ? `avasam-${sku}` : ""), "");
-  if (!id && !sku) return null;
-  const rawPrice = Number(product?.price);
-  return {
-    id,
-    sku,
-    name: cleanText(product?.name, ""),
-    price: Number.isFinite(rawPrice) ? rawPrice : null,
-    supplier: cleanText(product?.supplier, ""),
-    description: cleanText(product?.description, ""),
-    image: cleanText(product?.image, ""),
-    status: cleanText(product?.status, "")
-  };
-}
+function isAvasamId(id) { return /^(?:avasam-)?s\d+$/i.test(String(id || "").trim()); }
 async function fetchCatalogue(fetchImpl, path, timeoutMs) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -70,25 +59,31 @@ async function fetchCatalogue(fetchImpl, path, timeoutMs) {
     return { ok: true, products: Array.isArray(data) ? data : data.products || data.items || [] };
   } catch (_) { return { ok: false, products: [] }; } finally { clearTimeout(timer); }
 }
-async function fetchAvasamCatalogue(fetchImpl, timeoutMs, now, cache) {
-  const cached = cache.value;
-  const age = cached ? now() - cached.fetchedAt : Infinity;
-  if (cached && age >= 0 && age <= AVASAM_FRESH_CACHE_TTL_MS) return { ok: true, products: cached.products };
-
-  const live = await fetchCatalogue(fetchImpl, "/api/avasam/products?limit=100", timeoutMs);
-  if (live.ok) {
-    const products = live.products.map(normalizeAvasamProduct).filter(Boolean);
-    if (products.length) cache.value = { products, fetchedAt: now() };
-    return { ok: true, products };
-  }
-
-  if (cached && age >= 0 && age <= AVASAM_LAST_KNOWN_GOOD_TTL_MS) return { ok: true, products: cached.products };
-  return { ok: false, products: [] };
+export function avasamSku(id) {
+  const value = String(id || "").trim();
+  if (!isAvasamId(value)) return "";
+  return value.replace(/^avasam-/i, "").trim().toUpperCase();
 }
-async function productMap(fetchImpl, timeoutMs, now, cache) {
+function cachedAvasamProduct(row, now) {
+  const age = now - Date.parse(String(row?.last_seen_at || row?.updated_at || ""));
+  const pricePence = Number(row?.price_pence);
+  if (!row || Number(row.active) !== 1 || !Number.isInteger(pricePence) || pricePence <= 0 || !Number.isFinite(age) || age < 0 || age > AVASAM_RECORD_MAX_AGE_MS || /out of stock|unavailable/i.test(`${row.status || ""} ${row.availability || ""}`)) return null;
+  return { id: cleanText(row.public_id), sku: cleanText(row.sku), name: cleanText(row.name), price: pricePence / 100, supplier: cleanText(row.supplier, "Avasam"), description: cleanText(row.description), image: cleanText(row.image), status: cleanText(row.status) };
+}
+async function cachedAvasamProducts(db, ids, now) {
+  if (!ids.length) return { ok: true, products: [] };
+  if (!db?.prepare) return { ok: false, products: [] };
+  try {
+    const rows = await Promise.all(ids.map((id) => db.prepare("SELECT sku, public_id, name, price_pence, supplier, status, availability, image, description, updated_at, last_seen_at, active FROM avasam_catalogue_cache WHERE sku = ? LIMIT 1").bind(avasamSku(id)).first()));
+    return { ok: true, products: rows.map((row) => cachedAvasamProduct(row, now)).filter(Boolean) };
+  } catch (_) { return { ok: false, products: [] }; }
+}
+async function productMap(fetchImpl, timeoutMs, now, db, ids) {
+  const avasamIds = ids.filter(isAvasamId);
+  const needsAppscenic = ids.some((id) => !isAvasamId(id) && !FALLBACK_PRODUCTS.some((product) => productKeys(product).includes(id)));
   const [appscenic, avasam] = await Promise.all([
-    fetchCatalogue(fetchImpl, "/feeds/appscenic-products.json", timeoutMs),
-    fetchAvasamCatalogue(fetchImpl, timeoutMs, now, cache)
+    needsAppscenic ? fetchCatalogue(fetchImpl, "/feeds/appscenic-products.json", timeoutMs) : Promise.resolve({ ok: true, products: [] }),
+    cachedAvasamProducts(db, avasamIds, now)
   ]);
   const map = new Map();
   for (const product of [...FALLBACK_PRODUCTS, ...appscenic.products, ...avasam.products]) for (const key of productKeys(product)) if (!map.has(key)) map.set(key, product);
@@ -114,7 +109,7 @@ function groupedItems(items) {
   return counts;
 }
 
-export function createWorker({ fetchImpl = fetch, timeoutMs = CATALOGUE_TIMEOUT_MS, now = () => Date.now(), avasamCache = sharedAvasamCatalogueCache } = {}) {
+export function createWorker({ fetchImpl = fetch, timeoutMs = 5000, now = () => Date.now() } = {}) {
   return { async fetch(request, env) {
     if (request.method === "OPTIONS") return json(request, { ok: true });
     if (request.method !== "POST") return json(request, { ok: false, error: "Use POST for checkout." }, 405);
@@ -122,7 +117,7 @@ export function createWorker({ fetchImpl = fetch, timeoutMs = CATALOGUE_TIMEOUT_
     let input; try { input = await request.json(); } catch (_) { return json(request, { ok: false, error: "Invalid checkout request." }, 400); }
     const items = Array.isArray(input.items) ? input.items : []; if (!items.length) return json(request, { ok: false, error: "Your basket is empty." }, 400);
     const counts = groupedItems(items); if (!counts) return json(request, { ok: false, error: "Basket quantities must be whole numbers from 1 to 20." }, 400);
-    const { map, avasamAvailable } = await productMap(fetchImpl, timeoutMs, now, avasamCache);
+    const { map, avasamAvailable } = await productMap(fetchImpl, timeoutMs, now(), env?.AVASAM_CATALOGUE_DB, [...counts.keys()]);
     const rows = [];
     for (const [id, quantity] of counts) { const product = map.get(id); if (!product) return json(request, { ok: false, error: (!avasamAvailable || isAvasamId(id)) ? "The Avasam catalogue is temporarily unavailable. Please try again." : "A basket product could not be verified." }, (!avasamAvailable || isAvasamId(id)) ? 503 : 400); if (!available(product) || !cents(product.price)) return json(request, { ok: false, error: "A basket product is unavailable or has no valid server price." }, 400); rows.push({ product, quantity, unitAmount: cents(product.price) }); }
     const total = rows.reduce((sum, row) => sum + row.unitAmount * row.quantity, 0);

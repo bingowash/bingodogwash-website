@@ -11,6 +11,7 @@
 	},
 	"triggers": {
 		"crons": [
+			"*/5 * * * *",
 			"*/15 * * * *",
 			"0 2 * * *",
 			"30 3 * * *"
@@ -283,6 +284,12 @@
 			"database_name": "bingo-gift-cards",
 			"database_id": "89a7dff7-4161-4250-b085-10a7f3d69b18",
 			"migrations_dir": "./migrations"
+		},
+		{
+			"binding": "AVASAM_CATALOGUE_DB",
+			"database_name": "bingo-avasam-catalogue",
+			"database_id": "2e509f9b-9f1b-47e5-9f44-81d5214b2e03",
+			"migrations_dir": "./migrations/avasam-catalogue"
 		}
 	],
 	"r2_buckets": [
