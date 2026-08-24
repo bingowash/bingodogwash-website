@@ -78,6 +78,10 @@ const AVASAM_TOKEN_URL =
 
 const AVASAM_PRODUCTS_URL =
   "https://app.avasam.com/apiseeker/Products/GetSellerProductList";
+const AVASAM_TOKEN_TIMEOUT_MS = 5000;
+const AVASAM_PRODUCT_TIMEOUT_MS = 5000;
+const AVASAM_PRODUCT_BUDGET_MS = 7000;
+const AVASAM_CATALOGUE_CACHE_TTL_MS = 30000;
 const ETSY_PRODUCTS_PATH = "/api/etsy/products";
 const ETSY_CONNECT_PATH = "/api/etsy/connect";
 const ETSY_CALLBACK_PATH = "/api/etsy/callback";
@@ -1220,6 +1224,7 @@ async function handleAvasamProducts(request, url) {
 let avasamTokenCache = null;
 let avasamTokenRefreshPromise = null;
 let avasamTokenRetryAfterAt = 0;
+const avasamCatalogueCache = new Map();
 
 function avasamRetryAfterMs(response) {
   const value = String(response?.headers?.get("Retry-After") || "").trim();
@@ -1252,6 +1257,10 @@ function resetAvasamTokenState() {
   avasamTokenRetryAfterAt = 0;
 }
 
+function resetAvasamCatalogueState() {
+  avasamCatalogueCache.clear();
+}
+
 async function requestAvasamAccessToken(consumerKey, secretKey) {
   const now = Date.now();
 
@@ -1259,6 +1268,16 @@ async function requestAvasamAccessToken(consumerKey, secretKey) {
     avasamTokenCache?.accessToken &&
     avasamTokenCache.expiresAt > now + 120000
   ) {
+    console.log(JSON.stringify({
+      event: "avasam_stage",
+      stage: "token",
+      outcome: "success",
+      durationMs: 0,
+      httpStatus: null,
+      attempt: 0,
+      authFormat: "",
+      tokenCacheHit: true
+    }));
     return avasamTokenCache.accessToken;
   }
 
@@ -1283,7 +1302,7 @@ async function requestAvasamAccessToken(consumerKey, secretKey) {
     let response;
 
     try {
-      response = await fetch(AVASAM_TOKEN_URL, {
+      response = await fetchAvasam(AVASAM_TOKEN_URL, {
         method: "POST",
         headers: {
           Accept: "application/json",
@@ -1293,7 +1312,7 @@ async function requestAvasamAccessToken(consumerKey, secretKey) {
           consumer_key: consumerKey,
           secret_key: secretKey
         })
-      });
+      }, { stage: "token", timeoutMs: AVASAM_TOKEN_TIMEOUT_MS, tokenCacheHit: false });
     } catch (error) {
       throw new Error(
         "Avasam token request could not reach Avasam."
@@ -1380,6 +1399,10 @@ async function requestAvasamAccessToken(consumerKey, secretKey) {
 }
 
 async function requestAvasamProducts(accessToken, page, limit) {
+  const cacheKey = `${page}:${limit}`;
+  const cached = avasamCatalogueCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.products;
+
   const attempts = [
     {
       name: "Authorization raw token",
@@ -1433,12 +1456,16 @@ async function requestAvasamProducts(accessToken, page, limit) {
 
   const failures = [];
 
-  for (const attempt of attempts) {
-    const response = await fetch(AVASAM_PRODUCTS_URL, {
+  const deadline = Date.now() + AVASAM_PRODUCT_BUDGET_MS;
+  for (let index = 0; index < attempts.length; index += 1) {
+    const attempt = attempts[index];
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error("Avasam product request timed out.");
+    const response = await fetchAvasam(AVASAM_PRODUCTS_URL, {
       method: "POST",
       headers: attempt.headers,
       body: JSON.stringify(attempt.body)
-    });
+    }, { stage: "products", timeoutMs: Math.min(AVASAM_PRODUCT_TIMEOUT_MS, remaining), attempt: index + 1, authFormat: attempt.name });
 
     const data = await readAvasamJson(response);
 
@@ -1451,9 +1478,14 @@ async function requestAvasamProducts(accessToken, page, limit) {
         method: attempt.name
       }));
 
-      return items
+      const products = items
         .map(normalizeAvasamProduct)
         .filter(Boolean);
+      avasamCatalogueCache.set(cacheKey, {
+        products,
+        expiresAt: Date.now() + AVASAM_CATALOGUE_CACHE_TTL_MS
+      });
+      return products;
     }
 
     failures.push({
@@ -1470,6 +1502,7 @@ async function requestAvasamProducts(accessToken, page, limit) {
         150
       )
     });
+    if (response.status !== 401 && response.status !== 403) break;
   }
 
   logExternalError("All Avasam authentication attempts failed", {
@@ -1491,6 +1524,21 @@ async function requestAvasamProducts(accessToken, page, limit) {
     "All Avasam product authentication formats failed: " +
     summary
   );
+}
+
+async function fetchAvasam(url, init, details) {
+  const started = Date.now();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), details.timeoutMs);
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal });
+    console.log(JSON.stringify({ event: "avasam_stage", stage: details.stage, outcome: response.ok ? "success" : "http_error", durationMs: Date.now() - started, httpStatus: response.status, attempt: details.attempt || 1, authFormat: details.authFormat || "", tokenCacheHit: Boolean(details.tokenCacheHit) }));
+    return response;
+  } catch (error) {
+    const timeout = controller.signal.aborted;
+    console.log(JSON.stringify({ event: "avasam_stage", stage: details.stage, outcome: timeout ? "timeout" : "network_error", durationMs: Date.now() - started, httpStatus: 0, attempt: details.attempt || 1, authFormat: details.authFormat || "", tokenCacheHit: Boolean(details.tokenCacheHit) }));
+    throw new Error(timeout ? `Avasam ${details.stage} request timed out.` : `Avasam ${details.stage} request could not reach Avasam.`);
+  } finally { clearTimeout(timer); }
 }
 
 
@@ -5834,8 +5882,10 @@ export const etsyTestHelpers = {
 
 export const avasamTestHelpers = {
   requestAvasamAccessToken,
+  requestAvasamProducts,
   avasamRetryAfterMs,
   resetAvasamTokenState,
+  resetAvasamCatalogueState,
 };
 
 export const storefrontSsrTestHelpers = {
