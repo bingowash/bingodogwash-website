@@ -1217,49 +1217,166 @@ async function handleAvasamProducts(request, url) {
   }
 }
 
-async function requestAvasamAccessToken(consumerKey, secretKey) {
-  const response = await fetch(AVASAM_TOKEN_URL, {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      consumer_key: consumerKey,
-      secret_key: secretKey
-    })
-  });
+let avasamTokenCache = null;
+let avasamTokenRefreshPromise = null;
+let avasamTokenRetryAfterAt = 0;
 
-  const data = await readAvasamJson(response);
+function avasamRetryAfterMs(response) {
+  const value = String(response?.headers?.get("Retry-After") || "").trim();
 
-  const accessToken = firstValue(data.access_token, data.AccessToken, data.token, data.Token, data.authkey, data.Authkey, data.AuthKey);
+  if (!value) {
+    return 60 * 1000;
+  }
 
-  if (!response.ok || !accessToken) {
-    logExternalError("Avasam token response", {
-      status: response.status,
-      reason: supplierErrorMessage(data)
-    });
+  const seconds = Number(value);
 
-    const apiMessage = cleanText(
-      data?.message ||
-      data?.Message ||
-      data?.error_description ||
-      data?.error ||
-      data?.title ||
-      data?.rawResponse ||
-      "No explanation was returned by Avasam.",
-      300
-    );
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.min(seconds * 1000, 15 * 60 * 1000);
+  }
 
-    throw new Error(
-      "Avasam token request failed with HTTP " +
-      response.status +
-      ": " +
-      apiMessage
+  const date = Date.parse(value);
+
+  if (Number.isFinite(date)) {
+    return Math.max(
+      1000,
+      Math.min(date - Date.now(), 15 * 60 * 1000)
     );
   }
 
-  return accessToken;
+  return 60 * 1000;
+}
+
+function resetAvasamTokenState() {
+  avasamTokenCache = null;
+  avasamTokenRefreshPromise = null;
+  avasamTokenRetryAfterAt = 0;
+}
+
+async function requestAvasamAccessToken(consumerKey, secretKey) {
+  const now = Date.now();
+
+  if (
+    avasamTokenCache?.accessToken &&
+    avasamTokenCache.expiresAt > now + 120000
+  ) {
+    return avasamTokenCache.accessToken;
+  }
+
+  if (avasamTokenRefreshPromise) {
+    return avasamTokenRefreshPromise;
+  }
+
+  if (avasamTokenRetryAfterAt > now) {
+    const remainingSeconds = Math.max(
+      1,
+      Math.ceil((avasamTokenRetryAfterAt - now) / 1000)
+    );
+
+    throw new Error(
+      "Avasam authentication is temporarily rate limited. Retry in approximately " +
+      remainingSeconds +
+      " seconds."
+    );
+  }
+
+  avasamTokenRefreshPromise = (async () => {
+    let response;
+
+    try {
+      response = await fetch(AVASAM_TOKEN_URL, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          consumer_key: consumerKey,
+          secret_key: secretKey
+        })
+      });
+    } catch (error) {
+      throw new Error(
+        "Avasam token request could not reach Avasam."
+      );
+    }
+
+    const data = await readAvasamJson(response);
+
+    const accessToken = firstValue(
+      data?.access_token,
+      data?.AccessToken,
+      data?.token,
+      data?.Token,
+      data?.authkey,
+      data?.Authkey,
+      data?.AuthKey
+    );
+
+    if (!response.ok || !accessToken) {
+      if (response.status === 429) {
+        avasamTokenRetryAfterAt =
+          Date.now() + avasamRetryAfterMs(response);
+      }
+
+      logExternalError("Avasam token response", {
+        status: response.status,
+        reason: supplierErrorMessage(data)
+      });
+
+      const apiMessage = cleanText(
+        data?.message ||
+        data?.Message ||
+        data?.error_description ||
+        data?.error ||
+        data?.title ||
+        data?.rawResponse ||
+        "No explanation was returned by Avasam.",
+        300
+      );
+
+      throw new Error(
+        "Avasam token request failed with HTTP " +
+        response.status +
+        ": " +
+        apiMessage
+      );
+    }
+
+    avasamTokenRetryAfterAt = 0;
+
+    const expiresIn = Number(
+      data?.expires_in ??
+      data?.expiresIn ??
+      data?.ExpiresIn ??
+      data?.expires ??
+      0
+    );
+
+    /*
+     * Prefer expiry supplied by Avasam.
+     *
+     * If Avasam does not return expiry metadata, retain the token
+     * for only five minutes. This is deliberately conservative and
+     * avoids requesting a new token on every storefront request.
+     */
+    const lifetimeMs =
+      Number.isFinite(expiresIn) && expiresIn > 0
+        ? expiresIn * 1000
+        : 5 * 60 * 1000;
+
+    avasamTokenCache = {
+      accessToken,
+      expiresAt: Date.now() + lifetimeMs
+    };
+
+    return accessToken;
+  })();
+
+  try {
+    return await avasamTokenRefreshPromise;
+  } finally {
+    avasamTokenRefreshPromise = null;
+  }
 }
 
 async function requestAvasamProducts(accessToken, page, limit) {
@@ -5713,6 +5830,12 @@ export const etsyTestHelpers = {
   etsyListingReference,
   fetchExactEtsyListing: (listingId, env) => requestEnvStorage.run(env || {}, () => fetchExactEtsyListing(listingId)),
   affiliateProductMatch,
+};
+
+export const avasamTestHelpers = {
+  requestAvasamAccessToken,
+  avasamRetryAfterMs,
+  resetAvasamTokenState,
 };
 
 export const storefrontSsrTestHelpers = {
