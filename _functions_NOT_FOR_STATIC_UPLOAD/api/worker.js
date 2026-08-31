@@ -49,6 +49,7 @@ const COMPETITIONS_API_PATH = "/api/competitions";
 const ADMIN_COMPETITIONS_API_PATH = "/api/admin/competitions";
 const STRIPE_WEBHOOK_TOLERANCE_SECONDS = 300;
 const GIFT_CARD_DELIVERY_CRON = "*/15 * * * *";
+const MARKETING_CRON = "15 * * * *";
 
 const CONTACT_DEPARTMENTS = {
   general: {
@@ -223,9 +224,12 @@ export default {
     });
   },
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(runMarketingSchedule(event, env || {}, {
-      loadProducts: () => requestEnvStorage.run(env || {}, () => loadProspectingCatalogue()),
-    }).catch((error) => logError("Marketing schedule failed", error)));
+    if (event.cron === MARKETING_CRON) {
+      ctx.waitUntil(runMarketingSchedule(event, env || {}, {
+        loadProducts: () => requestEnvStorage.run(env || {}, () => loadProspectingCatalogue()),
+      }).catch((error) => logError("Marketing schedule failed", error)));
+      return;
+    }
     const prospectingEnabled = /^(1|true|yes|on)$/i.test(String(env?.AI_PROSPECTING_ENABLED || "").trim());
     const catalogue = event.cron === "0 2 * * *" && prospectingEnabled
       ? requestEnvStorage.run(env || {}, () => loadProspectingCatalogue())

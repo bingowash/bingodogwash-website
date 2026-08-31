@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { handleMarketingRequest, isMarketingPath, marketingTestHelpers, runMarketingAutomation, runMarketingSchedule } from "../_functions_NOT_FOR_STATIC_UPLOAD/api/marketing.js";
 import marketingStagingWorker from "../_functions_NOT_FOR_STATIC_UPLOAD/api/marketing-staging.js";
+import worker from "../_functions_NOT_FOR_STATIC_UPLOAD/api/worker.js";
 
 test("temporary controlled Instagram UI and endpoint are removed while the guard migration remains", () => {
   const html = readFileSync(new URL("../public/admin/marketing.html", import.meta.url), "utf8");
@@ -75,45 +76,83 @@ test("temporary Instagram sharing test is absent while normal marketing controls
   assert.match(worker, /async function publishInstagram\(/);
 });
 
-test("hourly supplier rotation preserves cron, normal controls, and Facebook collaboration controls", () => {
+test("hourly supplier rotation preserves cron and normal controls", () => {
   const worker = readFileSync(new URL("../_functions_NOT_FOR_STATIC_UPLOAD/api/marketing.js", import.meta.url), "utf8");
+  const workerSource = readFileSync(new URL("../_functions_NOT_FOR_STATIC_UPLOAD/api/worker.js", import.meta.url), "utf8");
   const config = JSON.parse(readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8"));
   const html = readFileSync(new URL("../public/admin/marketing.html", import.meta.url), "utf8");
   const frontend = readFileSync(new URL("../public/admin/marketing.js", import.meta.url), "utf8");
   assert.match(worker, /const MARKETING_INTERVAL_HOURS = 1/);
   assert.match(html, /<h2>Every hour<\/h2>/);
   assert.match(html, /Hourly product promotion/);
-  assert.deepEqual(config.triggers.crons, ["*/15 * * * *", "0 2 * * *", "30 3 * * *"]);
-  assert.doesNotMatch(JSON.stringify(config.triggers.crons), /0 \* \* \* \*/);
+  assert.deepEqual(config.triggers.crons, ["*/15 * * * *", "15 * * * *", "0 2 * * *", "30 3 * * *"]);
+  assert.match(workerSource, /const MARKETING_CRON = "15 \* \* \* \*"/);
+  const scheduled = workerSource.slice(workerSource.indexOf("async scheduled("), workerSource.indexOf("async function handleRequestWithAssets"));
+  const marketingGuardStart = scheduled.indexOf("if (event.cron === MARKETING_CRON)");
+  const nonMarketingStart = scheduled.indexOf("const prospectingEnabled", marketingGuardStart);
+  assert.ok(marketingGuardStart >= 0);
+  assert.ok(nonMarketingStart > marketingGuardStart);
+  const marketingGuard = scheduled.slice(marketingGuardStart, nonMarketingStart);
+  assert.match(marketingGuard, /runMarketingSchedule\(event, env \|\| \{\}/);
+  assert.match(marketingGuard, /return;/);
+  assert.doesNotMatch(scheduled.slice(0, marketingGuardStart), /runMarketingSchedule/);
+  assert.doesNotMatch(scheduled.slice(nonMarketingStart), /runMarketingSchedule/);
   assert.match(worker, /selectNextProduct\(db, \{\s*respectCooldown: options\.trigger === "scheduled"/);
   assert.match(worker, /catalogueProducts: options\.catalogueProducts/);
-  assert.match(frontend, /Collaborator follow-up:/);
-  assert.match(frontend, /Mark completed/);
+  assert.doesNotMatch(frontend, /facebook-collaboration|Collaborator follow-up|Mark completed|Reset pending/);
 });
 
-test("Facebook Primary collaboration follow-up is additive and local-only", () => {
+test("only the dedicated hourly cron starts the marketing scheduler", async () => {
+  const marketingSettingsQueries = [];
+  const db = {
+    prepare(sql) {
+      if (sql.includes("marketing_settings")) marketingSettingsQueries.push(sql);
+      return {
+        bind() { return this; },
+        async first() { return sql.includes("marketing_settings") ? { enabled: 0 } : null; },
+        async all() { return { results: [] }; },
+        async run() { return { success: true, meta: { changes: 0 } }; },
+      };
+    },
+  };
+  const env = {
+    GIFT_CARD_DB: db,
+    AI_PROSPECTING_ENABLED: "false",
+    ETSY_FEATURE_ENABLED: "false",
+    ETSY_SYNC_ENABLED: "false",
+  };
+
+  for (const cron of ["15 * * * *", "*/15 * * * *", "0 2 * * *", "30 3 * * *"]) {
+    marketingSettingsQueries.length = 0;
+    const pending = [];
+    await worker.scheduled({ cron, scheduledTime: Date.parse("2026-08-31T09:00:00.000Z") }, env, {
+      waitUntil(promise) { pending.push(Promise.resolve(promise)); },
+    });
+    await Promise.all(pending);
+    assert.equal(marketingSettingsQueries.length, cron === "15 * * * *" ? 1 : 0, cron);
+  }
+});
+
+test("obsolete Facebook collaborator follow-up code is removed while historical data is retained", () => {
   const frontend = readFileSync(new URL("../public/admin/marketing.js", import.meta.url), "utf8");
+  const backend = readFileSync(new URL("../_functions_NOT_FOR_STATIC_UPLOAD/api/marketing.js", import.meta.url), "utf8");
   const migration = readFileSync(new URL("../migrations/0025_facebook_collaboration_followups.sql", import.meta.url), "utf8");
   assert.match(migration, /CREATE TABLE IF NOT EXISTS marketing_facebook_collaboration_followups/);
   assert.match(migration, /platform_result_id TEXT PRIMARY KEY/);
   assert.match(migration, /CHECK \(collaboration_state IN \('pending', 'completed'\)\)/);
   assert.doesNotMatch(migration, /\b(?:DELETE|DROP|ALTER)\b/i);
-  assert.match(frontend, /Mark completed/);
-  assert.match(frontend, /Reset pending/);
-  assert.match(frontend, /\/facebook-collaboration/);
+  for (const source of [frontend, backend]) {
+    assert.doesNotMatch(source, /facebook-collaboration|Collaborator follow-up|Mark completed|Reset pending|marketing_facebook_collaboration_followups/);
+  }
 });
 
-test("Facebook history defaults successful Primary follow-up to pending and failures to not applicable", () => {
-  const primarySuccess = marketingTestHelpers.facebookHistoryDestination({ id: "r1", platform: "facebook:1264938680034651", status: "success", external_post_id: "photo-1", metadata: JSON.stringify({ connectionRole: "facebook_primary", pageId: "1264938680034651", pageName: "Bingo Dog Wash" }) });
-  const primaryFailure = marketingTestHelpers.facebookHistoryDestination({ id: "r2", platform: "facebook:1264938680034651", status: "failed", metadata: "{}" });
-  const secondarySuccess = marketingTestHelpers.facebookHistoryDestination({ id: "r3", platform: "facebook_secondary:2", status: "success", metadata: JSON.stringify({ connectionRole: "facebook_secondary", pageId: "2" }) });
-  const completed = marketingTestHelpers.facebookHistoryDestination({ id: "r4", platform: "facebook:1264938680034651", status: "success", metadata: "{}", collaboration_state: "completed", collaboration_completed_at: "2026-08-22T12:00:00.000Z" });
-  assert.equal(primarySuccess.collaborationState, "pending");
-  assert.equal(primarySuccess.postUrl, "");
-  assert.equal(primaryFailure.collaborationState, "not_applicable");
-  assert.equal(secondarySuccess.collaborationState, "not_applicable");
-  assert.equal(completed.collaborationState, "completed");
-  assert.equal(completed.collaborationCompletedAt, "2026-08-22T12:00:00.000Z");
+test("removed collaborator endpoint cannot create a record", async () => {
+  const response = await handleMarketingRequest(new Request("https://bingodogwash.com/api/admin/marketing/facebook-collaboration", {
+    method: "POST",
+    headers: { Authorization: "Bearer admin-token" },
+  }), { ADMIN_API_TOKEN: "admin-token", GIFT_CARD_DB: { prepare: () => assert.fail("unexpected database access") } });
+  assert.equal(response.status, 404);
+  assert.equal((await response.json()).error, "Marketing endpoint not found.");
 });
 
 test("OAuth start reuses the protected route and returns a Facebook authorization URL", async () => {
@@ -786,87 +825,6 @@ test("marketing admin API rejects an invalid admin token", async () => {
   assert.equal((await response.json()).error, "Admin authorisation required.");
 });
 
-test("Facebook collaboration update requires admin authentication", async () => {
-  const response = await handleMarketingRequest(new Request("https://bingodogwash.com/api/admin/marketing/facebook-collaboration", {
-    method: "POST",
-    body: JSON.stringify({ platformResultId: "result-1", state: "completed" }),
-  }), { ADMIN_API_TOKEN: "secret", GIFT_CARD_DB: {} });
-  assert.equal(response.status, 401);
-});
-
-test("Facebook collaboration update marks only an owned successful Primary result", async () => {
-  const writes = [];
-  const database = {
-    prepare(sql) {
-      return {
-        bind(...values) {
-          return {
-            first: async () => ({
-              id: "result-1",
-              post_id: "post-1",
-              platform: "facebook:1264938680034651",
-              status: "success",
-              metadata: JSON.stringify({ connectionRole: "facebook_primary", pageId: "1264938680034651", pageName: "Bingo Dog Wash" }),
-            }),
-            run: async () => { writes.push({ sql, values }); return { success: true }; },
-          };
-        },
-      };
-    },
-  };
-  const originalFetch = globalThis.fetch;
-  let metaRequests = 0;
-  globalThis.fetch = async () => { metaRequests += 1; throw new Error("unexpected network request"); };
-  try {
-    const response = await handleMarketingRequest(new Request("https://bingodogwash.com/api/admin/marketing/facebook-collaboration", {
-      method: "POST",
-      headers: { Authorization: "Bearer admin-token", "Content-Type": "application/json" },
-      body: JSON.stringify({ platformResultId: "result-1", state: "completed" }),
-    }), { ADMIN_API_TOKEN: "admin-token", GIFT_CARD_DB: database, META_PAGE_ID: "1264938680034651", META_PAGE_ACCESS_TOKEN: "must-not-appear" });
-    const body = await response.json();
-    assert.equal(response.status, 200);
-    assert.equal(body.ok, true);
-    assert.equal(body.collaborationState, "completed");
-    assert.equal(JSON.stringify(body).includes("must-not-appear"), false);
-    assert.equal(metaRequests, 0);
-    assert.equal(writes.length, 1);
-    assert.match(writes[0].sql, /marketing_facebook_collaboration_followups/);
-    assert.deepEqual(writes[0].values.slice(0, 3), ["result-1", "post-1", "completed"]);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test("Facebook collaboration update supports resetting a successful Primary result to pending", async () => {
-  let values = [];
-  const database = { prepare: (sql) => ({ bind: (...bound) => ({
-    first: async () => ({ id: "result-1", post_id: "post-1", platform: "facebook:1264938680034651", status: "success", metadata: "{}" }),
-    run: async () => { values = bound; return { success: true }; },
-  }) }) };
-  const response = await handleMarketingRequest(new Request("https://bingodogwash.com/api/admin/marketing/facebook-collaboration", {
-    method: "POST", headers: { Authorization: "Bearer admin-token", "Content-Type": "application/json" },
-    body: JSON.stringify({ platformResultId: "result-1", state: "pending" }),
-  }), { ADMIN_API_TOKEN: "admin-token", GIFT_CARD_DB: database, META_PAGE_ID: "1264938680034651" });
-  assert.equal(response.status, 200);
-  assert.equal((await response.json()).collaborationState, "pending");
-  assert.equal(values[2], "pending");
-  assert.equal(values[3], null);
-});
-
-test("Facebook collaboration update fails closed for unknown, failed, Secondary, and unconfigured Page records", async () => {
-  async function requestFor(record, env = {}) {
-    const database = { prepare: () => ({ bind: () => ({ first: async () => record, run: async () => assert.fail("unexpected write") }) }) };
-    return handleMarketingRequest(new Request("https://bingodogwash.com/api/admin/marketing/facebook-collaboration", {
-      method: "POST", headers: { Authorization: "Bearer admin-token", "Content-Type": "application/json" },
-      body: JSON.stringify({ platformResultId: "result-1", state: "completed" }),
-    }), { ADMIN_API_TOKEN: "admin-token", GIFT_CARD_DB: database, META_PAGE_ID: "1264938680034651", ...env });
-  }
-  assert.equal((await requestFor(null)).status, 404);
-  assert.equal((await requestFor({ id: "result-1", post_id: "post-1", platform: "facebook:1264938680034651", status: "failed", metadata: "{}" })).status, 409);
-  assert.equal((await requestFor({ id: "result-1", post_id: "post-1", platform: "facebook_secondary:2", status: "success", metadata: JSON.stringify({ connectionRole: "facebook_secondary", pageId: "2" }) })).status, 404);
-  assert.equal((await requestFor({ id: "result-1", post_id: "post-1", platform: "facebook:999", status: "success", metadata: "{}" })).status, 404);
-});
-
 test("marketing admin API permits authenticated read-only status", async () => {
   const database = {
     prepare(sql) {
@@ -894,6 +852,64 @@ test("marketing admin API permits authenticated read-only status", async () => {
     id: "post-1",
     error_message: "Meta connection has expired or is invalid. Reconnect Meta in server settings.",
   }]);
+});
+
+test("marketing history keeps Facebook Primary and Instagram records without collaborator state", async () => {
+  const writes = [];
+  const database = {
+    prepare(sql) {
+      return {
+        bind() { return this; },
+        first: async () => {
+          if (sql.includes("marketing_settings")) {
+            return { enabled: 0, schedule_hour_utc: 4, schedule_minute_utc: 15, last_run_date: "", next_run_at: "2030-01-01T00:15:00.000Z" };
+          }
+          if (sql.includes("marketing_posts LEFT JOIN marketing_events")) {
+            return { products_promoted: 0, clicks: 0, engagement: 0, sales: 0 };
+          }
+          return null;
+        },
+        all: async () => {
+          if (sql.includes("FROM marketing_platform_results WHERE platform LIKE")) {
+            return { results: [{
+              post_id: "post-1",
+              platform: "facebook:1264938680034651",
+              status: "success",
+              external_post_id: "facebook-post-1",
+              error_message: "",
+              metadata: JSON.stringify({ connectionRole: "facebook_primary", pageId: "1264938680034651", pageName: "Bingo Dog Wash" }),
+              created_at: "2026-08-31T20:15:00.000Z",
+            }] };
+          }
+          if (sql.includes("FROM marketing_posts ORDER")) {
+            return { results: [{ id: "post-1", instagram_post_id: "instagram-post-1", error_message: "" }] };
+          }
+          return { results: [] };
+        },
+        run: async () => { writes.push(sql); return { success: true }; },
+      };
+    },
+  };
+  const response = await handleMarketingRequest(
+    new Request("https://bingodogwash.com/api/admin/marketing", { headers: { Authorization: "Bearer test-token" } }),
+    { ADMIN_API_TOKEN: "test-token", GIFT_CARD_DB: database }
+  );
+  const body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(body.settings.enabled, false);
+  assert.equal(body.settings.minuteUtc, 15);
+  assert.equal(body.history[0].instagram_post_id, "instagram-post-1");
+  assert.deepEqual(body.history[0].facebook_destinations, [{
+    connectionRole: "facebook_primary",
+    pageId: "1264938680034651",
+    pageName: "Bingo Dog Wash",
+    status: "success",
+    externalPostId: "facebook-post-1",
+    error: "",
+    createdAt: "2026-08-31T20:15:00.000Z",
+  }]);
+  assert.equal("collaborationState" in body.history[0].facebook_destinations[0], false);
+  assert.deepEqual(writes, []);
 });
 
 test("paused marketing schedule does no product or platform work", async () => {

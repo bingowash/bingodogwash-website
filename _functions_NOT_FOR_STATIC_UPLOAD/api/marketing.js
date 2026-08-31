@@ -59,7 +59,6 @@ export async function handleMarketingRequest(request, env, url = new URL(request
   if (url.pathname === `${ADMIN_PATH}/oauth/secondary/start`) return oauthStart(request, env, url, "secondary");
   if (url.pathname === `${ADMIN_PATH}/oauth/secondary/candidates`) return secondaryOAuthCandidates(request, env);
   if (url.pathname === `${ADMIN_PATH}/oauth/secondary/select`) return selectSecondaryFacebookPage(request, env);
-  if (url.pathname === `${ADMIN_PATH}/facebook-collaboration`) return updateFacebookCollaboration(request, env);
   if (url.pathname === `${ADMIN_PATH}/preflight`) return preflight(env);
   if (url.pathname === `${ADMIN_PATH}/diagnostics`) return json(await metaDiagnostics(env));
   if (url.pathname === `${ADMIN_PATH}/pause`) {
@@ -1548,16 +1547,9 @@ async function dashboard(env) {
     COALESCE(SUM(CASE WHEN event_type = 'sale' THEN value ELSE 0 END), 0) AS sales
     FROM marketing_posts LEFT JOIN marketing_events ON marketing_events.post_id = marketing_posts.id
     GROUP BY product_source, product_id, product_name ORDER BY sales DESC, clicks DESC, engagement DESC LIMIT 8`).all());
-  const facebookResultsRequest = Promise.resolve().then(() => db.prepare(`SELECT marketing_platform_results.id, marketing_platform_results.post_id, marketing_platform_results.platform,
-    marketing_platform_results.status, marketing_platform_results.external_post_id, marketing_platform_results.error_message,
-    marketing_platform_results.metadata, marketing_platform_results.created_at,
-    marketing_facebook_collaboration_followups.collaboration_state,
-    marketing_facebook_collaboration_followups.completed_at AS collaboration_completed_at
-    FROM marketing_platform_results
-    LEFT JOIN marketing_facebook_collaboration_followups
-      ON marketing_facebook_collaboration_followups.platform_result_id = marketing_platform_results.id
-    WHERE marketing_platform_results.platform LIKE 'facebook:%' OR marketing_platform_results.platform LIKE 'facebook_secondary:%'
-    ORDER BY marketing_platform_results.created_at DESC LIMIT 200`).all());
+  const facebookResultsRequest = Promise.resolve().then(() => db.prepare(`SELECT post_id, platform, status, external_post_id, error_message, metadata, created_at
+    FROM marketing_platform_results WHERE platform LIKE 'facebook:%' OR platform LIKE 'facebook_secondary:%'
+    ORDER BY created_at DESC LIMIT 200`).all());
   const [settings, nextProduct, posts, totals, best, facebookResults] = await Promise.all([
     settingsRequest,
     nextProductRequest,
@@ -1571,7 +1563,18 @@ async function dashboard(env) {
   const facebookSecondaryStatus = await secondaryFacebookPreflight(env);
   const destinationsByPost = new Map();
   for (const result of facebookResults.results || []) {
-    const destination = facebookHistoryDestination(result);
+    let metadata = {};
+    try { metadata = JSON.parse(result.metadata || "{}"); } catch { metadata = {}; }
+    const pageId = String(metadata.pageId || result.platform.split(":")[1] || "");
+    const destination = {
+      connectionRole: metadata.connectionRole || (result.platform.startsWith("facebook_secondary:") ? "facebook_secondary" : "facebook_primary"),
+      pageId,
+      pageName: clean(metadata.pageName, 200),
+      status: result.status,
+      externalPostId: result.external_post_id || "",
+      error: safeStoredMetaError(result.error_message),
+      createdAt: result.created_at,
+    };
     if (!destinationsByPost.has(result.post_id)) destinationsByPost.set(result.post_id, []);
     destinationsByPost.get(result.post_id).push(destination);
   }
@@ -1600,51 +1603,6 @@ async function dashboard(env) {
     history,
     analytics: { ...totals, bestProducts: best.results || [] }
   });
-}
-
-function facebookHistoryDestination(result) {
-  let metadata = {};
-  try { metadata = JSON.parse(result.metadata || "{}"); } catch { metadata = {}; }
-  const pageId = String(metadata.pageId || result.platform.split(":")[1] || "");
-  const connectionRole = metadata.connectionRole || (result.platform.startsWith("facebook_secondary:") ? "facebook_secondary" : "facebook_primary");
-  const collaborationState = connectionRole === "facebook_primary" && result.status === "success"
-    ? (result.collaboration_state === "completed" ? "completed" : "pending")
-    : "not_applicable";
-  return { platformResultId: result.id, connectionRole, pageId, pageName: clean(metadata.pageName, 200), status: result.status, externalPostId: result.external_post_id || "", error: safeStoredMetaError(result.error_message), createdAt: result.created_at, collaborationState, collaborationCompletedAt: collaborationState === "completed" ? result.collaboration_completed_at || "" : "", postUrl: "" };
-}
-
-async function updateFacebookCollaboration(request, env) {
-  const input = await readJson(request);
-  const platformResultId = clean(input?.platformResultId, 100);
-  const collaborationState = clean(input?.state, 20);
-  if (!platformResultId || !["pending", "completed"].includes(collaborationState)) {
-    return json({ ok: false, error: "Choose a valid Facebook collaboration record and state." }, 400);
-  }
-  const result = await env.GIFT_CARD_DB.prepare(`SELECT marketing_platform_results.id, marketing_platform_results.post_id,
-    marketing_platform_results.platform, marketing_platform_results.status, marketing_platform_results.metadata
-    FROM marketing_platform_results
-    INNER JOIN marketing_posts ON marketing_posts.id = marketing_platform_results.post_id
-    WHERE marketing_platform_results.id = ? AND marketing_platform_results.platform LIKE 'facebook:%' LIMIT 1`)
-    .bind(platformResultId).first();
-  if (!result) return json({ ok: false, error: "Facebook Primary post record not found." }, 404);
-  let metadata = {};
-  try { metadata = JSON.parse(result.metadata || "{}"); } catch { metadata = {}; }
-  const pageId = String(metadata.pageId || result.platform.split(":")[1] || "");
-  const role = metadata.connectionRole || "facebook_primary";
-  if (role !== "facebook_primary" || result.platform !== `facebook:${pageId}` || !configuredFacebookPageIds(env).includes(pageId)) {
-    return json({ ok: false, error: "Facebook Primary post record not found." }, 404);
-  }
-  if (result.status !== "success") return json({ ok: false, error: "Collaboration follow-up applies only to successful Facebook Primary posts." }, 409);
-  const now = new Date().toISOString();
-  await env.GIFT_CARD_DB.prepare(`INSERT INTO marketing_facebook_collaboration_followups
-    (platform_result_id, post_id, collaboration_state, completed_at, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?)
-    ON CONFLICT(platform_result_id) DO UPDATE SET
-      collaboration_state = excluded.collaboration_state,
-      completed_at = excluded.completed_at,
-      updated_at = excluded.updated_at`)
-    .bind(result.id, result.post_id, collaborationState, collaborationState === "completed" ? now : null, now, now).run();
-  return json({ ok: true, platformResultId: result.id, collaborationState, completedAt: collaborationState === "completed" ? now : "" });
 }
 
 async function trackCampaignEvent(request, env, url) {
@@ -1774,4 +1732,4 @@ function clean(value, max = 500) { return String(value || "").replace(/\s+/g, " 
 async function readJson(request) { try { return await request.json(); } catch { return null; } }
 function json(body, status = 200) { return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" } }); }
 
-export const marketingTestHelpers = { campaignUrl, trackedDestination, nextRunAt, isScheduledSlot, scheduleSlotKey, hash, benefit, metaAccessToken, resolveMetaConnection, resolveFacebookPublishingContext, resolveFacebookPageAccess, publishWithRetry, publishFacebook, publishInstagram, waitForInstagramMedia, publishFacebookPages, validateInstagramImage, selectNextProduct, selectInstagramProduct, canonicalEtsyAffiliateUrl, hasEbayAffiliateTracking, eligibleCatalogueProduct, orderedSources, instagramFeedCaption, configuredFacebookPageIds, postingEndpointResponse, redirectPage, instagramPreflight, facebookPreflight, facebookHistoryDestination, publishingDisabled };
+export const marketingTestHelpers = { campaignUrl, trackedDestination, nextRunAt, isScheduledSlot, scheduleSlotKey, hash, benefit, metaAccessToken, resolveMetaConnection, resolveFacebookPublishingContext, resolveFacebookPageAccess, publishWithRetry, publishFacebook, publishInstagram, waitForInstagramMedia, publishFacebookPages, validateInstagramImage, selectNextProduct, selectInstagramProduct, canonicalEtsyAffiliateUrl, hasEbayAffiliateTracking, eligibleCatalogueProduct, orderedSources, instagramFeedCaption, configuredFacebookPageIds, postingEndpointResponse, redirectPage, instagramPreflight, facebookPreflight, publishingDisabled };
