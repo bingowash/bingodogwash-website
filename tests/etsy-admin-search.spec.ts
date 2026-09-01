@@ -146,3 +146,41 @@ test("hiding a searched Etsy product reports and refreshes its canonical hidden 
   await expect(page.locator("[data-admin-etsy-search-status]")).toHaveText("Selected Etsy products are already hidden.");
   expect(hideCalls).toBe(1);
 });
+
+test("Bingo Dog Edit admin controls move and replace selected verified Etsy products", async ({ page }) => {
+  const productRows = [
+    { id: "etsy-walk", externalListingId: "100", title: "Current THE WALK product", category: "Etsy Dog Products", priceLabel: "£10.00", status: "published", publicVisibility: true, bingoCollection: "THE WALK", affiliateReviewStatus: "approved", affiliateGenerationStatus: "VERIFIED MATCH" },
+    { id: "etsy-wear", externalListingId: "200", title: "Replacement THE WEAR product", category: "Etsy Dog Products", priceLabel: "£12.00", status: "review", publicVisibility: false, bingoCollection: "THE WEAR", affiliateReviewStatus: "approved", affiliateGenerationStatus: "VERIFIED MATCH" },
+  ];
+  const mutations: Array<{ action: string; body: Record<string, unknown> }> = [];
+  page.on("dialog", (dialog) => dialog.accept());
+  await page.addInitScript(() => sessionStorage.setItem("bingoAdminCoreToken", "test-admin-token"));
+  await page.route("**/api/**", async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (request.method() === "POST" && /\/api\/admin\/etsy\/products\//.test(url.pathname)) {
+      const action = url.pathname.split("/").at(-1) || "";
+      const body = request.postDataJSON() as Record<string, unknown>;
+      mutations.push({ action, body });
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(action === "bingo-replace" ? { ok: true, replaced: "etsy-walk", published: "etsy-wear", collection: body.collection } : { ok: true, assigned: 1, collection: body.collection }) });
+    }
+    if (url.pathname.endsWith("/api/admin/etsy/products")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, products: productRows }) });
+    if (url.pathname.endsWith("/api/admin/etsy/logs")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, logs: [] }) });
+    if (url.pathname.endsWith("/api/admin/etsy")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, featureEnabled: true, syncEnabled: true, connection: { status: "Connected", shopName: "My Etsy shop", importedProducts: 2, awaitingReview: 1, approved: 1, published: 1, hidden: 0, publishedMissingAffiliateUrl: 0, syncErrors: 0 } }) });
+    if (url.pathname.endsWith("/api/etsy/products")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, collections: [] }) });
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, products: [] }) });
+  });
+
+  await page.goto("/admin/");
+  await page.locator('[data-admin-etsy-product-id="etsy-walk"]').check();
+  await page.locator("[data-admin-etsy-collection]").selectOption("THE LOVE");
+  await page.getByRole("button", { name: "Move selected to collection", exact: true }).click();
+  await expect.poll(() => mutations.length).toBe(1);
+  expect(mutations[0]).toEqual({ action: "bingo-assign", body: { ids: ["etsy-walk"], collection: "THE LOVE" } });
+
+  await page.locator('[data-admin-etsy-product-id="etsy-walk"]').check();
+  await page.locator('[data-admin-etsy-product-id="etsy-wear"]').check();
+  await page.getByRole("button", { name: "Replace selected (first with second)", exact: true }).click();
+  await expect.poll(() => mutations.length).toBe(2);
+  expect(mutations[1]).toEqual({ action: "bingo-replace", body: { removeId: "etsy-walk", addId: "etsy-wear", collection: "THE LOVE" } });
+});

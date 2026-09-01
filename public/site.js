@@ -2548,6 +2548,48 @@ async function handleAdminEtsyProductAction(action) {
   const ids = selectedInputs
     .map((input) => input.dataset.adminEtsyProductId || input.dataset.adminEtsyExternalListingId)
     .filter(Boolean);
+  const isBingoAssign = action === "bingo-assign";
+  const isBingoReplace = action === "bingo-replace";
+  if (isBingoAssign || isBingoReplace) {
+    const collection = document.querySelector("[data-admin-etsy-collection]")?.value || "";
+    if (!collection) {
+      window.alert("Choose a Bingo Dog Edit collection.");
+      return;
+    }
+    if (isBingoAssign && !ids.length) {
+      window.alert("Select at least one Etsy product to move.");
+      return;
+    }
+    if (isBingoReplace && ids.length !== 2) {
+      window.alert("Select exactly two Etsy products: first the published product to replace, then its replacement.");
+      return;
+    }
+    const message = isBingoAssign
+      ? `Move ${ids.length} selected Etsy product${ids.length === 1 ? "" : "s"} to ${collection}?`
+      : `Replace the first selected Etsy product with the second in ${collection}?`;
+    if (!window.confirm(message)) return;
+    const originalLabel = actionButton?.textContent || "";
+    try {
+      if (actionButton) { actionButton.disabled = true; actionButton.textContent = isBingoAssign ? "Moving…" : "Replacing…"; }
+      const body = isBingoAssign
+        ? { ids, collection }
+        : { removeId: ids[0], addId: ids[1], collection };
+      const result = await adminCoreJson(`${adminEtsyApiBase}/products/${encodeURIComponent(action)}`, {
+        method: "POST",
+        body: JSON.stringify(body)
+      });
+      const status = document.querySelector("[data-admin-etsy-search-status]");
+      if (status) status.textContent = isBingoAssign
+        ? `${result.assigned || ids.length} Etsy product${ids.length === 1 ? "" : "s"} moved to ${collection}.`
+        : `Published Etsy product replaced in ${collection}.`;
+      await loadAdminEtsy();
+    } catch (error) {
+      window.alert(error.message || "Bingo Dog Edit update failed.");
+    } finally {
+      if (actionButton) { actionButton.disabled = false; actionButton.textContent = originalLabel; }
+    }
+    return;
+  }
   const bulkAllAction = action === "affiliate-generate-verify" || action === "affiliate-approve-verified" || action === "publish-verified";
   if (!ids.length && !bulkAllAction) {
     window.alert("Select at least one Etsy product.");
@@ -2900,9 +2942,9 @@ function renderAdminEtsySummary(connection, dashboard) {
   if (!target) return;
   target.innerHTML = `
     <div class="grid grid-4">
-      <article class="card admin-source-card"><p class="tag">${dashboard.featureEnabled ? "Public feed enabled" : "Feature disabled"}</p><h3>Connection</h3><strong>${escapeSvg(connection.status)}</strong><p>${escapeSvg(connection.shopName || "Etsy marketplace feed")}</p></article>
-      <article class="card admin-source-card"><p class="tag">${dashboard.syncEnabled ? "Admin sync enabled" : "Sync disabled"}</p><h3>Sync</h3><strong>Marketplace</strong><p>Last success: ${escapeSvg(connection.lastSuccessfulSync || "Never")}</p><p>Last attempt: ${escapeSvg(connection.lastAttemptedSync || "Never")}</p></article>
-      <article class="card admin-source-card"><p class="tag">Review queue</p><h3>Products</h3><strong>${connection.importedProducts}</strong><p>${connection.awaitingReview} awaiting review, ${connection.approved} approved, ${connection.published} published, ${connection.hidden} hidden.</p></article>
+      <article class="card admin-source-card"><p class="tag">${dashboard.featureEnabled ? "Public feed enabled" : "Feature disabled"}</p><h3>Connection</h3><strong>${escapeSvg(connection.status)}</strong><p>${escapeSvg(connection.shopName || "Configured Etsy shop")}</p></article>
+      <article class="card admin-source-card"><p class="tag">${dashboard.syncEnabled ? "Admin sync enabled" : "Sync disabled"}</p><h3>Sync</h3><strong>Configured Etsy shop</strong><p>Last success: ${escapeSvg(connection.lastSuccessfulSync || "Never")}</p><p>Last attempt: ${escapeSvg(connection.lastAttemptedSync || "Never")}</p></article>
+      <article class="card admin-source-card"><p class="tag">Review queue</p><h3>Products</h3><strong>${connection.importedProducts}</strong><p>${connection.awaitingReview} awaiting review, ${connection.approved} approved, ${connection.published} published, ${connection.hidden} hidden.</p><p>${connection.publishedMissingAffiliateUrl || 0} published missing affiliate URL.</p></article>
       <article class="card admin-source-card"><p class="tag">Errors</p><h3>Sync errors</h3><strong>${connection.syncErrors}</strong><p>${escapeSvg(connection.lastError || "No current sync error.")}</p></article>
     </div>
   `;
@@ -2912,7 +2954,7 @@ function renderAdminEtsyProducts(productList) {
   const target = document.querySelector("[data-admin-etsy-products]");
   if (!target) return;
   if (!productList.length) {
-    target.innerHTML = `<div class="mini-row"><strong>No imported Etsy products</strong><span>Connect Etsy and run sync when the feature is enabled.</span></div>`;
+    target.innerHTML = `<div class="mini-row"><strong>No configured Etsy shop products</strong><span>Connect Etsy and run sync when the feature is enabled.</span></div>`;
     return;
   }
 
@@ -2922,8 +2964,12 @@ function renderAdminEtsyProducts(productList) {
       <span>${escapeSvg(product.category || "Etsy Products")}</span>
       <span>${escapeSvg(product.priceLabel || "Price on Etsy")}</span>
       <span>${escapeSvg(product.availability || "")}</span>
+      <span class="tag">Collection: ${escapeSvg(product.bingoCollection || "Unassigned")}</span>
+      <span class="tag tag-muted">Source: ${escapeSvg(product.shopSectionName || product.feedProvenance || "Unknown")}</span>
       <span class="tag">Status: ${escapeSvg(adminEtsyStatusLabel(product.status))}</span>
       <span class="tag tag-muted">Public visibility: ${product.publicVisibility ? "Public" : "Hidden"}</span>
+      <span class="tag tag-muted">Review: ${escapeSvg(product.affiliateReviewStatus || "draft")}</span>
+      <span class="tag tag-muted">Verification: ${escapeSvg(product.affiliateGenerationStatus || product.affiliateVerificationStatus || "unverified")}</span>
       <span class="tag">${escapeSvg(product.publicBlockedReason || "VERIFIED MATCH")}</span>
       <dl class="admin-etsy-verification">
         <div><dt>Original Etsy listing URL</dt><dd><a href="${escapeAttr(product.originalListingUrl)}" target="_blank" rel="noopener noreferrer">${escapeSvg(product.originalListingUrl || "Missing")}</a></dd></div>

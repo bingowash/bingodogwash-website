@@ -46,7 +46,7 @@ test("Rakuten API network failure falls back to the proven Link Tools format", a
 
 function product(id, overrides = {}) {
   const clean = `https://www.etsy.com/uk/listing/${id}/dog-product`;
-  return { id: `db-${id}`, source: "etsy", external_listing_id: id, listing_url: clean, original_listing_url: clean, admin_status: "review", public_visibility: 0, affiliate_review_status: "draft", ...overrides };
+  return { id: `db-${id}`, source: "etsy", external_listing_id: id, etsy_feed_provenance: "owned_shop", bingo_collection: "THE WALK", listing_url: clean, original_listing_url: clean, admin_status: "review", public_visibility: 0, affiliate_review_status: "draft", ...overrides };
 }
 
 function fakeDb(products) {

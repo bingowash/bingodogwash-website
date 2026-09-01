@@ -96,8 +96,8 @@
       <div class="section-head">
         <div>
           <span class="eyebrow">Etsy Shop</span>
-          <h2>Public Etsy marketplace feed</h2>
-          <p>Sync the live marketplace into admin, then publish, hide or restore products shown in the public shop.</p>
+          <h2>Bingo Dog Edit</h2>
+          <p>Sync only the configured Etsy shop, then curate verified affiliate products for the public Bingo Dog Edit. Etsy&rsquo;s HE LOVE section appears publicly as THE LOVE.</p>
         </div>
       </div>
       <div class="dashboard-list" data-admin-etsy-summary></div>
@@ -113,6 +113,18 @@
         <span class="small-note" data-admin-etsy-search-status aria-live="polite"></span>
       </form>
       <div class="dashboard-list" data-admin-etsy-products></div>
+      <div class="button-row" aria-label="Bingo Dog Edit collection controls">
+        <label>Collection
+          <select data-admin-etsy-collection>
+            <option value="THE WALK">THE WALK</option>
+            <option value="THE WASH">THE WASH</option>
+            <option value="THE WEAR">THE WEAR</option>
+            <option value="THE LOVE">THE LOVE</option>
+          </select>
+        </label>
+        <button class="btn btn-light" type="button" data-admin-etsy-product-action="bingo-assign">Move selected to collection</button>
+        <button class="btn btn-light" type="button" data-admin-etsy-product-action="bingo-replace">Replace selected (first with second)</button>
+      </div>
       <div class="button-row">
         <button class="btn btn-secondary" type="button" data-admin-etsy-product-action="affiliate-generate-verify">Generate &amp; Verify Etsy Affiliate Links</button>
         <button class="btn btn-secondary" type="button" data-admin-etsy-product-action="affiliate-approve-verified">Approve Verified Matches</button>
@@ -230,6 +242,6 @@
   </main>
 
   <script src="/admin/admin-shell.js?v=20260806" defer></script>
-  <script src="/site.js?v=20260729-view-public-fix" defer></script>
+  <script src="/site.js?v=20260901-phase-3-etsy-edit" defer></script>
 </body>
 </html>

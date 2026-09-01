@@ -108,21 +108,14 @@ const ebayStarterProducts = [
 ];
 
 
-const etsyFeedUrl = `${shopApiBase}/api/etsy/products`;
-const etsyFallbackFeedUrl = "api/etsy-products.json";
-const etsyRefreshMs = 15 * 60 * 1000;
-let etsyProducts = [];
-const etsyState = {
+const bingoDogEditFeedUrl = `${shopApiBase}/api/etsy/products?bingoEdit=1`;
+const bingoDogEditRefreshMs = 15 * 60 * 1000;
+const bingoDogEditCollectionNames = ["THE WALK", "THE WASH", "THE WEAR", "THE LOVE"];
+let bingoDogEditCollections = bingoDogEditCollectionNames.map((name) => ({ name, products: [] }));
+const bingoDogEditState = {
   loading: true,
   error: false
 };
-
-const etsyStarterProducts = [
-  { id: "personalised-dog-tag", name: "Personalised Dog Name Tag", category: "Accessories", priceLabel: "Price on Etsy", supplier: "Etsy", status: "External checkout", externalUrl: "https://www.etsy.com/uk/search?q=personalised+dog+tag", description: "Personalised dog ID tags from Etsy sellers." },
-  { id: "handmade-dog-bandana", name: "Handmade Dog Bandana", category: "Accessories", priceLabel: "Price on Etsy", supplier: "Etsy", status: "External checkout", externalUrl: "https://www.etsy.com/uk/search?q=handmade+dog+bandana", description: "Handmade dog bandanas and custom pet accessories." },
-  { id: "dog-treat-jar", name: "Personalised Dog Treat Jar", category: "Treats", priceLabel: "Price on Etsy", supplier: "Etsy", status: "External checkout", externalUrl: "https://www.etsy.com/uk/search?q=personalised+dog+treat+jar", description: "Custom treat storage jars for dog owners." },
-  { id: "dog-towel-hook", name: "Dog Towel Hook", category: "Accessories", priceLabel: "Price on Etsy", supplier: "Etsy", status: "External checkout", externalUrl: "https://www.etsy.com/uk/search?q=dog+towel+hook", description: "Dog lead, towel and grooming hooks from Etsy makers." }
-];
 function serverRenderedAvasamProducts() {
   const target = document.querySelector("[data-ssr-avasam-products]");
   if (!target) return [];
@@ -165,7 +158,7 @@ const avasamFilters = {
 };
 
 function allProducts() {
-  return products.concat(avasamProducts, etsyProducts);
+  return products.concat(avasamProducts);
 }
 
 function amazonAffiliateProducts() {
@@ -636,11 +629,11 @@ function cleanBasket() {
 
   const cachedProducts = readBasketProductCache();
 
-  const cleaned = basket.filter(
-    (id) =>
-      liveIds.has(id) ||
-      Boolean(cachedProducts[id])
-  );
+  const cleaned = basket.filter((id) => {
+    const product = allProducts().find((item) => item.id === id) || cachedProducts[id];
+    if (String(id || "").startsWith("etsy-") || product?.paymentProvider === "Etsy") return false;
+    return liveIds.has(id) || Boolean(cachedProducts[id]);
+  });
 
   if (cleaned.length !== basket.length) {
     localStorage.setItem(
@@ -663,6 +656,11 @@ function addToBasket(id) {
       id
     );
 
+    return false;
+  }
+
+  if (product.paymentProvider === "Etsy" || product.id?.startsWith("etsy-")) {
+    console.warn("Etsy products use verified affiliate links and cannot be added to the Bingo basket.");
     return false;
   }
 
@@ -888,26 +886,10 @@ function normalizeEtsyProduct(raw, index) {
     externalUrl,
     description: firstValue(raw.description, raw.shortDescription, raw.summary, "Verified Etsy affiliate product ready for external checkout."),
     paymentProvider: "Etsy",
+    bingoCollection: firstValue(raw.bingoCollection, raw.bingo_collection),
     affiliateReviewStatus: reviewStatus,
     affiliateVerificationStatus: verificationStatus
   };
-}
-
-async function readProductFeed(primaryUrl, fallbackUrl, starterProducts, normalizeProduct) {
-  const urls = location.protocol === "file:" ? [fallbackUrl] : [primaryUrl, fallbackUrl];
-  for (const url of urls) {
-    try {
-      const response = await fetch(url, { cache: "no-store" });
-      if (!response.ok) throw new Error(`${url} returned ${response.status}`);
-      const data = await response.json();
-      const records = Array.isArray(data) ? data : data.products || data.items || data.data || [];
-      const normalized = records.map(normalizeProduct).filter((product) => product?.name);
-      if (normalized.length) return normalized;
-    } catch (error) {
-      console.warn("Product feed unavailable", url, error);
-    }
-  }
-  return starterProducts.map(normalizeProduct).filter((product) => product.name);
 }
 
 async function readLiveProductFeed(url, normalizeProduct) {
@@ -926,25 +908,6 @@ async function readLiveProductFeed(url, normalizeProduct) {
     products: normalized,
     status: data
   };
-}
-
-async function readPaginatedEtsyFeed(url, normalizeProduct) {
-  const productsById = new Map();
-  let nextCursor = "";
-  let status = {};
-  for (let page = 0; page < 100; page += 1) {
-    const pageUrl = new URL(url, location.href);
-    pageUrl.searchParams.set("limit", "50");
-    if (nextCursor) pageUrl.searchParams.set("cursor", nextCursor);
-    const result = await readLiveProductFeed(pageUrl.toString(), normalizeProduct);
-    status = result.status;
-    for (const product of result.products) productsById.set(product.id, product);
-    if (!status.hasMore || !status.nextCursor || status.nextCursor === nextCursor) {
-      return { products: [...productsById.values()], status };
-    }
-    nextCursor = status.nextCursor;
-  }
-  throw new Error("Etsy catalogue pagination did not terminate safely.");
 }
 
 function decodeEtsyDisplayText(value) {
@@ -1129,27 +1092,69 @@ function scheduleEbayProducts() {
 }
 
 
-async function loadEtsyProducts({ silent = false } = {}) {
-  const target = document.querySelector("[data-products], [data-cart], [data-product-detail], [data-admin-product-feed], [data-account-orders]");
+function bingoDogEditCollectionData(rawCollections) {
+  const incoming = new Map((Array.isArray(rawCollections) ? rawCollections : []).map((collection) => [String(collection?.name || "").toUpperCase(), collection]));
+  return bingoDogEditCollectionNames.map((name) => {
+    const collection = incoming.get(name);
+    const products = Array.isArray(collection?.products)
+      ? collection.products.map(normalizeEtsyProduct).filter(Boolean).slice(0, 10)
+      : [];
+    return { name, products };
+  });
+}
+
+function bingoDogEditCollectionMarkup(collection) {
+  const products = collection.products || [];
+  return `
+    <section class="shop-product-section" data-bingo-dog-edit-collection="${escapeAttr(collection.name)}">
+      <div class="section-head section-head-compact">
+        <div>
+          <span class="eyebrow">${products.length} of 10 verified Etsy products</span>
+          <h3>${escapeSvg(collection.name)}</h3>
+        </div>
+      </div>
+      ${products.length
+        ? `<div class="grid grid-3">${products.map(productCardMarkup).join("")}</div>`
+        : `<article class="card product-card supplier-message"><h3>Collection unavailable</h3><p>No verified Etsy products are published in ${escapeSvg(collection.name)} right now.</p></article>`}
+    </section>`;
+}
+
+function renderBingoDogEdit() {
+  const target = document.querySelector("[data-bingo-dog-edit-collections]");
+  const status = document.querySelector("[data-bingo-dog-edit-status]");
   if (!target) return;
+  if (status) {
+    status.hidden = !bingoDogEditState.loading && !bingoDogEditState.error;
+    status.textContent = bingoDogEditState.loading
+      ? "Loading verified Etsy products…"
+      : (bingoDogEditState.error ? "The Bingo Dog Edit is unavailable right now." : "");
+  }
+  target.innerHTML = bingoDogEditCollections.map(bingoDogEditCollectionMarkup).join("");
+}
 
-  etsyState.loading = !silent;
-  etsyState.error = false;
-
+async function loadBingoDogEditProducts({ silent = false } = {}) {
+  const target = document.querySelector("[data-bingo-dog-edit]");
+  if (!target) return;
+  if (!silent) {
+    bingoDogEditState.loading = true;
+    bingoDogEditState.error = false;
+    renderBingoDogEdit();
+  }
   try {
-    const result = await readPaginatedEtsyFeed(etsyFeedUrl, normalizeEtsyProduct);
-    etsyProducts = result.status?.enabled === false ? [] : result.products;
-    etsyState.error = false;
+    const response = await fetch(bingoDogEditFeedUrl, { cache: "no-store" });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.ok === false) throw new Error(data.error || data.note || "Bingo Dog Edit feed unavailable");
+    bingoDogEditCollections = bingoDogEditCollectionData(data.collections);
+    bingoDogEditState.error = false;
   } catch (error) {
-    etsyProducts = [];
-    etsyState.error = true;
+    bingoDogEditCollections = bingoDogEditCollectionNames.map((name) => ({ name, products: [] }));
+    bingoDogEditState.error = true;
+    console.warn("Bingo Dog Edit feed unavailable", error);
   } finally {
-    etsyState.loading = false;
-    renderProducts();
+    bingoDogEditState.loading = false;
+    renderBingoDogEdit();
     renderAdminProducts();
-    renderAccount();
-    renderProductDetail();
-    renderCart();
+    basketCount();
   }
 }
 function supplierSummaryMarkup(product) {
@@ -1272,7 +1277,7 @@ function publicShopProducts() {
 function shopProducts() {
   const stripeProducts = products.filter((product) => product.paymentProvider === "Stripe");
   const amazonProducts = amazonAffiliateProducts();
-  return stripeProducts.concat(amazonProducts, etsyProducts, avasamProducts);
+  return stripeProducts.concat(amazonProducts, avasamProducts);
 }
 
 function productSource(product) {
@@ -1323,11 +1328,9 @@ function renderSourceStatus() {
   const target = document.querySelector("[data-source-status]");
   if (!target) return;
   const messages = [];
-  if (etsyState.loading) messages.push("Loading Etsy affiliate products...");
   if (avasamState.loading) messages.push("Loading Avasam products...");
   if (ebayState.loading) messages.push("Loading eBay UK pet products...");
   if (avasamState.error) messages.push("Avasam products are temporarily unavailable. Please try again later.");
-  if (etsyState.error) messages.push("Etsy affiliate products are temporarily unavailable. Please try again later.");
   if (ebayState.error) messages.push("eBay UK pet products are temporarily unavailable. Please try again later.");
   target.hidden = !messages.length;
   target.innerHTML = messages.map((message) => `<span>${message}</span>`).join("");
@@ -2170,11 +2173,11 @@ function renderAdminProducts() {
       page: "shop.html"
     },
     {
-      name: "Etsy affiliate",
-      count: etsyProducts.length,
+      name: "Bingo Dog Edit",
+      count: bingoDogEditCollections.reduce((total, collection) => total + collection.products.length, 0),
       channel: "External supplier link",
-      status: sourceStatusText(etsyState, etsyProducts.length),
-      detail: `${etsyFeedUrl} feeds external Etsy listings into the Shop page.`,
+      status: sourceStatusText(bingoDogEditState, bingoDogEditCollections.reduce((total, collection) => total + collection.products.length, 0)),
+      detail: "Verified products from the configured Etsy shop appear in THE WALK, THE WASH, THE WEAR and THE LOVE.",
       page: "shop.html"
     },
     {
@@ -2478,6 +2481,49 @@ async function handleAdminEtsyProductAction(action) {
   const ids = selectedInputs
     .map((input) => input.dataset.adminEtsyProductId || input.dataset.adminEtsyExternalListingId)
     .filter(Boolean);
+  const isBingoAssign = action === "bingo-assign";
+  const isBingoReplace = action === "bingo-replace";
+  if (isBingoAssign || isBingoReplace) {
+    const collection = document.querySelector("[data-admin-etsy-collection]")?.value || "";
+    if (!collection) {
+      window.alert("Choose a Bingo Dog Edit collection.");
+      return;
+    }
+    if (isBingoAssign && !ids.length) {
+      window.alert("Select at least one Etsy product to move.");
+      return;
+    }
+    if (isBingoReplace && ids.length !== 2) {
+      window.alert("Select exactly two Etsy products: first the published product to replace, then its replacement.");
+      return;
+    }
+    const message = isBingoAssign
+      ? `Move ${ids.length} selected Etsy product${ids.length === 1 ? "" : "s"} to ${collection}?`
+      : `Replace the first selected Etsy product with the second in ${collection}?`;
+    if (!window.confirm(message)) return;
+    const originalLabel = actionButton?.textContent || "";
+    try {
+      if (actionButton) { actionButton.disabled = true; actionButton.textContent = isBingoAssign ? "Moving…" : "Replacing…"; }
+      const body = isBingoAssign
+        ? { ids, collection }
+        : { removeId: ids[0], addId: ids[1], collection };
+      const result = await adminCoreJson(`${adminEtsyApiBase}/products/${encodeURIComponent(action)}`, {
+        method: "POST",
+        body: JSON.stringify(body)
+      });
+      const status = document.querySelector("[data-admin-etsy-search-status]");
+      if (status) status.textContent = isBingoAssign
+        ? `${result.assigned || ids.length} Etsy product${ids.length === 1 ? "" : "s"} moved to ${collection}.`
+        : `Published Etsy product replaced in ${collection}.`;
+      await loadAdminEtsy();
+      await loadBingoDogEditProducts({ silent: true });
+    } catch (error) {
+      window.alert(error.message || "Bingo Dog Edit update failed.");
+    } finally {
+      if (actionButton) { actionButton.disabled = false; actionButton.textContent = originalLabel; }
+    }
+    return;
+  }
   const bulkAllAction = action === "affiliate-generate-verify" || action === "affiliate-approve-verified" || action === "publish-verified";
   if (!ids.length && !bulkAllAction) {
     window.alert("Select at least one Etsy product.");
@@ -2516,7 +2562,7 @@ async function handleAdminEtsyProductAction(action) {
       const status = document.querySelector("[data-admin-etsy-search-status]");
       if (status) status.textContent = `${ids.length} Etsy product${ids.length === 1 ? "" : "s"} hidden`;
     }
-    await loadEtsyProducts({ silent: true });
+    await loadBingoDogEditProducts({ silent: true });
   } catch (error) {
     window.alert(error.message || "Etsy product action failed.");
   } finally {
@@ -2818,9 +2864,9 @@ function renderAdminEtsySummary(connection, dashboard) {
   if (!target) return;
   target.innerHTML = `
     <div class="grid grid-4">
-      <article class="card admin-source-card"><p class="tag">${dashboard.featureEnabled ? "Public feed enabled" : "Feature disabled"}</p><h3>Connection</h3><strong>${escapeSvg(connection.status)}</strong><p>${escapeSvg(connection.shopName || "Etsy marketplace feed")}</p></article>
-      <article class="card admin-source-card"><p class="tag">${dashboard.syncEnabled ? "Admin sync enabled" : "Sync disabled"}</p><h3>Sync</h3><strong>Marketplace</strong><p>Last success: ${escapeSvg(connection.lastSuccessfulSync || "Never")}</p><p>Last attempt: ${escapeSvg(connection.lastAttemptedSync || "Never")}</p></article>
-      <article class="card admin-source-card"><p class="tag">Review queue</p><h3>Products</h3><strong>${connection.importedProducts}</strong><p>${connection.awaitingReview} awaiting review, ${connection.approved} approved, ${connection.published} published, ${connection.hidden} hidden.</p></article>
+      <article class="card admin-source-card"><p class="tag">${dashboard.featureEnabled ? "Public feed enabled" : "Feature disabled"}</p><h3>Connection</h3><strong>${escapeSvg(connection.status)}</strong><p>${escapeSvg(connection.shopName || "Configured Etsy shop")}</p></article>
+      <article class="card admin-source-card"><p class="tag">${dashboard.syncEnabled ? "Admin sync enabled" : "Sync disabled"}</p><h3>Sync</h3><strong>Configured Etsy shop</strong><p>Last success: ${escapeSvg(connection.lastSuccessfulSync || "Never")}</p><p>Last attempt: ${escapeSvg(connection.lastAttemptedSync || "Never")}</p></article>
+      <article class="card admin-source-card"><p class="tag">Review queue</p><h3>Products</h3><strong>${connection.importedProducts}</strong><p>${connection.awaitingReview} awaiting review, ${connection.approved} approved, ${connection.published} published, ${connection.hidden} hidden.</p><p>${connection.publishedMissingAffiliateUrl || 0} published missing affiliate URL.</p></article>
       <article class="card admin-source-card"><p class="tag">Errors</p><h3>Sync errors</h3><strong>${connection.syncErrors}</strong><p>${escapeSvg(connection.lastError || "No current sync error.")}</p></article>
     </div>
   `;
@@ -2830,7 +2876,7 @@ function renderAdminEtsyProducts(productList) {
   const target = document.querySelector("[data-admin-etsy-products]");
   if (!target) return;
   if (!productList.length) {
-    target.innerHTML = `<div class="mini-row"><strong>No imported Etsy products</strong><span>Connect Etsy and run sync when the feature is enabled.</span></div>`;
+    target.innerHTML = `<div class="mini-row"><strong>No configured Etsy shop products</strong><span>Connect Etsy and run sync when the feature is enabled.</span></div>`;
     return;
   }
 
@@ -2839,9 +2885,13 @@ function renderAdminEtsyProducts(productList) {
       <label class="check-row"><input type="checkbox" data-admin-etsy-product-id="${escapeAttr(product.id || product.externalListingId)}" data-admin-etsy-external-listing-id="${escapeAttr(product.externalListingId || "")}" data-admin-etsy-product-status="${escapeAttr(String(product.status || "").toLowerCase())}"><span><strong>${escapeSvg(product.title)}</strong><small>Listing ID: ${escapeSvg(product.externalListingId || "Unknown")}</small></span></label>
       <span>${escapeSvg(product.category || "Etsy Products")}</span>
       <span>${escapeSvg(product.priceLabel || "Price on Etsy")}</span>
-      <span>${escapeSvg(product.availability || "")}</span>
-      <span class="tag">Status: ${escapeSvg(adminEtsyStatusLabel(product.status))}</span>
-      <span class="tag tag-muted">Public visibility: ${product.publicVisibility ? "Public" : "Hidden"}</span>
+       <span>${escapeSvg(product.availability || "")}</span>
+       <span class="tag">Collection: ${escapeSvg(product.bingoCollection || "Unassigned")}</span>
+       <span class="tag tag-muted">Source: ${escapeSvg(product.shopSectionName || product.feedProvenance || "Unknown")}</span>
+       <span class="tag">Status: ${escapeSvg(adminEtsyStatusLabel(product.status))}</span>
+       <span class="tag tag-muted">Public visibility: ${product.publicVisibility ? "Public" : "Hidden"}</span>
+       <span class="tag tag-muted">Review: ${escapeSvg(product.affiliateReviewStatus || "draft")}</span>
+       <span class="tag tag-muted">Verification: ${escapeSvg(product.affiliateGenerationStatus || product.affiliateVerificationStatus || "unverified")}</span>
       <div class="admin-row-actions">
         <a class="btn btn-light" href="${escapeAttr(product.listingUrl)}" target="_blank" rel="noopener">Preview</a>
       </div>
@@ -3410,9 +3460,9 @@ if (!hydratedAvasamProducts.length) loadAvasamProducts();
 if (document.querySelector("[data-avasam-products], [data-products], [data-cart], [data-product-detail], [data-admin-product-feed], [data-account-orders]")) {
   setInterval(() => loadAvasamProducts({ silent: true }), avasamRefreshMs);
 }
-loadEtsyProducts();
-if (document.querySelector("[data-products], [data-cart], [data-product-detail], [data-admin-product-feed], [data-account-orders]")) {
-  setInterval(() => loadEtsyProducts({ silent: true }), etsyRefreshMs);
+if (document.querySelector("[data-bingo-dog-edit]")) {
+  loadBingoDogEditProducts();
+  setInterval(() => loadBingoDogEditProducts({ silent: true }), bingoDogEditRefreshMs);
 }
 loadEbayProducts();
 if (document.querySelector("[data-products], [data-admin-source-summary]")) {
