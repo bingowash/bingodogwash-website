@@ -3,73 +3,107 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Prepay a Future Wash | Bingo Dog Wash</title>
-  <meta name="description" content="Choose and pay for a £10 self-service dog wash at Bingo Dog Wash using Stripe, Apple Pay, Google Pay or card.">
+  <title>Self-Service Dog Wash | Bingo Dog Wash</title>
+  <meta name="description" content="Discover the forthcoming self-service dog wash experience from Bingo Dog Wash in Upper Stone St, Maidstone.">
   <link rel="canonical" href="https://bingodogwash.com/wash.html">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Bingo Dog Wash">
-  <meta property="og:title" content="Book a Self-Service Dog Wash | Bingo Dog Wash">
-  <meta property="og:description" content="Choose and securely pay for a self-service Bingo Dog Wash visit.">
+  <meta property="og:title" content="Self-Service Dog Wash | Bingo Dog Wash">
+  <meta property="og:description" content="Professional equipment, warm water and a calmer way to wash your dog.">
   <meta property="og:url" content="https://bingodogwash.com/wash.html">
   <meta property="og:image" content="https://bingodogwash.com/assets/home-page-pic.webp">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Book a Self-Service Dog Wash | Bingo Dog Wash">
-  <meta name="twitter:description" content="Choose and securely pay for a self-service Bingo Dog Wash visit.">
+  <meta name="twitter:title" content="Self-Service Dog Wash | Bingo Dog Wash">
+  <meta name="twitter:description" content="A better self-service wash day is coming to Maidstone.">
   <meta name="twitter:image" content="https://bingodogwash.com/assets/home-page-pic.webp">
   <link rel="icon" href="/favicon.ico" sizes="any"><link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="stylesheet" href="styles.css">
 </head>
-<body>
+<body class="wash-page">
   <header class="site-header">
     <nav class="nav">
       <a class="brand" href="index.html"><img class="brand-logo" src="/images/bingo-dog-wash-logo.optimized.png" alt="Bingo Self-Service Dog Wash" width="132" height="132" decoding="async"></a>
       <button class="menu-toggle" type="button">Menu</button>
       <div class="nav-links">
-        <a href="index.html">Home</a><a class="active" href="wash.html">Wash</a><a href="shop.html">Shop</a><a href="dog-walker-club.html">Dog Walker Club</a><a href="find-a-professional.html">Find a Professional</a><a href="gift-cards.html">Gift Cards</a><a href="about.html">About</a><a href="contact.html">Contact</a><a href="faq.html">FAQ</a><a href="account.html">Account</a><a class="basket" href="cart.html">Cart <span data-basket-count>0</span></a>
+        <a href="index.html">Home</a><a class="active" href="wash.html">Wash</a><a href="shop.html">Shop</a><a href="dog-walker-club.html">Dog Walker Directory</a><a href="find-a-professional.html">Find a Professional</a><a href="gift-cards.html">Gift Cards</a><a href="about.html">About</a><a href="contact.html">Contact</a><a href="faq.html">FAQ</a><a href="top-dog-competition.html">Top Dog Competition</a><a href="account.html">Account</a><a class="basket" href="cart.html">Cart <span data-basket-count>0</span></a>
       </div>
     </nav>
   </header>
-  <main class="container">
-    <section class="page-title">
-      <span class="eyebrow">Self-service wash</span>
-      <h1>Prepay a future wash</h1>
-      <p>The first physical location is still in development and is not currently open. Pay securely with Stripe now, then use your credit when the location opens.</p>
+  <main class="wash-page-main">
+    <section class="wash-hero">
+      <div class="wash-hero-inner">
+        <div class="wash-hero-copy">
+          <p class="wash-location">Upper Stone St, Maidstone</p>
+          <h1>A better wash day is coming for every dog.</h1>
+          <p class="wash-lead">Bingo Dog Wash is building a self-service space with the professional equipment, warm water and breathing room that make wash day feel simpler.</p>
+          <ul class="wash-hero-benefits" aria-label="Wash experience benefits">
+            <li>Professional equipment</li>
+            <li>Warm water</li>
+            <li>Contactless payment</li>
+            <li>Professional dryer</li>
+          </ul>
+          <form class="wash-waitlist-form" data-newsletter-form>
+            <label class="sr-only" for="wash-waitlist-email">Email address</label>
+            <input id="wash-waitlist-email" name="email" type="email" autocomplete="email" placeholder="Email address" required>
+            <label class="sr-only" for="wash-waitlist-mobile">Mobile number</label>
+            <input id="wash-waitlist-mobile" name="mobile" type="tel" autocomplete="tel" placeholder="Mobile number">
+            <button class="btn btn-primary" type="submit">Join Waitlist &ndash; 50% Off</button>
+            <p class="newsletter-note"><span data-newsletter-message aria-live="polite"></span></p>
+          </form>
+          <a class="wash-shop-link" href="shop.html">Shop Wash Essentials</a>
+        </div>
+        <div class="wash-hero-visual">
+          <img src="assets/home-page-pic.webp" alt="Bingo Dog Wash self-service wash station" width="1500" height="1000" decoding="async">
+        </div>
+      </div>
     </section>
-    <section class="checkout-flow">
-      <article class="card flow-card"><strong>1</strong><span>Visit BingoDogWash.com</span></article>
-      <article class="card flow-card"><strong>2</strong><span>Choose Wash</span></article>
-      <article class="card flow-card"><strong>3</strong><span>Pay with Stripe</span></article>
-      <article class="card flow-card"><strong>4</strong><span>Wash credit saved</span></article>
-      <article class="card flow-card"><strong>5</strong><span>Email confirmation</span></article>
-      <article class="card flow-card"><strong>6</strong><span>Admin dashboard</span></article>
+
+    <section class="wash-benefit-strip" aria-label="Wash highlights">
+      <div class="wash-benefit-grid">
+        <article><span aria-hidden="true">+</span><div><strong>Professional equipment</strong><p>Purpose-built for a confident wash.</p></div></article>
+        <article><span aria-hidden="true">+</span><div><strong>Contactless payment</strong><p>Simple from start to finish.</p></div></article>
+        <article><span aria-hidden="true">+</span><div><strong>Warm water</strong><p>A more comfortable wash.</p></div></article>
+        <article><span aria-hidden="true">+</span><div><strong>Professional dryer</strong><p>Ready for the journey home.</p></div></article>
+      </div>
     </section>
-    <section class="grid grid-2 wash-booking-grid">
-      <article class="card wash-plan-card">
-        <p class="tag">Most popular</p>
-        <h2>Self-Service Dog Wash</h2>
-        <p class="price">£10.00</p>
-        <p>Includes access to the self-service wash station, warm water, wash tools and drying support.</p>
-        <ul class="feature-list">
-          <li>Contactless Stripe payment</li>
-          <li>Apple Pay, Google Pay and card</li>
-          <li>Use when the first Bingo Dog Wash location opens</li>
-        </ul>
-      </article>
-      <article class="card">
-        <h2>Wash credit details</h2>
-        <p>Enter your details, then continue to Stripe to buy your prepaid £10 wash credit.</p>
-        <form class="form" method="post" data-wash-booking-form>
-          <label>Your name<input name="name" autocomplete="name" required></label>
-          <label>Email<input name="email" type="email" autocomplete="email" required></label>
-          <label>Telephone<input name="telephone" type="tel" autocomplete="tel"></label>
-          <label>Dog name<input name="dog_name" autocomplete="off"></label>
-          <label>Notes<textarea name="notes" placeholder="Anything we should know?"></textarea></label>
-          <button class="btn btn-primary" type="submit">Buy £10 Wash Credit</button>
-        </form>
-        <p class="small-note" data-wash-booking-message>Your wash credit is saved securely and confirmed automatically when Stripe confirms payment.</p>
-      </article>
+
+    <section class="wash-intro-section">
+      <div class="wash-content-grid">
+        <div class="wash-intro-panel">
+          <p class="wash-eyebrow">Made for real life with dogs</p>
+          <h2>Everything you need for a cleaner, calmer finish.</h2>
+        </div>
+        <div class="wash-intro-copy">
+          <p>Our self-service wash is being designed around the parts of dog washing that matter: dependable equipment, warm water and space to take your time.</p>
+          <p>It will be suitable for dogs of different breeds and sizes, whether they need a quick freshen-up or a full wash after a muddy walk.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="wash-steps-section" aria-labelledby="wash-steps-title">
+      <div class="wash-section-head">
+        <p class="wash-eyebrow">How it works</p>
+        <h2 id="wash-steps-title">A better wash day, made simple.</h2>
+      </div>
+      <ol class="wash-steps-grid">
+        <li><span>1</span><strong>Bring your dog</strong><p>Come along when it suits your day.</p></li>
+        <li><span>2</span><strong>Settle in</strong><p>Use the wash station at your own pace.</p></li>
+        <li><span>3</span><strong>Wash with confidence</strong><p>Use warm water and professional equipment.</p></li>
+        <li><span>4</span><strong>Dry and head home</strong><p>Finish with the professional dryer and leave the mess behind.</p></li>
+      </ol>
+    </section>
+
+    <section class="wash-location-section">
+      <div class="wash-location-layout">
+        <div>
+          <p class="wash-eyebrow">Coming soon</p>
+          <h2>Upper Stone St, Maidstone</h2>
+          <p>Our first self-service dog wash is taking shape. Join the waitlist for launch updates and your 50% off offer.</p>
+        </div>
+        <a class="btn btn-secondary" href="#wash-waitlist-email">Join the waitlist</a>
+      </div>
     </section>
   </main>
-  <footer class="site-footer"><div class="container footer-grid"><div><h3>Bingo Dog Wash</h3><p>Online shop open. Physical wash in development.</p><p><a href="tel:07743316855">07743 316855</a><br><a href="mailto:info@bingodogwash.com">info@bingodogwash.com</a></p></div><div class="footer-links"><strong>Help &amp; policies</strong><a href="/delivery-policy.html">Delivery Policy</a><a href="/returns-refunds.html">Returns &amp; Refunds</a><a href="/terms.html">Terms &amp; Conditions</a><a href="/privacy-policy.html">Privacy Policy</a><a href="/contact.html">Contact Us</a><a href="/data-deletion.html">Data Deletion</a></div></div></footer>
-  <script src="site.js?v=20260718-checkout-button-fix" defer></script>
+  <footer class="site-footer wash-footer"><div class="container footer-grid"><div><h3>Bingo Dog Wash</h3><p>Clean dogs. Happy hearts. A new generation of self-service dog care.</p><p><a href="tel:07743316855">07743 316855</a><br><a href="mailto:info@bingodogwash.com">info@bingodogwash.com</a></p></div><div class="footer-links"><strong>Explore</strong><a href="wash.html">Dog Wash</a><a href="shop.html">Online Shop</a><a href="gift-cards.html">Gift Cards</a><a href="about.html">Our Story</a></div><div class="footer-links"><strong>Help &amp; policies</strong><a href="/delivery-policy.html">Delivery Policy</a><a href="/returns-refunds.html">Returns &amp; Refunds</a><a href="/terms.html">Terms &amp; Conditions</a><a href="/privacy-policy.html">Privacy Policy</a><a href="/contact.html">Contact Us</a><a href="/data-deletion.html">Data Deletion</a></div></div></footer>
+  <script src="site.js?v=20260901-phase-2-wash" defer></script>
 </body>
 </html>

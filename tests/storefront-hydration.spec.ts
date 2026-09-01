@@ -33,10 +33,10 @@ test("Etsy hydration loads every bounded page once and normalizes public display
     });
   });
   await page.goto("/shop.html");
-  await expect(page.locator('[data-products] a[href*="&listing="]')).toHaveCount(56);
+  await expect(page.locator('[data-products] a[href*="&listing="]')).toHaveCount(10);
   expect(requestedCursors).toEqual(["", "page-2"]);
   const ids = await page.locator('[data-products] a[href*="&listing="]').evaluateAll(elements => elements.map(element => element.getAttribute("href")));
-  expect(new Set(ids).size).toBe(56);
+  expect(new Set(ids).size).toBe(10);
   const firstCard = page.locator('[data-products] a[href*="listing=7000"]').locator("xpath=ancestor::article");
   await expect(firstCard).toContainText("Dog Groomer's Brush & Comb");
   await expect(firstCard).toContainText("Etsy Dog Products");

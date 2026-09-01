@@ -53,9 +53,9 @@ const products = [
   { id: "joint-care", name: "Senior Joint Support", category: "Joint Care", price: 24.99, icon: "JT", supplier: "Dropship partner", commission: "7%", status: "Dropship ready", description: "Monthly joint support supplement for older dogs." }
 ];
 
-// Avasam's catalogue endpoint slows down significantly for large pages.
-// Keep the initial storefront request small enough to load reliably.
-const avasamFeedUrl = `${shopApiBase}/api/avasam/products?limit=30`;
+// Ask the existing public endpoint for its largest supported result set. The
+// shop renders every live Avasam product it receives; it does not apply a UI cap.
+const avasamFeedUrl = `${shopApiBase}/api/avasam/products?limit=100`;
 const avasamFallbackFeedUrl = "api/avasam-products.json";
 const avasamRefreshMs = 15 * 60 * 1000;
 let avasamProducts = [];
@@ -123,63 +123,6 @@ const etsyStarterProducts = [
   { id: "dog-treat-jar", name: "Personalised Dog Treat Jar", category: "Treats", priceLabel: "Price on Etsy", supplier: "Etsy", status: "External checkout", externalUrl: "https://www.etsy.com/uk/search?q=personalised+dog+treat+jar", description: "Custom treat storage jars for dog owners." },
   { id: "dog-towel-hook", name: "Dog Towel Hook", category: "Accessories", priceLabel: "Price on Etsy", supplier: "Etsy", status: "External checkout", externalUrl: "https://www.etsy.com/uk/search?q=dog+towel+hook", description: "Dog lead, towel and grooming hooks from Etsy makers." }
 ];
-const avasamStarterProducts = [
-  {
-    id: "collar-adjustable-blue",
-    name: "Adjustable Blue Dog Collar",
-    category: "Collars",
-    price: 7.99,
-    stock: 36,
-    supplier: "Avasam",
-    description: "Comfortable adjustable collar for everyday walks and dog care."
-  },
-  {
-    id: "lead-nylon-walking",
-    name: "Nylon Dog Walking Lead",
-    category: "Leads",
-    price: 9.49,
-    stock: 28,
-    supplier: "Avasam",
-    description: "Lightweight walking lead for daily walks, training and travel."
-  },
-  {
-    id: "harness-padded-comfort",
-    name: "Padded Comfort Dog Harness",
-    category: "Harnesses",
-    price: 16.99,
-    stock: 19,
-    supplier: "Avasam",
-    description: "Padded dog harness for secure, comfortable walking."
-  },
-  {
-    id: "bed-washable-soft",
-    name: "Washable Soft Dog Bed",
-    category: "Bedding",
-    price: 29.99,
-    stock: 12,
-    supplier: "Avasam",
-    description: "Soft washable dog bed for home comfort after a fresh wash."
-  },
-  {
-    id: "toy-rope-tug",
-    name: "Rope Tug Dog Toy",
-    category: "Toys",
-    price: 5.99,
-    stock: 44,
-    supplier: "Avasam",
-    description: "Durable rope toy for tug, play and enrichment."
-  },
-  {
-    id: "wipes-fresh-coat",
-    name: "Fresh Coat Dog Wipes",
-    category: "Dog Wipes",
-    price: 4.99,
-    stock: 52,
-    supplier: "Avasam",
-    description: "Handy dog wipes for paws, coats and quick clean-ups between washes."
-  }
-];
-
 function serverRenderedAvasamProducts() {
   const target = document.querySelector("[data-ssr-avasam-products]");
   if (!target) return [];
@@ -193,16 +136,12 @@ function serverRenderedAvasamProducts() {
 const hydratedAvasamProducts = serverRenderedAvasamProducts();
 const hasServerRenderedShopProducts = Boolean(document.querySelector("[data-products] [data-ssr-product]"));
 const hasServerRenderedProductDetail = Boolean(document.querySelector("[data-product-detail] [data-ssr-product]"));
-avasamProducts = groupAvasamProductVariants(
-  hydratedAvasamProducts.length
-    ? hydratedAvasamProducts
-    : avasamStarterProducts.map(normalizeAvasamProduct).filter((product) => product.name)
-);
-avasamState.loading = false;
+avasamProducts = groupAvasamProductVariants(hydratedAvasamProducts);
+avasamState.loading = !hydratedAvasamProducts.length;
 avasamState.live = Boolean(hydratedAvasamProducts.length);
 avasamState.liveConfigured = Boolean(hydratedAvasamProducts.length);
 avasamState.count = avasamProducts.length;
-avasamState.message = hydratedAvasamProducts.length ? "" : "Showing available products while the live Avasam catalogue refreshes.";
+avasamState.message = hydratedAvasamProducts.length ? "" : "Loading the live Avasam catalogue.";
 
 function activateHydratedAvasamControls() {
   document.querySelectorAll("button[data-awaiting-hydration]").forEach((button) => {
@@ -1035,18 +974,13 @@ async function loadAvasamProducts({ silent = false } = {}) {
     avasamState.count = avasamProducts.length;
     avasamState.message = avasamProducts.length ? "" : "Avasam temporarily unavailable";
   } catch (error) {
-    const fallbackProducts = avasamStarterProducts
-      .map(normalizeAvasamProduct)
-      .filter((product) => product.name);
-    avasamProducts = groupAvasamProductVariants(fallbackProducts);
-    avasamState.error = !avasamProducts.length;
+    avasamProducts = [];
+    avasamState.error = true;
     avasamState.live = false;
     avasamState.liveConfigured = Boolean(error.feedStatus?.liveConfigured);
-    avasamState.lastRefresh = avasamProducts.length ? new Date().toISOString() : "";
-    avasamState.count = avasamProducts.length;
-    avasamState.message = avasamProducts.length
-      ? "Showing the backup Avasam catalogue while the live feed reconnects."
-      : error.message || "Avasam temporarily unavailable";
+    avasamState.lastRefresh = "";
+    avasamState.count = 0;
+    avasamState.message = error.message || "Avasam temporarily unavailable";
   } finally {
     avasamState.loading = false;
     renderAvasamCategories();
@@ -1400,21 +1334,26 @@ function renderSourceStatus() {
 }
 
 function productCardMarkup(product) {
-  const buyControl = product.id?.startsWith("avasam-")
-    ? `<button class="btn btn-primary" type="button" data-avasam-buy="${escapeAttr(product.id)}">Buy</button>`
+  const isAvasamProduct = product.id?.startsWith("avasam-");
+  const productDetailUrl = isAvasamProduct
+    ? `product.html?id=${encodeURIComponent(productHandle(product.name, product.id))}`
+    : "";
+  const buyControl = isAvasamProduct
+    ? `<button class="btn btn-primary" type="button" data-avasam-buy="${escapeAttr(product.id)}">Add to basket</button>`
     : (product.externalUrl
       ? `<a class="btn btn-primary" href="${product.externalUrl}" target="_blank" rel="${productExternalRel(product)}">${productActionLabel(product)}</a>`
       : `<button class="btn btn-primary" type="button" data-buy-now="${product.id}">${productActionLabel(product)}</button>`);
   return `
     <article class="card product-card ${isDirectCheckoutProduct(product) ? "product-card-direct" : "product-card-external"}">
-      <div class="product-image">${productImageMarkup(product)}</div>
+      ${productDetailUrl ? `<a class="product-image" href="${escapeAttr(productDetailUrl)}">${productImageMarkup(product)}</a>` : `<div class="product-image">${productImageMarkup(product)}</div>`}
       <div class="product-tags">
         <p class="tag">${productShopChannel(product)}</p>
         <p class="tag tag-muted">${productSource(product)}</p>
       </div>
-      <h3>${escapeSvg(product.name)}</h3>
+      <h3>${productDetailUrl ? `<a href="${escapeAttr(productDetailUrl)}">${escapeSvg(product.name)}</a>` : escapeSvg(product.name)}</h3>
       <p>${escapeSvg(typeof product.category === "string" ? product.category : "")}</p>
       <p class="price">${productPriceText(product)}</p>
+      ${isAvasamProduct ? `<p class="product-availability">${escapeSvg(product.status || "Availability unavailable")}</p>` : ""}
       <div class="commerce-bar">
         ${buyControl}
       </div>
@@ -1445,12 +1384,12 @@ function supplierProductGroupsMarkup(productList, source) {
   if (!productList.length) return "";
   const groups = new Map();
   if (source === "Avasam") {
-    groups.set("Featured products", productList.slice(0, 10));
+    groups.set("Featured products", productList);
   } else {
     productList.forEach((product) => {
       const group = supplierProductGroup(product, source);
       const productsInGroup = groups.get(group) || [];
-      if (productsInGroup.length < 10) groups.set(group, [...productsInGroup, product]);
+      groups.set(group, [...productsInGroup, product]);
     });
   }
   return [...groups.entries()]
@@ -1489,7 +1428,7 @@ function shopProductSectionMarkup(title, detail, productList, emptyText, classNa
   `;
 }
 
-function renderProducts(productList = filteredProducts()) {
+function legacyRenderProducts(productList = filteredProducts()) {
   const target = document.querySelector("[data-products]");
   if (!target) return;
   renderSourceStatus();
@@ -1531,6 +1470,112 @@ function renderProducts(productList = filteredProducts()) {
       "No external supplier products found",
       "shop-product-section-external"
     )
+  ].join("");
+  updateUniversalNoResults();
+}
+
+const nonAvasamProductsPerSource = 10;
+
+function limitShopProductsForDisplay(productList) {
+  const displayedBySource = new Map();
+  return productList.filter((product) => {
+    const source = productSource(product);
+    if (source === "Avasam") return true;
+    const displayed = displayedBySource.get(source) || 0;
+    if (displayed >= nonAvasamProductsPerSource) return false;
+    displayedBySource.set(source, displayed + 1);
+    return true;
+  });
+}
+
+function productsByShopSource(productList) {
+  const grouped = new Map();
+  productList.forEach((product) => {
+    const source = productSource(product);
+    const sourceProducts = grouped.get(source) || [];
+    sourceProducts.push(product);
+    grouped.set(source, sourceProducts);
+  });
+  return grouped;
+}
+
+function shopSourceTitle(source) {
+  if (source === "Avasam") return "Live Avasam wash & grooming essentials";
+  if (source === "Stripe Payment") return "Bingo direct checkout";
+  return source;
+}
+
+function shopSourceDetail(source) {
+  if (source === "Avasam") return "Live Avasam products are shown first in the existing catalogue order, which prioritises relevant dog-care product metadata.";
+  if (source === "Stripe Payment") return "Products paid for through existing Bingo Dog Wash checkout flows.";
+  return "Products retain their existing source order. Up to ten are displayed from this source.";
+}
+
+function shopSourceSectionMarkup(source, productList) {
+  return `
+    <section class="shop-product-section shop-product-section-${escapeAttr(productHandle(source, "source"))}" data-shop-source="${escapeAttr(source)}">
+      <div class="section-head section-head-compact">
+        <div>
+          <span class="eyebrow">${productList.length} ${source === "Avasam" ? "live" : "displayed"} products</span>
+          <h3>${escapeSvg(shopSourceTitle(source))}</h3>
+          <p>${escapeSvg(shopSourceDetail(source))}</p>
+        </div>
+      </div>
+      <div class="grid grid-3">${productList.map(productCardMarkup).join("")}</div>
+    </section>
+  `;
+}
+
+function avasamShopSectionMarkup(productList) {
+  if (avasamState.loading) {
+    return `<section class="shop-product-section shop-product-section-avasam" data-shop-source="Avasam"><article class="card product-card supplier-message"><h3>Loading live Avasam products</h3><p>Checking the live catalogue for current products, prices and availability.</p></article></section>`;
+  }
+  if (avasamState.error) {
+    return `<section class="shop-product-section shop-product-section-avasam" data-shop-source="Avasam"><article class="card product-card supplier-message"><h3>Avasam products are temporarily unavailable</h3><p>Please try again later.</p></article></section>`;
+  }
+  if (!productList.length) {
+    return `<section class="shop-product-section shop-product-section-avasam" data-shop-source="Avasam"><article class="card product-card supplier-message"><h3>No Avasam products available</h3><p>There are no live Avasam products to show right now.</p></article></section>`;
+  }
+  return shopSourceSectionMarkup("Avasam", productList);
+}
+
+function renderProducts(productList = filteredProducts()) {
+  const target = document.querySelector("[data-products]");
+  if (!target) return;
+  renderSourceStatus();
+
+  const displayProducts = limitShopProductsForDisplay(productList);
+  const productsBySource = productsByShopSource(displayProducts);
+  const avasamProductsForDisplay = productsBySource.get("Avasam") || [];
+  const nonAvasamSources = [...productsBySource.keys()].filter((source) => source !== "Avasam");
+
+  if (shopFilters.search.trim()) {
+    const query = normalizedProductSearchQuery(shopFilters.search);
+    if (!displayProducts.length) {
+      target.innerHTML = `<article class="card product-card supplier-message"><h3>No products found</h3><p>Try a different search.</p></article>`;
+      updateUniversalNoResults();
+      return;
+    }
+    target.innerHTML = `
+      <section class="shop-product-section shop-product-section-search">
+        <div class="section-head section-head-compact">
+          <div>
+            <span class="eyebrow">${displayProducts.length} matching products · all sellers</span>
+            <h3>Results for &ldquo;${escapeSvg(query)}&rdquo;</h3>
+            <p>Matching Avasam products are shown first. Other supplier results retain their existing source order.</p>
+          </div>
+        </div>
+      </section>
+      ${avasamProductsForDisplay.length ? shopSourceSectionMarkup("Avasam", avasamProductsForDisplay) : ""}
+      ${nonAvasamSources.map((source) => shopSourceSectionMarkup(source, productsBySource.get(source) || [])).join("")}
+    `;
+    updateUniversalNoResults();
+    return;
+  }
+
+  target.innerHTML = [
+    avasamShopSectionMarkup(avasamProductsForDisplay),
+    ...nonAvasamSources.map((source) => shopSourceSectionMarkup(source, productsBySource.get(source) || []))
   ].join("");
   updateUniversalNoResults();
 }
@@ -1691,7 +1736,7 @@ function renderProductDetail() {
   const target = document.querySelector("[data-product-detail]");
   if (!target) return;
   const id = new URLSearchParams(location.search).get("id") || products[0].id;
-  const product = allProducts().find((item) => item.id === id) || products[0];
+  const product = allProducts().find((item) => item.id === id || productHandle(item.name, "") === id) || products[0];
   target.innerHTML = `
     <div class="card">
       <div class="product-image product-image-large">${productImageMarkup(product)}</div>
