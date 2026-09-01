@@ -3463,31 +3463,34 @@ async function loadAdminGiveawayEntries() {
 }
 
 function initNewsletter() {
-  const form = document.querySelector("[data-newsletter-form]");
-  const message = form?.querySelector("[data-newsletter-message]");
-  if (!form || !message) return;
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    if (!form.reportValidity()) return;
-    const email = String(new FormData(form).get("email") || "").trim();
-    const button = form.querySelector("button[type='submit']");
-    if (button) button.disabled = true;
-    message.textContent = "Joining…";
-    try {
-      const response = await fetch("/api/newsletter", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email })
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok || data.ok === false) throw new Error(data.error || "Subscription request failed");
-      message.textContent = "Welcome to the pack — you're on the list.";
-      form.reset();
-    } catch (error) {
-      message.textContent = "We couldn't add you just now. Please email info@bingodogwash.com.";
-    } finally {
-      if (button) button.disabled = false;
-    }
+  document.querySelectorAll("[data-newsletter-form]").forEach((form) => {
+    const message = form.querySelector("[data-newsletter-message]");
+    if (!message) return;
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!form.reportValidity()) return;
+      const fields = new FormData(form);
+      const email = String(fields.get("email") || "").trim();
+      const mobile = String(fields.get("mobile") || "").trim();
+      const button = form.querySelector("button[type='submit']");
+      if (button) button.disabled = true;
+      message.textContent = "Joining…";
+      try {
+        const response = await fetch("/api/newsletter", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(mobile ? { email, mobile } : { email })
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || data.ok === false) throw new Error(data.error || "Subscription request failed");
+        message.textContent = "Welcome to the pack — you're on the list.";
+        form.reset();
+      } catch (error) {
+        message.textContent = "We couldn't add you just now. Please email info@bingodogwash.com.";
+      } finally {
+        if (button) button.disabled = false;
+      }
+    });
   });
 }
 
@@ -3541,7 +3544,6 @@ function initLatestBingoEmbeds() {
   const instagramCard = section.querySelector("[data-instagram-card]");
   const youtubeLinks = section.querySelectorAll("[data-youtube-link]");
   const instagramLinks = section.querySelectorAll("[data-instagram-link]");
-  const youtubeThumbnail = section.querySelector("[data-youtube-thumbnail]");
   let currentRotationPeriod = latestBingoRotationPeriod();
 
   if (!youtubeItems.length && youtubeCard) youtubeCard.hidden = true;
@@ -3555,7 +3557,6 @@ function initLatestBingoEmbeds() {
     const videoId = selectedYoutubeId();
     const url = `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`;
     youtubeLinks.forEach((link) => { link.href = url; });
-    if (youtubeThumbnail) youtubeThumbnail.src = `https://i.ytimg.com/vi/${encodeURIComponent(videoId)}/hqdefault.jpg`;
   };
 
   const renderInstagram = () => {

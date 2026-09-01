@@ -61,7 +61,7 @@
     <section class="home-hero" aria-labelledby="hero-title">
       <div class="home-hero-inner">
         <div class="home-hero-copy">
-          <p class="home-location">Upper Stone Street, Maidstone</p>
+          <p class="home-location">Upper Stone St, Maidstone</p>
           <h1 id="hero-title">Maidstone's first self-service dog wash is coming.</h1>
           <ul class="hero-benefits" aria-label="Bingo Dog Wash benefits">
             <li>Professional equipment</li>
@@ -69,12 +69,13 @@
             <li>No appointment</li>
             <li>No stress</li>
           </ul>
-          <form class="hero-waitlist-form" action="#waitlist">
+          <form class="hero-waitlist-form" data-newsletter-form>
             <label class="sr-only" for="hero-email">Email address</label>
-            <input id="hero-email" type="email" autocomplete="email" placeholder="Email address">
+            <input id="hero-email" name="email" type="email" autocomplete="email" placeholder="Email address" required>
             <label class="sr-only" for="hero-mobile">Mobile number</label>
-            <input id="hero-mobile" type="tel" autocomplete="tel" placeholder="Mobile number">
+            <input id="hero-mobile" name="mobile" type="tel" autocomplete="tel" placeholder="Mobile number">
             <button class="btn btn-primary" type="submit">Join Waitlist &ndash; 50% Off</button>
+            <p class="newsletter-note"><span data-newsletter-message aria-live="polite"></span></p>
           </form>
           <p class="home-launch-note">Launching Winter 2026 - Maidstone</p>
         </div>
@@ -133,7 +134,7 @@
         <div class="social-card-grid" data-latest-bingo>
           <article class="social-card social-youtube" data-youtube-card aria-label="Latest Bingo Dog Wash YouTube video">
             <p class="social-platform">YouTube</p>
-            <a class="social-thumbnail" data-youtube-link href="https://www.youtube.com/watch?v=CvlkYxbZZ30" target="_blank" rel="noopener noreferrer"><img data-youtube-thumbnail src="https://i.ytimg.com/vi/CvlkYxbZZ30/hqdefault.jpg" width="480" height="360" loading="lazy" decoding="async" alt="Latest Bingo Dog Wash YouTube video" onerror="this.onerror=null;this.src='assets/home-page-pic.webp';"></a>
+            <a class="social-thumbnail" data-youtube-link href="https://www.youtube.com/watch?v=CvlkYxbZZ30" target="_blank" rel="noopener noreferrer"><img src="assets/home-page-pic.webp" width="480" height="360" loading="lazy" decoding="async" alt="Latest Bingo Dog Wash YouTube video"></a>
             <div class="social-card-copy"><h3>See the Bingo Dog Wash build</h3><a class="social-watch" data-youtube-link href="https://www.youtube.com/watch?v=CvlkYxbZZ30" target="_blank" rel="noopener noreferrer">Watch</a></div>
           </article>
           <article class="social-card social-instagram" data-instagram-card aria-label="Latest Bingo Dog Wash Instagram post">
@@ -183,7 +184,7 @@
 
     <section class="location-section" aria-labelledby="location-title">
       <div class="container location-layout">
-        <div><p class="home-eyebrow">Confirmed site address</p><h2 id="location-title">Upper Stone Street, Maidstone</h2><p>Our first self-service dog wash is taking shape.</p></div>
+        <div><p class="home-eyebrow">Confirmed site address</p><h2 id="location-title">Upper Stone St, Maidstone</h2><p>Our first self-service dog wash is taking shape.</p></div>
         <a class="btn location-link" href="contact.html">Contact Bingo Dog Wash</a>
       </div>
     </section>

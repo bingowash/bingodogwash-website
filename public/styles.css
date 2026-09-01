@@ -2657,6 +2657,7 @@ main > section:not(:first-child) {
 .hero-benefits li::before { width: 8px; height: 8px; flex: 0 0 8px; border-radius: 50%; background: var(--bingo-green); content: ""; }
 .hero-waitlist-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 8px; max-width: 660px; }
 .hero-waitlist-form input, .home-page .newsletter-form input { min-width: 0; min-height: 48px; padding: 0 14px; border: 1px solid var(--bingo-blue); border-radius: 8px; color: var(--bingo-blue); background: #FFFFFF; font: inherit; }
+.hero-waitlist-form .newsletter-note, .hero-waitlist-form .newsletter-note span { color: var(--bingo-blue); }
 .home-page input::placeholder { color: var(--bingo-blue); opacity: .72; }
 .home-launch-note { margin: 14px 0 0; color: var(--bingo-blue); font-size: 14px; font-weight: 750; }
 .home-hero-visual { overflow: hidden; aspect-ratio: 3 / 2; border-radius: 0; background: var(--bingo-blue); box-shadow: 18px 18px 0 var(--bingo-green); }
