@@ -949,6 +949,7 @@ function normalizeAvasamProduct(raw, index) {
     supplier: firstValue(raw.supplier, raw.supplierName, raw.vendor, "Avasam"),
     commission: firstValue(raw.margin, raw.commission, "Direct margin"),
     status: stockStatus(raw),
+    delivery: firstValue(raw.delivery, raw.deliveryText, raw.delivery_text, raw.deliveryInfo, raw.delivery_info, raw.shippingText, raw.shipping_text, raw.shippingInfo, raw.shipping_info, raw.shipping?.text, raw.shipping?.message, variant.delivery, variant.deliveryText, variant.shippingText, ""),
     listingUrl: typeof listingUrl === "string" ? listingUrl.trim() : "",
     description: firstValue(raw.description, raw.shortDescription, raw.summary, "Live Avasam pet product ready for Bingo Dog Wash checkout.")
   };
@@ -1077,7 +1078,7 @@ function decodeEtsyDisplayText(value) {
 }
 
 async function loadAvasamProducts({ silent = false } = {}) {
-  const target = document.querySelector("[data-avasam-products], [data-products], [data-cart], [data-product-detail], [data-admin-product-feed], [data-account-orders]");
+  const target = document.querySelector("[data-home-bingo-products], [data-avasam-products], [data-products], [data-cart], [data-product-detail], [data-admin-product-feed], [data-account-orders]");
   if (!target) return;
 
   avasamState.loading = !silent;
@@ -1113,6 +1114,7 @@ async function loadAvasamProducts({ silent = false } = {}) {
     avasamState.loading = false;
     renderAvasamCategories();
     renderAvasamProducts();
+    renderHomeAvasamProducts();
     renderProducts();
     renderAdminProducts();
     renderAccount();
@@ -1636,6 +1638,40 @@ function renderAvasamProducts() {
     </article>
   `).join("");
   updateUniversalNoResults();
+}
+
+function homeAvasamProductMarkup(product) {
+  const productId = escapeAttr(product.id);
+  const productLink = `product.html?id=${encodeURIComponent(product.publicId || productHandle(product.name, ""))}`;
+  const available = !/out of stock|unavailable/i.test(String(product.status || ""));
+  const delivery = String(product.delivery || "").trim();
+  return `
+    <article class="home-product-card" data-product-key="${productId}">
+      <a class="home-product-image" href="${escapeAttr(productLink)}">${productImageMarkup(product)}</a>
+      <div class="home-product-content">
+        <span>Avasam</span>
+        <h3><a href="${escapeAttr(productLink)}">${escapeSvg(product.name)}</a></h3>
+        <p class="home-product-price">${escapeSvg(productPriceText(product))}</p>
+        <p class="home-product-availability">${escapeSvg(product.status || "Availability unavailable")}</p>
+        ${delivery ? `<p class="home-product-delivery">${escapeSvg(delivery)}</p>` : ""}
+        <div class="home-product-actions">
+          <a class="product-link" href="${escapeAttr(productLink)}">View product</a>
+          ${available ? `<button class="btn btn-primary" type="button" data-avasam-buy="${productId}">Add to basket</button>` : `<button class="btn btn-primary" type="button" disabled aria-disabled="true">Unavailable</button>`}
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function renderHomeAvasamProducts() {
+  const target = document.querySelector("[data-home-bingo-products]");
+  if (!target) return;
+  const products = avasamState.live
+    ? avasamProducts.filter((product) => product.image && !String(product.image).startsWith("data:image/svg+xml")).slice(0, 6)
+    : [];
+  target.innerHTML = products.length
+    ? products.map(homeAvasamProductMarkup).join("")
+    : `<p class="home-products-status">Current shop essentials will appear here when the live catalogue is available.</p>`;
 }
 
 function avasamCategories() {
@@ -3497,186 +3533,39 @@ function latestBingoRotationPeriod(timestamp = Date.now()) {
 
 function initLatestBingoEmbeds() {
   const section = document.querySelector("[data-latest-bingo]");
-  const youtubeHost = section?.querySelector("[data-youtube-embed]");
-  const instagramHost = section?.querySelector("[data-instagram-embed]");
-  const playButton = section?.querySelector("[data-youtube-play]");
-  const muteButton = section?.querySelector("[data-youtube-mute]");
   if (!section) return;
 
-  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
   const youtubeItems = latestFromBingoConfig.youtube.filter(validBingoYoutubeId);
   const instagramItems = latestFromBingoConfig.instagram.filter(validBingoInstagramUrl);
-  const youtubeCard = youtubeHost?.closest(".video-youtube");
-  const instagramCard = instagramHost?.closest(".video-instagram");
-  const youtubeLink = youtubeCard?.querySelector(".video-card-footer a");
-  const instagramLink = instagramCard?.querySelector(".video-card-footer a");
-  let youtubeFrame = null;
-  let youtubePlaying = false;
-  let youtubeMuted = true;
-  let youtubeVisible = false;
-  let instagramVisible = false;
+  const youtubeCard = section.querySelector("[data-youtube-card]");
+  const instagramCard = section.querySelector("[data-instagram-card]");
+  const youtubeLinks = section.querySelectorAll("[data-youtube-link]");
+  const instagramLinks = section.querySelectorAll("[data-instagram-link]");
+  const youtubeThumbnail = section.querySelector("[data-youtube-thumbnail]");
   let currentRotationPeriod = latestBingoRotationPeriod();
-  let cleanedUp = false;
 
   if (!youtubeItems.length && youtubeCard) youtubeCard.hidden = true;
   if (!instagramItems.length && instagramCard) instagramCard.hidden = true;
 
-  const youtubeCommand = (func) => {
-    youtubeFrame?.contentWindow?.postMessage(JSON.stringify({
-      event: "command",
-      func,
-      args: []
-    }), "https://www.youtube.com");
-  };
-
-  const updateControls = () => {
-    if (!playButton || !muteButton) return;
-    playButton.textContent = youtubePlaying ? "Pause" : "Play";
-    playButton.setAttribute("aria-label", `${youtubePlaying ? "Pause" : "Play"} YouTube video`);
-    muteButton.textContent = youtubeMuted ? "Unmute" : "Mute";
-    muteButton.setAttribute("aria-label", `${youtubeMuted ? "Unmute" : "Mute"} YouTube video`);
-  };
-
-  const youtubeFallback = (videoId) => {
-    const link = document.createElement("a");
-    link.className = "btn btn-light";
-    link.href = `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`;
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
-    link.textContent = "Watch on YouTube";
-    return link;
-  };
-
-  const instagramFallback = (postUrl) => {
-    const link = document.createElement("a");
-    link.className = "btn btn-light";
-    link.href = postUrl;
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
-    link.textContent = "View on Instagram";
-    return link;
-  };
-
   const selectedYoutubeId = () => youtubeItems[currentRotationPeriod % youtubeItems.length];
   const selectedInstagramUrl = () => instagramItems[currentRotationPeriod % instagramItems.length];
 
-  const createYoutubePlayer = () => {
-    if (!youtubeHost || youtubeFrame || cleanedUp || !youtubeItems.length) return;
-    const videoId = youtubeHost.dataset.videoId;
-    youtubeFrame = document.createElement("iframe");
-    youtubeFrame.src = `https://www.youtube.com/embed/${encodeURIComponent(videoId)}?enablejsapi=1&playsinline=1&rel=0&modestbranding=1&mute=1`;
-    youtubeFrame.title = "Latest Bingo Dog Wash YouTube video";
-    youtubeFrame.loading = "lazy";
-    youtubeFrame.allow = "autoplay; encrypted-media; picture-in-picture";
-    youtubeFrame.allowFullscreen = true;
-    youtubeFrame.addEventListener("error", () => {
-      youtubeFrame = null;
-      youtubeHost.replaceChildren(youtubeFallback(videoId));
-    }, { once: true });
-    youtubeFrame.addEventListener("load", () => {
-      youtubeCommand("mute");
-      youtubeMuted = true;
-      if (youtubeVisible && !reducedMotion.matches) {
-        youtubeCommand("playVideo");
-        youtubePlaying = true;
-      }
-      updateControls();
-    }, { once: true });
-    youtubeHost.replaceChildren(youtubeFrame);
-  };
-
-  const createInstagramEmbed = () => {
-    if (!instagramHost || instagramHost.querySelector("iframe") || cleanedUp || !instagramItems.length) return;
-    const postUrl = new URL(instagramHost.dataset.postUrl);
-    const frame = document.createElement("iframe");
-    frame.src = `${postUrl.origin}${postUrl.pathname}embed/captioned/`;
-    frame.title = "Latest Bingo Dog Wash Instagram post";
-    frame.loading = "lazy";
-    frame.allow = "autoplay; encrypted-media; picture-in-picture";
-    frame.allowFullscreen = true;
-    frame.addEventListener("error", () => {
-      instagramHost.replaceChildren(instagramFallback(postUrl.href));
-    }, { once: true });
-    instagramHost.replaceChildren(frame);
-  };
-
   const renderYoutube = () => {
-    if (!youtubeHost || !youtubeItems.length) return;
+    if (!youtubeItems.length) return;
     const videoId = selectedYoutubeId();
-    youtubeCommand("pauseVideo");
-    youtubeFrame = null;
-    youtubePlaying = false;
-    youtubeMuted = true;
-    youtubeHost.dataset.videoId = videoId;
-    youtubeHost.replaceChildren(youtubeFallback(videoId));
-    if (youtubeLink) youtubeLink.href = `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`;
-    updateControls();
-    if (youtubeVisible) createYoutubePlayer();
+    const url = `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`;
+    youtubeLinks.forEach((link) => { link.href = url; });
+    if (youtubeThumbnail) youtubeThumbnail.src = `https://i.ytimg.com/vi/${encodeURIComponent(videoId)}/hqdefault.jpg`;
   };
 
   const renderInstagram = () => {
-    if (!instagramHost || !instagramItems.length) return;
+    if (!instagramItems.length) return;
     const postUrl = selectedInstagramUrl();
-    instagramHost.dataset.postUrl = postUrl;
-    instagramHost.replaceChildren(instagramFallback(postUrl));
-    if (instagramLink) instagramLink.href = postUrl;
-    if (instagramVisible) createInstagramEmbed();
+    instagramLinks.forEach((link) => { link.href = postUrl; });
   };
 
-  const onPlay = () => {
-    createYoutubePlayer();
-    youtubePlaying = !youtubePlaying;
-    youtubeCommand(youtubePlaying ? "playVideo" : "pauseVideo");
-    updateControls();
-  };
-  const onMute = () => {
-    createYoutubePlayer();
-    youtubeMuted = !youtubeMuted;
-    youtubeCommand(youtubeMuted ? "mute" : "unMute");
-    updateControls();
-  };
-  const onMotionChange = () => {
-    if (reducedMotion.matches && youtubePlaying) {
-      youtubeCommand("pauseVideo");
-      youtubePlaying = false;
-      updateControls();
-    }
-  };
-
-  playButton?.addEventListener("click", onPlay);
-  muteButton?.addEventListener("click", onMute);
-  reducedMotion.addEventListener("change", onMotionChange);
   renderYoutube();
   renderInstagram();
-  updateControls();
-
-  const observer = new IntersectionObserver((entries) => {
-    entries.forEach((entry) => {
-      if (entry.target.classList.contains("video-youtube")) {
-        youtubeVisible = entry.isIntersecting;
-        if (youtubeVisible) {
-          createYoutubePlayer();
-          if (youtubeFrame && !reducedMotion.matches) {
-            youtubeCommand("mute");
-            youtubeMuted = true;
-            youtubeCommand("playVideo");
-            youtubePlaying = true;
-            updateControls();
-          }
-        } else if (youtubeFrame) {
-          youtubeCommand("pauseVideo");
-          youtubePlaying = false;
-          updateControls();
-        }
-      }
-      if (entry.target.classList.contains("video-instagram")) {
-        instagramVisible = entry.isIntersecting;
-        if (instagramVisible) createInstagramEmbed();
-      }
-    });
-  }, { threshold: 0.6 });
-
-  section.querySelectorAll(".video-card").forEach((card) => observer.observe(card));
 
   const rotationCheck = window.setInterval(() => {
     const nextRotationPeriod = latestBingoRotationPeriod();
@@ -3686,17 +3575,7 @@ function initLatestBingoEmbeds() {
     renderInstagram();
   }, 60 * 1000);
 
-  const cleanup = () => {
-    if (cleanedUp) return;
-    cleanedUp = true;
-    observer.disconnect();
-    window.clearInterval(rotationCheck);
-    youtubeCommand("pauseVideo");
-    playButton?.removeEventListener("click", onPlay);
-    muteButton?.removeEventListener("click", onMute);
-    reducedMotion.removeEventListener("change", onMotionChange);
-    window.removeEventListener("pagehide", cleanup);
-  };
+  const cleanup = () => window.clearInterval(rotationCheck);
   window.addEventListener("pagehide", cleanup);
 }
 
@@ -3767,12 +3646,13 @@ renderCategories();
 if (!hasServerRenderedShopProducts) renderProducts();
 renderAvasamCategories();
 renderAvasamProducts();
+renderHomeAvasamProducts();
 initUniversalProductSearch();
 initShopFilters();
 initAvasamFilters();
 activateHydratedAvasamControls();
 if (!hydratedAvasamProducts.length) loadAvasamProducts();
-if (document.querySelector("[data-avasam-products], [data-products], [data-cart], [data-product-detail], [data-admin-product-feed], [data-account-orders]")) {
+if (document.querySelector("[data-home-bingo-products], [data-avasam-products], [data-products], [data-cart], [data-product-detail], [data-admin-product-feed], [data-account-orders]")) {
   setInterval(() => loadAvasamProducts({ silent: true }), avasamRefreshMs);
 }
 loadEtsyProducts();

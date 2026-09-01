@@ -11,7 +11,7 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
   <link rel="manifest" href="/site.webmanifest">
-  <meta name="theme-color" content="#07346f">
+  <meta name="theme-color" content="#0F2A4A">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Bingo Dog Wash">
   <meta property="og:title" content="The Future of Self-Service Dog Washing">
@@ -52,7 +52,7 @@
       <a class="brand" href="index.html" aria-label="Bingo Dog Wash home"><img class="brand-logo" src="/images/bingo-dog-wash-logo.optimized.png" alt="Bingo Dog Wash" width="132" height="132"></a>
       <button class="menu-toggle" type="button" aria-expanded="false">Menu</button>
       <div class="nav-links">
-        <a href="index.html">Home</a><a href="wash.html">Wash</a><a href="shop.html">Shop</a><a href="dog-walker-club.html">Dog Walker Club</a><a href="find-a-professional.html">Find a Professional</a><a href="gift-cards.html">Gift Cards</a><a href="about.html">About</a><a href="contact.html">Contact</a><a href="faq.html">FAQ</a><a href="account.html">Account</a><a class="basket" href="cart.html">Cart <span data-basket-count>0</span></a>
+        <a href="index.html">Home</a><a href="wash.html">Wash</a><a href="shop.html">Shop</a><a href="dog-walker-club.html">Dog Walker Directory</a><a href="find-a-professional.html">Find a Professional</a><a href="gift-cards.html">Gift Cards</a><a href="about.html">About</a><a href="contact.html">Contact</a><a href="faq.html">FAQ</a><a href="top-dog-competition.html">Top Dog Competition</a><a href="account.html">Account</a><a class="basket" href="cart.html">Cart <span data-basket-count>0</span></a>
       </div>
     </nav>
   </header>
@@ -61,52 +61,56 @@
     <section class="home-hero" aria-labelledby="hero-title">
       <div class="home-hero-inner">
         <div class="home-hero-copy">
-          <span class="home-kicker"><span aria-hidden="true"></span> A new kind of dog wash is coming</span>
-          <h1 id="hero-title">The Future of <em>Self-Service</em> Dog Washing</h1>
-          <p>We’re creating convenient, modern wash stations where dog owners can wash and dry their dogs with professional equipment—without the mess at home or the wait for an appointment.</p>
-          <div class="home-actions">
-            <a class="btn btn-primary" href="shop.html">Shop Now <span aria-hidden="true">→</span></a>
-            <a class="btn btn-outline" href="#community">Join Our Community</a>
-          </div>
-          <div class="hero-proof" aria-label="Bingo Dog Wash benefits">
-            <span><b aria-hidden="true">✓</b> Easy to use</span>
-            <span><b aria-hidden="true">✓</b> Clean &amp; hygienic</span>
-            <span><b aria-hidden="true">✓</b> Built for every dog</span>
-          </div>
+          <p class="home-location">Upper Stone Street, Maidstone</p>
+          <h1 id="hero-title">Maidstone's first self-service dog wash is coming.</h1>
+          <ul class="hero-benefits" aria-label="Bingo Dog Wash benefits">
+            <li>Professional equipment</li>
+            <li>No mess at home</li>
+            <li>No appointment</li>
+            <li>No stress</li>
+          </ul>
+          <form class="hero-waitlist-form" action="#waitlist">
+            <label class="sr-only" for="hero-email">Email address</label>
+            <input id="hero-email" type="email" autocomplete="email" placeholder="Email address">
+            <label class="sr-only" for="hero-mobile">Mobile number</label>
+            <input id="hero-mobile" type="tel" autocomplete="tel" placeholder="Mobile number">
+            <button class="btn btn-primary" type="submit">Join Waitlist &ndash; 50% Off</button>
+          </form>
+          <p class="home-launch-note">Launching Winter 2026 - Maidstone</p>
         </div>
         <div class="home-hero-visual">
-          <div class="launch-badge"><strong>First location</strong><span>In development</span></div>
-          <img src="assets/home-page-pic.webp" width="1536" height="1024" alt="Concept for a modern Bingo Dog Wash self-service station" fetchpriority="high">
+          <img src="assets/home-page-pic.webp" width="1536" height="1024" alt="Bingo Dog Wash self-service wash station" fetchpriority="high">
         </div>
       </div>
     </section>
 
-    <section class="home-trust" aria-label="What to expect">
-      <div class="container trust-grid">
-        <div><span class="trust-icon" aria-hidden="true">01</span><p><strong>Professional equipment</strong>Purpose-built washing and drying</p></div>
-        <div><span class="trust-icon" aria-hidden="true">02</span><p><strong>Simple contactless payment</strong>Tap, wash and go</p></div>
-        <div><span class="trust-icon" aria-hidden="true">03</span><p><strong>A trusted UK brand</strong>Made for dogs and their people</p></div>
+    <section class="home-benefit-strip" aria-label="What to expect from Bingo Dog Wash">
+      <div class="container home-benefit-grid">
+        <article><span class="benefit-icon" aria-hidden="true">+</span><div><strong>Professional equipment</strong><p>Made for a better wash.</p></div></article>
+        <article><span class="benefit-icon" aria-hidden="true">+</span><div><strong>Contactless payment</strong><p>Simple from start to finish.</p></div></article>
+        <article><span class="benefit-icon" aria-hidden="true">+</span><div><strong>Calm experience</strong><p>More comfort for your dog.</p></div></article>
+        <article><span class="benefit-icon" aria-hidden="true">+</span><div><strong>Built for all breeds</strong><p>Every dog is welcome.</p></div></article>
       </div>
     </section>
 
-    <section class="journey-section" id="journey">
-      <div class="container journey-grid">
-        <div class="journey-marker" aria-hidden="true">
-          <span>Our story</span>
-          <strong>Built from a simple idea</strong>
-          <div class="paw-mark">●<br><i>● ● ●</i></div>
+    <section class="founders-section" aria-labelledby="founders-title">
+      <div class="container founders-layout">
+        <div class="founders-copy">
+          <p class="home-eyebrow">Founders Pass</p>
+          <h2 id="founders-title">Start the journey with more wash credit.</h2>
+          <p>Limited launch offer.</p>
         </div>
-        <div class="journey-copy">
-          <span class="eyebrow">Our Journey</span>
-          <h2>Better bath days for dogs—and their humans.</h2>
-          <p class="journey-lead">Bingo Dog Wash was created after seeing how difficult, messy and time-consuming washing a dog at home can be.</p>
-          <p>Our mission is simple: make quality dog care more accessible through clean, easy-to-use self-service wash stations and a trusted online shop for everyday essentials.</p>
-          <p>We’re now working towards launching our first Bingo Dog Wash location in the UK. Every supplier conversation, product test and community message takes us one step closer.</p>
-          <div class="journey-status">
-            <span class="status-dot" aria-hidden="true"></span>
-            <div><strong>The journey has started</strong><small>Follow our progress as the first location takes shape.</small></div>
-          </div>
-          <a class="text-link" href="about.html">Discover our story <span aria-hidden="true">→</span></a>
+        <div class="founders-grid">
+          <article class="founders-card">
+            <p>Founders Pass</p>
+            <strong>&pound;25 = &pound;50 credit</strong>
+            <a href="gift-cards.html">Learn more</a>
+          </article>
+          <article class="founders-card founders-card-featured">
+            <p>Family Pass</p>
+            <strong>&pound;45 = &pound;100 + 2 free</strong>
+            <a href="gift-cards.html">Learn more</a>
+          </article>
         </div>
       </div>
     </section>
@@ -114,68 +118,73 @@
     <section class="featured-section" aria-labelledby="featured-title">
       <div class="container">
         <div class="home-section-head">
-          <div><span class="eyebrow">Everyday favourites</span><h2 id="featured-title">Featured products</h2><p>Useful dog-care picks from our growing online shop.</p></div>
-          <a class="text-link" href="shop.html">Shop all products <span aria-hidden="true">→</span></a>
+          <div><p class="home-eyebrow">Bingo shop</p><h2 id="featured-title">Shop our most popular essentials</h2><p>Live Avasam items, ready for your dog.</p></div>
+          <a class="text-link" href="shop.html">Shop all products</a>
         </div>
-        <div class="featured-grid" data-home-bingo-products><!-- SSR_HOME_PRODUCTS_START -->
-          <article class="home-product-card">
-            <a class="home-product-image" href="product.html?id=oat-shampoo"><img src="shampoo.jpg" width="400" height="400" loading="lazy" decoding="async" alt="Bugalugs Baby Fresh dog shampoo"></a>
-            <div><span>Grooming</span><h3><a href="product.html?id=oat-shampoo">Baby Fresh Dog Shampoo</a></h3><p>A gentle, vegan shampoo with a fresh baby-powder scent.</p><a class="product-link" href="product.html?id=oat-shampoo">View product →</a></div>
-          </article>
-          <article class="home-product-card">
-            <a class="home-product-image" href="product.html?id=amazon-eu-affiliate-pick-2"><img src="pedigree.jpg" width="400" height="400" loading="lazy" decoding="async" alt="Pedigree Tasty Minis Cheesy Nibbles dog treats"></a>
-            <div><span>Treats</span><h3><a href="product.html?id=amazon-eu-affiliate-pick-2">Pedigree Tasty Minis</a></h3><p>Bite-sized cheesy rewards for training or everyday good behaviour.</p><a class="product-link" href="product.html?id=amazon-eu-affiliate-pick-2">View product →</a></div>
-          </article>
-          <article class="home-product-card">
-            <a class="home-product-image" href="product.html?id=amazon-affiliate-pick-2"><img src="treats.jpg" width="400" height="400" loading="lazy" decoding="async" alt="Pet Munchies venison and beef liver training treats"></a>
-            <div><span>Training</span><h3><a href="product.html?id=amazon-affiliate-pick-2">Pet Munchies Training Treats</a></h3><p>Grain-free, low-fat bites made with natural real meat.</p><a class="product-link" href="product.html?id=amazon-affiliate-pick-2">View product →</a></div>
-          </article>
-        <!-- SSR_HOME_PRODUCTS_END --></div>
+        <div class="featured-grid" data-home-bingo-products><!-- SSR_HOME_PRODUCTS_START --><p class="home-products-status">Loading current shop essentials.</p><!-- SSR_HOME_PRODUCTS_END --></div>
       </div>
     </section>
 
     <section class="videos-section" aria-labelledby="videos-title">
       <div class="container">
         <div class="home-section-head">
-          <div><span class="eyebrow eyebrow-light">Watch &amp; follow</span><h2 id="videos-title">Latest from Bingo</h2><p>Behind the scenes, product finds and every step towards opening day.</p></div>
-          <div class="social-mini"><a href="https://www.youtube.com/@BingoDogwash" target="_blank" rel="noopener noreferrer">YouTube</a><a href="https://www.instagram.com/bingo_dogwash/" target="_blank" rel="noopener noreferrer">Instagram</a></div>
+          <div><p class="home-eyebrow">Watch and follow</p><h2 id="videos-title">Latest from Bingo</h2><p>See the journey towards opening day.</p></div>
         </div>
-        <div class="video-grid" data-latest-bingo>
-          <article class="video-card video-youtube" aria-label="Latest Bingo Dog Wash YouTube video">
-            <span class="video-format">YouTube</span>
-            <div class="social-embed-frame youtube-embed-frame" data-youtube-embed data-video-id="X8Eu8INivBw">
-              <div class="embed-loading"><span aria-hidden="true">▶</span><strong>Video loads when in view</strong></div>
-            </div>
-            <div class="youtube-controls" aria-label="YouTube player controls">
-              <button type="button" data-youtube-play aria-label="Play YouTube video">Play</button>
-              <button type="button" data-youtube-mute aria-label="Unmute YouTube video">Unmute</button>
-            </div>
-            <div class="video-card-footer"><strong>See the Bingo Dog Wash vision</strong><a href="https://youtu.be/X8Eu8INivBw" target="_blank" rel="noopener noreferrer">Watch our latest videos →</a></div>
+        <div class="social-card-grid" data-latest-bingo>
+          <article class="social-card social-youtube" data-youtube-card aria-label="Latest Bingo Dog Wash YouTube video">
+            <p class="social-platform">YouTube</p>
+            <a class="social-thumbnail" data-youtube-link href="https://www.youtube.com/watch?v=CvlkYxbZZ30" target="_blank" rel="noopener noreferrer"><img data-youtube-thumbnail src="https://i.ytimg.com/vi/CvlkYxbZZ30/hqdefault.jpg" width="480" height="360" loading="lazy" decoding="async" alt="Latest Bingo Dog Wash YouTube video" onerror="this.onerror=null;this.src='assets/home-page-pic.webp';"></a>
+            <div class="social-card-copy"><h3>See the Bingo Dog Wash build</h3><a class="social-watch" data-youtube-link href="https://www.youtube.com/watch?v=CvlkYxbZZ30" target="_blank" rel="noopener noreferrer">Watch</a></div>
           </article>
-          <article class="video-card video-instagram" aria-label="Latest Bingo Dog Wash Instagram post">
-            <span class="video-format">Instagram</span>
-            <div class="social-embed-frame instagram-embed-frame" data-instagram-embed data-post-url="https://www.instagram.com/p/DbAjVJfx7j2/">
-              <div class="embed-loading"><span aria-hidden="true">◎</span><strong>Post loads when in view</strong></div>
-            </div>
-            <div class="video-card-footer"><strong>Follow the build in real time</strong><a href="https://www.instagram.com/p/DbAjVJfx7j2/" target="_blank" rel="noopener noreferrer">Watch our latest Reels →</a></div>
+          <article class="social-card social-instagram" data-instagram-card aria-label="Latest Bingo Dog Wash Instagram post">
+            <p class="social-platform">Instagram</p>
+            <a class="social-thumbnail" data-instagram-link href="https://www.instagram.com/p/DbG8jqRRYdn/" target="_blank" rel="noopener noreferrer"><img src="assets/home-page-pic.webp" width="1536" height="1024" loading="lazy" decoding="async" alt="Bingo Dog Wash self-service wash station"></a>
+            <div class="social-card-copy"><h3>Follow the build in real time</h3><a class="social-watch" data-instagram-link href="https://www.instagram.com/p/DbG8jqRRYdn/" target="_blank" rel="noopener noreferrer">Watch</a></div>
           </article>
         </div>
+        <div class="social-follow-links"><a href="https://www.youtube.com/@BingoDogwash" target="_blank" rel="noopener noreferrer">Follow on YouTube</a><a href="https://www.instagram.com/bingo_dogwash/" target="_blank" rel="noopener noreferrer">Follow on Instagram</a></div>
       </div>
     </section>
 
-    <section class="community-section" id="community" aria-labelledby="community-title">
+    <section class="community-section" id="waitlist" aria-labelledby="community-title">
       <div class="container community-panel">
         <div class="community-copy">
-          <span class="eyebrow eyebrow-light">Join the pack</span>
-          <h2 id="community-title">Be the first to hear about new products, offers and our first Bingo Dog Wash location.</h2>
-          <p>Get occasional updates from the journey—straight to your inbox.</p>
+          <p class="home-eyebrow">Follow the build</p>
+          <h2 id="community-title">Be first to wash.</h2>
         </div>
         <form class="newsletter-form" data-newsletter-form>
           <label class="sr-only" for="newsletter-email">Email address</label>
-          <input id="newsletter-email" name="email" type="email" autocomplete="email" placeholder="Your email address" required>
-          <button class="btn" type="submit">Join Our Community <span aria-hidden="true">→</span></button>
-          <p class="newsletter-note">No spam. Just good news for dog people. <span data-newsletter-message aria-live="polite"></span></p>
+          <input id="newsletter-email" name="email" type="email" autocomplete="email" placeholder="Email address" required>
+          <label class="sr-only" for="newsletter-mobile">Mobile number</label>
+          <input id="newsletter-mobile" name="mobile" type="tel" autocomplete="tel" placeholder="Mobile number">
+          <button class="btn" type="submit">Join waitlist</button>
+          <p class="newsletter-note"><span data-newsletter-message aria-live="polite"></span></p>
         </form>
+      </div>
+    </section>
+
+    <section class="story-section" aria-labelledby="story-title">
+      <div class="container story-layout">
+        <div class="story-panel"><p class="home-eyebrow">Our Story</p><h2 id="story-title">A cleaner way to care for your dog.</h2></div>
+        <div class="story-copy"><p>Bingo Dog Wash began with a simple problem: washing a dog at home can be messy, awkward and time-consuming.</p><p>We are building easy-to-use self-service wash stations and a trusted shop for the essentials that keep dogs feeling their best.</p><a class="text-link" href="about.html">Discover our story</a></div>
+      </div>
+    </section>
+
+    <section class="how-section" aria-labelledby="how-title">
+      <div class="container">
+        <div class="home-section-head"><div><p class="home-eyebrow">How it works</p><h2 id="how-title">A better wash day, made simple.</h2></div></div>
+        <ol class="how-grid">
+          <li><span>1</span><strong>Bring your dog</strong><p>Come when it suits you.</p></li>
+          <li><span>2</span><strong>Wash with confidence</strong><p>Use professional equipment.</p></li>
+          <li><span>3</span><strong>Leave the mess behind</strong><p>Head home with a happy dog.</p></li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="location-section" aria-labelledby="location-title">
+      <div class="container location-layout">
+        <div><p class="home-eyebrow">Confirmed site address</p><h2 id="location-title">Upper Stone Street, Maidstone</h2><p>Our first self-service dog wash is taking shape.</p></div>
+        <a class="btn location-link" href="contact.html">Contact Bingo Dog Wash</a>
       </div>
     </section>
   </main>
@@ -187,9 +196,9 @@
       <div class="footer-links"><strong>Help &amp; policies</strong><a href="/delivery-policy.html">Delivery Policy</a><a href="/returns-refunds.html">Returns &amp; Refunds</a><a href="/terms.html">Terms &amp; Conditions</a><a href="/privacy-policy.html">Privacy Policy</a><a href="/contact.html">Contact Us</a><a href="/data-deletion.html">Data Deletion</a></div>
       <div class="footer-links"><strong>Follow the journey</strong><a href="https://www.instagram.com/bingo_dogwash/" target="_blank" rel="noopener noreferrer">Instagram</a><a href="https://www.facebook.com/profile.php?id=61590905394658" target="_blank" rel="noopener noreferrer">Facebook</a><a href="https://www.youtube.com/@BingoDogwash" target="_blank" rel="noopener noreferrer">YouTube</a><a href="https://www.tiktok.com/@bingo_dogwash" target="_blank" rel="noopener noreferrer">TikTok</a></div>
     </div>
-    <div class="container footer-bottom"><span>© 2026 Bingo Dog Wash</span><span>Made for dogs. Built for their people.</span></div>
+    <div class="container footer-bottom"><span>&copy; 2026 Bingo Dog Wash</span><span>Made for dogs. Built for their people.</span></div>
   </footer>
   <script type="application/json" data-ssr-avasam-products><!-- SSR_AVASAM_DATA_START -->[]<!-- SSR_AVASAM_DATA_END --></script>
-  <script src="site.js?v=20260730-latest-bingo-rotation" defer></script>
+  <script src="site.js?v=20260901-public-visual-refresh" defer></script>
 </body>
 </html>
