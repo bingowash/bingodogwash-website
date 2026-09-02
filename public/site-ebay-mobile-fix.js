@@ -2860,7 +2860,7 @@ async function importAdminEtsyListing() {
   if (button) button.disabled = true;
   if (status) status.textContent = "Importing exact Etsy listing...";
   try {
-    const data = await adminCoreJson(`${adminEtsyApiBase}/import-listing`, {
+    const data = await adminCoreJson(`${adminEtsyApiBase}/products/import-listing`, {
       method: "POST",
       body: JSON.stringify({
         listingId: reference,
