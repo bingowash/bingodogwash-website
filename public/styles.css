@@ -3737,3 +3737,30 @@ body:has(.competition-thanks) .btn { box-shadow: 0 10px 22px rgba(15, 42, 74, .1
     grid-column: 1 / -1;
   }
 }
+
+/* Admin Etsy product card spacing refinement */
+[data-admin-etsy-products] .check-row > span {
+  display: grid;
+  gap: 4px;
+}
+
+[data-admin-etsy-products] .check-row strong,
+[data-admin-etsy-products] .check-row small {
+  display: block;
+}
+
+[data-admin-etsy-products] .check-row small {
+  line-height: 1.35;
+}
+
+[data-admin-etsy-products] .admin-product-row {
+  row-gap: 10px;
+}
+
+[data-admin-etsy-products] .admin-product-row > .tag {
+  align-self: start;
+}
+
+[data-admin-etsy-products] .admin-etsy-verification {
+  margin-top: 0;
+}
