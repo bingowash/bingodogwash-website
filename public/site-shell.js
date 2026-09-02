@@ -6,6 +6,17 @@
     link.textContent = "Dog Walker Directory";
   });
 
+  if (!location.pathname.startsWith("/admin")) {
+    document.querySelectorAll(".nav-links").forEach((nav) => {
+      if (nav.querySelector('a[href*="top-dog-competition"]')) return;
+      const link = document.createElement("a");
+      link.href = "/top-dog-competition.html";
+      link.textContent = "Top Dog Competition";
+      const account = [...nav.querySelectorAll("a")].find((item) => /account/i.test(item.textContent));
+      nav.insertBefore(link, account || null);
+    });
+  }
+
   if (toggle && links) {
     if (!links.id) links.id = "primary-navigation";
     toggle.setAttribute("aria-controls", links.id);
