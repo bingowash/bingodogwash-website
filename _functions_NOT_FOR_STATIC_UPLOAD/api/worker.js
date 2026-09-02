@@ -83,6 +83,7 @@ const ETSY_PRODUCTS_PATH = "/api/etsy/products";
 const ETSY_CONNECT_PATH = "/api/etsy/connect";
 const ETSY_CALLBACK_PATH = "/api/etsy/callback";
 const ETSY_OWNED_SHOP_PROVENANCE = "owned_shop";
+const ETSY_CREATOR_STOREFRONT_PROVENANCE = "creator_storefront";
 // "HE LOVE" is the Etsy shop-section title. The public edit has the canonical
 // collection name "THE LOVE"; keep the translation at the API boundary so
 // Etsy remains the one source for the underlying section membership.
@@ -2751,8 +2752,8 @@ async function handlePublicEtsyProducts(request, url) {
   const ownedCollections = ETSY_BINGO_EDIT_COLLECTIONS.map(() => "?").join(",");
   const baseSql = `SELECT * FROM etsy_products WHERE source = 'etsy' AND ${cursor ? "(updated_at < ? OR (updated_at = ? AND id < ?)) AND " : ""}etsy_feed_provenance = ? AND bingo_collection IN (${ownedCollections}) AND admin_status = 'published' AND public_visibility = 1 AND affiliate_review_status = 'approved' AND affiliate_verification_status = 'match'`;
   const baseValues = cursor
-    ? [cursor.updatedAt, cursor.updatedAt, cursor.id, ETSY_OWNED_SHOP_PROVENANCE, ...ETSY_BINGO_EDIT_COLLECTIONS]
-    : [ETSY_OWNED_SHOP_PROVENANCE, ...ETSY_BINGO_EDIT_COLLECTIONS];
+    ? [cursor.updatedAt, cursor.updatedAt, cursor.id, ETSY_CREATOR_STOREFRONT_PROVENANCE, ...ETSY_BINGO_EDIT_COLLECTIONS]
+    : [ETSY_CREATOR_STOREFRONT_PROVENANCE, ...ETSY_BINGO_EDIT_COLLECTIONS];
   const statement = giftCardDb().prepare(cursor
     ? `${baseSql} ORDER BY updated_at DESC, id DESC LIMIT ?`
     : `${baseSql} ORDER BY updated_at DESC, id DESC LIMIT ?`).bind(...baseValues, limit + 1);
@@ -2786,7 +2787,7 @@ function normalizeBingoEtsyCollection(value) {
 }
 
 function isOwnedBingoEtsyProduct(product) {
-  return product?.etsy_feed_provenance === ETSY_OWNED_SHOP_PROVENANCE
+  return product?.etsy_feed_provenance === ETSY_CREATOR_STOREFRONT_PROVENANCE
     && Boolean(normalizeBingoEtsyCollection(product?.bingo_collection));
 }
 
@@ -2842,7 +2843,7 @@ async function handlePublicBingoDogEditProducts(request) {
   const placeholders = ETSY_BINGO_EDIT_COLLECTIONS.map(() => "?").join(",");
   const result = await giftCardDb()
     .prepare(`SELECT * FROM etsy_products WHERE source = 'etsy' AND etsy_feed_provenance = ? AND bingo_collection IN (${placeholders}) AND admin_status = 'published' AND public_visibility = 1 AND affiliate_review_status = 'approved' AND affiliate_verification_status = 'match' ORDER BY bingo_collection ASC, CASE WHEN bingo_slot IS NULL THEN 1 ELSE 0 END ASC, bingo_slot ASC, updated_at DESC, id DESC LIMIT 200`)
-    .bind(ETSY_OWNED_SHOP_PROVENANCE, ...ETSY_BINGO_EDIT_COLLECTIONS)
+    .bind(ETSY_CREATOR_STOREFRONT_PROVENANCE, ...ETSY_BINGO_EDIT_COLLECTIONS)
     .all();
   const collections = bingoEditCollectionRows(result.results || []).map((collection) => ({
     ...collection,
@@ -3132,7 +3133,7 @@ async function adminEtsyProducts(request, url) {
   const query = cleanText(url.searchParams.get("q"), 160);
   const values = [];
   let where = "WHERE source = 'etsy' AND etsy_feed_provenance = ?";
-  values.push(ETSY_OWNED_SHOP_PROVENANCE);
+  values.push(ETSY_CREATOR_STOREFRONT_PROVENANCE);
   if (status) {
     where += " AND admin_status = ?";
     values.push(status);
@@ -3252,7 +3253,7 @@ async function adminEtsyProductAction(request, action) {
   const identifierPlaceholders = ids.map(() => "?").join(",");
   const selectedResult = await giftCardDb()
     .prepare(`SELECT * FROM etsy_products WHERE source = 'etsy' AND etsy_feed_provenance = ? AND (id IN (${identifierPlaceholders}) OR external_listing_id IN (${identifierPlaceholders}))`)
-    .bind(ETSY_OWNED_SHOP_PROVENANCE, ...ids, ...ids)
+    .bind(ETSY_CREATOR_STOREFRONT_PROVENANCE, ...ids, ...ids)
     .all();
   const selectedProducts = selectedResult.results || [];
   const selectedIds = [...new Set(selectedProducts.map((product) => cleanText(product.id, 120)).filter(Boolean))];
@@ -3279,7 +3280,7 @@ async function adminEtsyProductAction(request, action) {
   const placeholders = selectedIds.map(() => "?").join(",");
   await giftCardDb()
     .prepare(`UPDATE etsy_products SET admin_status = ?, public_visibility = ?, updated_at = ? WHERE id IN (${placeholders}) AND source = 'etsy' AND etsy_feed_provenance = ?`)
-    .bind(update.status, update.visibility, new Date().toISOString(), ...selectedIds, ETSY_OWNED_SHOP_PROVENANCE)
+    .bind(update.status, update.visibility, new Date().toISOString(), ...selectedIds, ETSY_CREATOR_STOREFRONT_PROVENANCE)
     .run();
   await auditSiteEvent(request, update.audit, "etsy_product", selectedIds.join(","), "", update.status, "ok", "");
   return corsResponse(request, { ok: true, status: update.status, publicVisibility: Boolean(update.visibility) });
@@ -3294,7 +3295,7 @@ async function selectedOwnedBingoEtsyProducts(ids) {
   const placeholders = ids.map(() => "?").join(",");
   const result = await giftCardDb()
     .prepare(`SELECT * FROM etsy_products WHERE source = 'etsy' AND etsy_feed_provenance = ? AND (id IN (${placeholders}) OR external_listing_id IN (${placeholders}))`)
-    .bind(ETSY_OWNED_SHOP_PROVENANCE, ...ids, ...ids)
+    .bind(ETSY_CREATOR_STOREFRONT_PROVENANCE, ...ids, ...ids)
     .all();
   return result.results || [];
 }
@@ -3302,7 +3303,7 @@ async function selectedOwnedBingoEtsyProducts(ids) {
 async function bingoPublishedRows() {
   const result = await giftCardDb()
     .prepare("SELECT id, bingo_collection, admin_status, public_visibility FROM etsy_products WHERE source = 'etsy' AND etsy_feed_provenance = ?")
-    .bind(ETSY_OWNED_SHOP_PROVENANCE)
+    .bind(ETSY_CREATOR_STOREFRONT_PROVENANCE)
     .all();
   return result.results || [];
 }
@@ -3363,7 +3364,7 @@ async function publishBingoEtsyProducts(request, products) {
   const placeholders = selectedIds.map(() => "?").join(",");
   await giftCardDb()
     .prepare(`UPDATE etsy_products SET admin_status = 'published', public_visibility = 1, updated_at = ? WHERE id IN (${placeholders}) AND source = 'etsy' AND etsy_feed_provenance = ?`)
-    .bind(new Date().toISOString(), ...selectedIds, ETSY_OWNED_SHOP_PROVENANCE)
+    .bind(new Date().toISOString(), ...selectedIds, ETSY_CREATOR_STOREFRONT_PROVENANCE)
     .run();
   await auditSiteEvent(request, "etsy-product-publish", "etsy_product", selectedIds.join(","), "", "published", "ok", "");
   return corsResponse(request, { ok: true, published: selectedIds.length, status: "published", publicVisibility: true, collectionCounts: Object.fromEntries(capacity.counts) });
@@ -3379,7 +3380,7 @@ async function adminEtsyAssignBingoCollection(request, input) {
   const placeholders = productIds.map(() => "?").join(",");
   await giftCardDb()
     .prepare(`UPDATE etsy_products SET bingo_collection = ?, bingo_slot = NULL, updated_at = ? WHERE id IN (${placeholders}) AND source = 'etsy' AND etsy_feed_provenance = ?`)
-    .bind(collection, new Date().toISOString(), ...productIds, ETSY_OWNED_SHOP_PROVENANCE)
+    .bind(collection, new Date().toISOString(), ...productIds, ETSY_CREATOR_STOREFRONT_PROVENANCE)
     .run();
   await auditSiteEvent(request, "etsy-bingo-collection-assign", "etsy_product", productIds.join(","), "", collection, "ok", "");
   return corsResponse(request, { ok: true, assigned: productIds.length, collection });
@@ -3401,9 +3402,9 @@ async function adminEtsyReplaceBingoProduct(request, input) {
   if (capacity.blocked.length) return corsResponse(request, { ok: false, error: capacity.blocked[0].reason, blocked: capacity.blocked }, 409);
   const now = new Date().toISOString();
   await giftCardDb().prepare("UPDATE etsy_products SET admin_status = 'hidden', public_visibility = 0, updated_at = ? WHERE id = ? AND source = 'etsy' AND etsy_feed_provenance = ?")
-    .bind(now, removed.id, ETSY_OWNED_SHOP_PROVENANCE).run();
+    .bind(now, removed.id, ETSY_CREATOR_STOREFRONT_PROVENANCE).run();
   await giftCardDb().prepare("UPDATE etsy_products SET bingo_collection = ?, bingo_slot = NULL, admin_status = 'published', public_visibility = 1, updated_at = ? WHERE id = ? AND source = 'etsy' AND etsy_feed_provenance = ?")
-    .bind(collection, now, added.id, ETSY_OWNED_SHOP_PROVENANCE).run();
+    .bind(collection, now, added.id, ETSY_CREATOR_STOREFRONT_PROVENANCE).run();
   await auditSiteEvent(request, "etsy-bingo-product-replace", "etsy_product", `${removed.id},${added.id}`, removed.id, added.id, "ok", collection);
   return corsResponse(request, { ok: true, replaced: removed.id, published: added.id, collection, collectionCounts: Object.fromEntries(capacity.counts) });
 }
@@ -3546,8 +3547,7 @@ async function adminEtsyImportListing(request, input) {
   if (!reference.listingId) return corsResponse(request, { ok: false, error: "Enter a valid HTTPS Etsy listing URL or numeric listing ID." }, 400);
   try {
     const listing = await fetchExactEtsyListing(reference.listingId);
-    const { shopId, section } = await ownedBingoEtsySectionForListing(listing);
-    await upsertEtsyListing(listing, shopId, reference.listingUrl, section);
+    await upsertCreatorStorefrontEtsyListing(listing, reference.listingUrl);
     const stored = await giftCardDb()
       .prepare("SELECT * FROM etsy_products WHERE source = 'etsy' AND external_listing_id = ? LIMIT 1")
       .bind(reference.listingId)
@@ -3566,8 +3566,8 @@ async function etsyAffiliateProduct(input) {
   if (!id) return null;
   const externalListingId = id.startsWith("etsy-") ? id.slice(5) : id;
   return giftCardDb()
-    .prepare("SELECT * FROM etsy_products WHERE source = 'etsy' AND (id = ? OR external_listing_id = ?) LIMIT 1")
-    .bind(id, externalListingId)
+    .prepare("SELECT * FROM etsy_products WHERE source = 'etsy' AND etsy_feed_provenance = ? AND (id = ? OR external_listing_id = ?) LIMIT 1")
+    .bind(ETSY_CREATOR_STOREFRONT_PROVENANCE, id, externalListingId)
     .first();
 }
 
@@ -3729,11 +3729,11 @@ async function bulkEtsyProducts(input) {
   const ids = bulkEtsyIds(input);
   if (ids.length) {
     const placeholders = ids.map(() => "?").join(",");
-    const result = await giftCardDb().prepare(`SELECT * FROM etsy_products WHERE source = 'etsy' AND etsy_feed_provenance = ? AND id IN (${placeholders}) ORDER BY updated_at DESC`).bind(ETSY_OWNED_SHOP_PROVENANCE, ...ids).all();
+    const result = await giftCardDb().prepare(`SELECT * FROM etsy_products WHERE source = 'etsy' AND etsy_feed_provenance = ? AND id IN (${placeholders}) ORDER BY updated_at DESC`).bind(ETSY_CREATOR_STOREFRONT_PROVENANCE, ...ids).all();
     return result.results || [];
   }
   const afterId = cleanText(input.afterId, 120);
-  const result = await giftCardDb().prepare("SELECT * FROM etsy_products WHERE source = 'etsy' AND etsy_feed_provenance = ? AND admin_status NOT IN ('archived') AND id > ? ORDER BY id ASC LIMIT 50").bind(ETSY_OWNED_SHOP_PROVENANCE, afterId).all();
+  const result = await giftCardDb().prepare("SELECT * FROM etsy_products WHERE source = 'etsy' AND etsy_feed_provenance = ? AND admin_status NOT IN ('archived') AND id > ? ORDER BY id ASC LIMIT 50").bind(ETSY_CREATOR_STOREFRONT_PROVENANCE, afterId).all();
   return result.results || [];
 }
 
@@ -3931,6 +3931,45 @@ async function runEtsySync(syncType, actor) {
   }
 }
 
+async function upsertCreatorStorefrontEtsyListing(listing, requestedListingUrl = "") {
+  const shopId = listing?.shop_id || listing?.shopId || "";
+  const product = normalizeEtsyImport(listing, shopId);
+  if (!product.externalListingId || !product.title || !product.listingUrl) {
+    throw new Error("Etsy listing is missing required id, title or URL.");
+  }
+
+  const requestedReference = etsyListingReference(requestedListingUrl);
+  const canonicalOriginalUrl = requestedReference.listingId === product.externalListingId
+    ? requestedReference.listingUrl
+    : product.listingUrl;
+  const existing = await giftCardDb()
+    .prepare("SELECT id, original_listing_url, bingo_collection FROM etsy_products WHERE source = 'etsy' AND external_listing_id = ?")
+    .bind(product.externalListingId)
+    .first();
+  const now = new Date().toISOString();
+
+  if (existing) {
+    const storedOriginalUrl = cleanEtsyUrl(existing.original_listing_url);
+    const originalListingUrl = etsyListingIdFromUrl(storedOriginalUrl) === product.externalListingId
+      ? storedOriginalUrl
+      : canonicalOriginalUrl;
+    const storedCollection = normalizeBingoEtsyCollection(existing.bingo_collection);
+
+    await giftCardDb()
+      .prepare(`UPDATE etsy_products SET etsy_shop_id = ?, etsy_feed_provenance = ?, etsy_shop_section_id = NULL, etsy_shop_section_name = '', bingo_collection = ?, bingo_slot = NULL, title = ?, description = ?, price = ?, currency = ?, quantity = ?, availability = ?, state = ?, listing_url = ?, original_listing_url = ?, primary_image = ?, additional_images = ?, tags = ?, category = ?, personalisation_available = ?, variations = ?, created_time = ?, updated_time = ?, last_synced_at = ?, admin_status = 'review', public_visibility = 0, affiliate_review_status = 'draft', affiliate_verified_url = '', affiliate_verified_at = NULL, affiliate_verification_status = '', affiliate_verification_error = '', sync_error = '', raw_source_payload = ?, updated_at = ? WHERE id = ? AND source = 'etsy'`)
+      .bind(product.shopId, ETSY_CREATOR_STOREFRONT_PROVENANCE, storedCollection || null, product.title, product.description, product.price, product.currency, product.quantity, product.availability, product.state, product.listingUrl, originalListingUrl, product.primaryImage, product.additionalImages, product.tags, product.category, product.personalisationAvailable, product.variations, product.createdTime, product.updatedTime, now, product.raw, now, existing.id)
+      .run();
+    return "updated";
+  }
+
+  await giftCardDb()
+    .prepare(`INSERT INTO etsy_products (id, source, external_listing_id, etsy_shop_id, etsy_feed_provenance, etsy_shop_section_id, etsy_shop_section_name, bingo_collection, bingo_slot, title, display_title, description, display_description, price, currency, quantity, availability, state, listing_url, original_listing_url, primary_image, additional_images, tags, category, personalisation_available, variations, created_time, updated_time, last_synced_at, admin_status, public_visibility, affiliate_review_status, affiliate_verification_status, sync_error, raw_source_payload, created_at, updated_at)
+      VALUES (?, 'etsy', ?, ?, ?, NULL, '', NULL, NULL, ?, '', ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'review', 0, 'draft', '', '', ?, ?, ?)`)
+    .bind(crypto.randomUUID(), product.externalListingId, product.shopId, ETSY_CREATOR_STOREFRONT_PROVENANCE, product.title, product.description, product.price, product.currency, product.quantity, product.availability, product.state, product.listingUrl, canonicalOriginalUrl, product.primaryImage, product.additionalImages, product.tags, product.category, product.personalisationAvailable, product.variations, product.createdTime, product.updatedTime, now, product.raw, now, now)
+    .run();
+
+  return "imported";
+}
 async function upsertEtsyListing(listing, shopId, requestedListingUrl = "", bingoSection = null) {
   const product = normalizeEtsyImport(listing, shopId);
   if (!product.externalListingId || !product.title || !product.listingUrl) {
@@ -4101,7 +4140,7 @@ async function etsyConnection() {
 async function etsyProductCounts() {
   const result = await giftCardDb()
     .prepare("SELECT admin_status, public_visibility, COUNT(*) AS count, SUM(CASE WHEN admin_status = 'published' AND public_visibility = 1 AND (affiliate_url IS NULL OR TRIM(affiliate_url) = '') THEN 1 ELSE 0 END) AS published_missing_affiliate_url FROM etsy_products WHERE source = 'etsy' AND etsy_feed_provenance = ? GROUP BY admin_status, public_visibility")
-    .bind(ETSY_OWNED_SHOP_PROVENANCE)
+    .bind(ETSY_CREATOR_STOREFRONT_PROVENANCE)
     .all();
   const counts = { imported: 0, review: 0, approved: 0, published: 0, hidden: 0, unpublished: 0, error: 0, archived: 0, publishedMissingAffiliateUrl: 0 };
   for (const row of result.results || []) {

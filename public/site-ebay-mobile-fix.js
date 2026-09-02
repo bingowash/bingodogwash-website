@@ -2659,6 +2659,12 @@ document.addEventListener("click", (event) => {
     return;
   }
 
+  const importEtsyListing = event.target.closest("[data-admin-etsy-import]");
+  if (importEtsyListing) {
+    importAdminEtsyListing();
+    return;
+  }
+
   const clearEtsySearch = event.target.closest("[data-admin-etsy-search-clear]");
   if (clearEtsySearch) {
     const input = document.querySelector("[data-admin-etsy-search] [name='query']");
@@ -2840,6 +2846,35 @@ async function loadAdminEtsy() {
   }
 }
 
+async function importAdminEtsyListing() {
+  const form = document.querySelector("[data-admin-etsy-search]");
+  const status = document.querySelector("[data-admin-etsy-search-status]");
+  const button = document.querySelector("[data-admin-etsy-import]");
+  if (!form) return;
+  const reference = form.elements.query.value.trim();
+  if (!reference) {
+    if (status) status.textContent = "Paste an Etsy listing URL or listing ID first.";
+    return;
+  }
+
+  if (button) button.disabled = true;
+  if (status) status.textContent = "Importing exact Etsy listing...";
+  try {
+    const data = await adminCoreJson(`${adminEtsyApiBase}/import-listing`, {
+      method: "POST",
+      body: JSON.stringify({
+        listingId: reference,
+        listingUrl: reference
+      })
+    });
+    if (status) status.textContent = data.message || "Etsy listing imported for review. Nothing was published.";
+    await loadAdminEtsy();
+  } catch (error) {
+    if (status) status.textContent = error.message || "Etsy listing import failed.";
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
 async function searchAdminEtsyProducts() {
   const form = document.querySelector("[data-admin-etsy-search]");
   const target = document.querySelector("[data-admin-etsy-products]");
@@ -2876,7 +2911,7 @@ function renderAdminEtsyProducts(productList) {
   const target = document.querySelector("[data-admin-etsy-products]");
   if (!target) return;
   if (!productList.length) {
-    target.innerHTML = `<div class="mini-row"><strong>No configured Etsy shop products</strong><span>Connect Etsy and run sync when the feature is enabled.</span></div>`;
+    target.innerHTML = `<div class="mini-row"><strong>No Bingo Dog Edit products yet</strong><span>Import an exact Etsy listing above, then assign its collection and verify its affiliate link before publishing.</span></div>`;
     return;
   }
 
