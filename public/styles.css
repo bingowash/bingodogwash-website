@@ -3656,3 +3656,84 @@ body:has(.competition-thanks) .btn { box-shadow: 0 10px 22px rgba(15, 42, 74, .1
   .home-hero-inner { grid-template-columns: minmax(0, 1fr); }
   .home-hero-visual { width: 100%; min-height: 0; aspect-ratio: 1402 / 1122; }
 }
+
+/* Admin Etsy product card layout */
+[data-admin-etsy-products] .admin-product-row {
+  grid-template-columns:
+    minmax(220px, 2fr)
+    minmax(120px, 1fr)
+    minmax(90px, .65fr)
+    minmax(100px, .75fr);
+  align-items: start;
+  gap: 14px;
+  min-width: 0;
+}
+
+[data-admin-etsy-products] .admin-product-row > * {
+  min-width: 0;
+}
+
+[data-admin-etsy-products] .check-row span,
+[data-admin-etsy-products] .check-row strong,
+[data-admin-etsy-products] .check-row small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+[data-admin-etsy-products] .admin-etsy-verification {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 18px;
+  width: 100%;
+  margin: 4px 0 0;
+}
+
+[data-admin-etsy-products] .admin-etsy-verification > div {
+  min-width: 0;
+}
+
+[data-admin-etsy-products] .admin-etsy-verification > div:nth-child(1),
+[data-admin-etsy-products] .admin-etsy-verification > div:nth-child(2),
+[data-admin-etsy-products] .admin-etsy-verification > div:nth-child(6) {
+  grid-column: 1 / -1;
+}
+
+[data-admin-etsy-products] .admin-etsy-verification dt {
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+
+[data-admin-etsy-products] .admin-etsy-verification dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+[data-admin-etsy-products] .admin-etsy-verification a {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+[data-admin-etsy-products] .admin-row-actions {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 900px) {
+  [data-admin-etsy-products] .admin-product-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 620px) {
+  [data-admin-etsy-products] .admin-product-row,
+  [data-admin-etsy-products] .admin-etsy-verification {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  [data-admin-etsy-products] .admin-product-row > *,
+  [data-admin-etsy-products] .admin-etsy-verification > div {
+    grid-column: 1 / -1;
+  }
+}
