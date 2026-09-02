@@ -3521,16 +3521,50 @@ function canonicalEtsyStorefrontRecord(product) {
 }
 
 function etsyListingReference(value) {
-  const raw = cleanText(value, 500);
-  if (/^\d{1,20}$/.test(raw)) return { listingId: raw, listingUrl: "" };
+  const raw = cleanText(value, 2000);
+  if (/^\d{1,20}$/.test(raw)) return { listingId: raw, listingUrl: "", affiliateUrl: "" };
   const prefixed = raw.match(/^etsy-(\d{1,20})$/i);
-  if (prefixed) return { listingId: prefixed[1], listingUrl: "" };
-  const listingUrl = cleanEtsyUrl(raw);
-  if (!listingUrl) return { listingId: "", listingUrl: "" };
-  const listingId = new URL(listingUrl).pathname.match(/\/listing\/(\d{1,20})(?:\/|$)/)?.[1] || "";
-  return listingId ? { listingId, listingUrl } : { listingId: "", listingUrl: "" };
-}
+  if (prefixed) return { listingId: prefixed[1], listingUrl: "", affiliateUrl: "" };
 
+  try {
+    const shareUrl = new URL(raw);
+    if (
+      shareUrl.protocol === "https:"
+      && shareUrl.hostname.toLowerCase() === "www.etsy.com"
+      && shareUrl.pathname === "/strfrnt/sd5a8vu67gupclza/share"
+      && !shareUrl.username
+      && !shareUrl.password
+    ) {
+      const listingPageId = cleanText(shareUrl.searchParams.get("listing_page_id"), 20);
+      const destination = cleanEtsyUrl(shareUrl.searchParams.get("url"));
+      const destinationListingId = destination
+        ? new URL(destination).pathname.match(/\/listing\/(\d{1,20})(?:\/|$)/)?.[1] || ""
+        : "";
+
+      if (
+        /^\d{1,20}$/.test(listingPageId)
+        && destinationListingId === listingPageId
+      ) {
+        return {
+          listingId: listingPageId,
+          listingUrl: destination,
+          affiliateUrl: shareUrl.toString()
+        };
+      }
+
+      return { listingId: "", listingUrl: "", affiliateUrl: "" };
+    }
+  } catch {
+    // Fall through to the normal Etsy listing parser.
+  }
+
+  const listingUrl = cleanEtsyUrl(raw);
+  if (!listingUrl) return { listingId: "", listingUrl: "", affiliateUrl: "" };
+  const listingId = new URL(listingUrl).pathname.match(/\/listing\/(\d{1,20})(?:\/|$)/)?.[1] || "";
+  return listingId
+    ? { listingId, listingUrl, affiliateUrl: "" }
+    : { listingId: "", listingUrl: "", affiliateUrl: "" };
+}
 async function fetchExactEtsyListing(listingId) {
   const id = cleanText(listingId, 20);
   if (!/^\d{1,20}$/.test(id)) throw new Error("A valid Etsy listing ID is required.");
@@ -3547,7 +3581,7 @@ async function adminEtsyImportListing(request, input) {
   if (!reference.listingId) return corsResponse(request, { ok: false, error: "Enter a valid HTTPS Etsy listing URL or numeric listing ID." }, 400);
   try {
     const listing = await fetchExactEtsyListing(reference.listingId);
-    await upsertCreatorStorefrontEtsyListing(listing, reference.listingUrl);
+    await upsertCreatorStorefrontEtsyListing(listing, reference.affiliateUrl || reference.listingUrl);
     const stored = await giftCardDb()
       .prepare("SELECT * FROM etsy_products WHERE source = 'etsy' AND external_listing_id = ? LIMIT 1")
       .bind(reference.listingId)
@@ -3939,6 +3973,9 @@ async function upsertCreatorStorefrontEtsyListing(listing, requestedListingUrl =
   }
 
   const requestedReference = etsyListingReference(requestedListingUrl);
+  const creatorAffiliateUrl = requestedReference.listingId === product.externalListingId
+    ? cleanAffiliateUrl(requestedReference.affiliateUrl)
+    : "";
   const canonicalOriginalUrl = requestedReference.listingId === product.externalListingId
     ? requestedReference.listingUrl
     : product.listingUrl;
@@ -3956,16 +3993,16 @@ async function upsertCreatorStorefrontEtsyListing(listing, requestedListingUrl =
     const storedCollection = normalizeBingoEtsyCollection(existing.bingo_collection);
 
     await giftCardDb()
-      .prepare(`UPDATE etsy_products SET etsy_shop_id = ?, etsy_feed_provenance = ?, etsy_shop_section_id = NULL, etsy_shop_section_name = '', bingo_collection = ?, bingo_slot = NULL, title = ?, description = ?, price = ?, currency = ?, quantity = ?, availability = ?, state = ?, listing_url = ?, original_listing_url = ?, primary_image = ?, additional_images = ?, tags = ?, category = ?, personalisation_available = ?, variations = ?, created_time = ?, updated_time = ?, last_synced_at = ?, admin_status = 'review', public_visibility = 0, affiliate_review_status = 'draft', affiliate_verified_url = '', affiliate_verified_at = NULL, affiliate_verification_status = '', affiliate_verification_error = '', sync_error = '', raw_source_payload = ?, updated_at = ? WHERE id = ? AND source = 'etsy'`)
-      .bind(product.shopId, ETSY_CREATOR_STOREFRONT_PROVENANCE, storedCollection || null, product.title, product.description, product.price, product.currency, product.quantity, product.availability, product.state, product.listingUrl, originalListingUrl, product.primaryImage, product.additionalImages, product.tags, product.category, product.personalisationAvailable, product.variations, product.createdTime, product.updatedTime, now, product.raw, now, existing.id)
+      .prepare(`UPDATE etsy_products SET etsy_shop_id = ?, etsy_feed_provenance = ?, etsy_shop_section_id = NULL, etsy_shop_section_name = '', bingo_collection = ?, bingo_slot = NULL, title = ?, description = ?, price = ?, currency = ?, quantity = ?, availability = ?, state = ?, listing_url = ?, original_listing_url = ?, primary_image = ?, additional_images = ?, tags = ?, category = ?, personalisation_available = ?, variations = ?, created_time = ?, updated_time = ?, last_synced_at = ?, admin_status = 'review', public_visibility = 0, affiliate_url = CASE WHEN ? <> '' THEN ? ELSE affiliate_url END, affiliate_provider = CASE WHEN ? <> '' THEN ? ELSE affiliate_provider END, affiliate_program = CASE WHEN ? <> '' THEN ? ELSE affiliate_program END, affiliate_storefront = CASE WHEN ? <> '' THEN ? ELSE affiliate_storefront END, affiliate_review_status = 'draft', affiliate_verified_url = '', affiliate_verified_at = NULL, affiliate_verification_status = '', affiliate_verification_error = '', sync_error = '', raw_source_payload = ?, updated_at = ? WHERE id = ? AND source = 'etsy'`)
+      .bind(product.shopId, ETSY_CREATOR_STOREFRONT_PROVENANCE, storedCollection || null, product.title, product.description, product.price, product.currency, product.quantity, product.availability, product.state, product.listingUrl, originalListingUrl, product.primaryImage, product.additionalImages, product.tags, product.category, product.personalisationAvailable, product.variations, product.createdTime, product.updatedTime, now, creatorAffiliateUrl, creatorAffiliateUrl, creatorAffiliateUrl, ETSY_AFFILIATE_PROVIDER, creatorAffiliateUrl, ETSY_AFFILIATE_PROGRAM, creatorAffiliateUrl, ETSY_AFFILIATE_STOREFRONT, product.raw, now, existing.id)
       .run();
     return "updated";
   }
 
   await giftCardDb()
-    .prepare(`INSERT INTO etsy_products (id, source, external_listing_id, etsy_shop_id, etsy_feed_provenance, etsy_shop_section_id, etsy_shop_section_name, bingo_collection, bingo_slot, title, display_title, description, display_description, price, currency, quantity, availability, state, listing_url, original_listing_url, primary_image, additional_images, tags, category, personalisation_available, variations, created_time, updated_time, last_synced_at, admin_status, public_visibility, affiliate_review_status, affiliate_verification_status, sync_error, raw_source_payload, created_at, updated_at)
-      VALUES (?, 'etsy', ?, ?, ?, NULL, '', NULL, NULL, ?, '', ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'review', 0, 'draft', '', '', ?, ?, ?)`)
-    .bind(crypto.randomUUID(), product.externalListingId, product.shopId, ETSY_CREATOR_STOREFRONT_PROVENANCE, product.title, product.description, product.price, product.currency, product.quantity, product.availability, product.state, product.listingUrl, canonicalOriginalUrl, product.primaryImage, product.additionalImages, product.tags, product.category, product.personalisationAvailable, product.variations, product.createdTime, product.updatedTime, now, product.raw, now, now)
+    .prepare(`INSERT INTO etsy_products (id, source, external_listing_id, etsy_shop_id, etsy_feed_provenance, etsy_shop_section_id, etsy_shop_section_name, bingo_collection, bingo_slot, title, display_title, description, display_description, price, currency, quantity, availability, state, listing_url, original_listing_url, primary_image, additional_images, tags, category, personalisation_available, variations, created_time, updated_time, last_synced_at, admin_status, public_visibility, affiliate_url, affiliate_provider, affiliate_program, affiliate_storefront, affiliate_review_status, affiliate_verification_status, sync_error, raw_source_payload, created_at, updated_at)
+      VALUES (?, 'etsy', ?, ?, ?, NULL, '', NULL, NULL, ?, '', ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'review', 0, ?, ?, ?, ?, 'draft', '', '', ?, ?, ?)`)
+    .bind(crypto.randomUUID(), product.externalListingId, product.shopId, ETSY_CREATOR_STOREFRONT_PROVENANCE, product.title, product.description, product.price, product.currency, product.quantity, product.availability, product.state, product.listingUrl, canonicalOriginalUrl, product.primaryImage, product.additionalImages, product.tags, product.category, product.personalisationAvailable, product.variations, product.createdTime, product.updatedTime, now, creatorAffiliateUrl, creatorAffiliateUrl ? ETSY_AFFILIATE_PROVIDER : '', creatorAffiliateUrl ? ETSY_AFFILIATE_PROGRAM : '', creatorAffiliateUrl ? ETSY_AFFILIATE_STOREFRONT : '', product.raw, now, now)
     .run();
 
   return "imported";

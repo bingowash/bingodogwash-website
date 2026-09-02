@@ -1396,6 +1396,30 @@ test("exact Etsy listing references accept only IDs and HTTPS Etsy listing URLs"
   }
 });
 
+test("Creator Storefront share links preserve the exact affiliate candidate", () => {
+  const shareUrl = "https://www.etsy.com/strfrnt/sd5a8vu67gupclza/share?url=https%3A%2F%2Fwww.etsy.com%2Fuk%2Flisting%2F785798142%2Fpersonalised-handmade-pet-print-custom&listing_page_id=785798142";
+  const reference = etsyTestHelpers.etsyListingReference(shareUrl);
+
+  assert.equal(reference.listingId, "785798142");
+  assert.equal(reference.listingUrl, "https://www.etsy.com/uk/listing/785798142/personalised-handmade-pet-print-custom");
+  assert.equal(reference.affiliateUrl, shareUrl);
+});
+
+test("Creator Storefront share links reject mismatched or untrusted listing references", () => {
+  const invalidValues = [
+    "https://www.etsy.com/strfrnt/sd5a8vu67gupclza/share?url=https%3A%2F%2Fwww.etsy.com%2Fuk%2Flisting%2F785798142%2Fexample&listing_page_id=785798143",
+    "https://www.etsy.com/strfrnt/wrongstorefront/share?url=https%3A%2F%2Fwww.etsy.com%2Fuk%2Flisting%2F785798142%2Fexample&listing_page_id=785798142",
+    "https://www.etsy.com/strfrnt/sd5a8vu67gupclza/share?url=https%3A%2F%2Fexample.com%2Flisting%2F785798142%2Fexample&listing_page_id=785798142",
+    "https://www.etsy.com/strfrnt/sd5a8vu67gupclza/share?url=http%3A%2F%2Fwww.etsy.com%2Fuk%2Flisting%2F785798142%2Fexample&listing_page_id=785798142",
+    "https://www.etsy.com/strfrnt/sd5a8vu67gupclza/share?url=https%3A%2F%2Fwww.etsy.com%2Fuk%2Flisting%2F785798142%2Fexample&product_page_id=785798142"
+  ];
+
+  for (const value of invalidValues) {
+    const reference = etsyTestHelpers.etsyListingReference(value);
+    assert.equal(reference.listingId, "");
+    assert.equal(reference.affiliateUrl, "");
+  }
+});
 test("Etsy admin routes allow only approved admin CORS origins", async () => {
   const approved = await worker.fetch(new Request("https://bingodogwash.com/api/admin/etsy/products/affiliate-generate-verify", { method: "OPTIONS", headers: { Origin: "https://admin.bingodogwash.com", "Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "authorization,content-type,x-admin-actor" } }), {});
   assert.equal(approved.status, 204);
@@ -1531,6 +1555,38 @@ test("exact Etsy import remains review/private and preserves affiliate columns",
   assert.doesNotMatch(exactImport, /admin_status\s*=\s*'published'|public_visibility\s*=\s*1|method:\s*"(?:POST|PUT|PATCH|DELETE)"/i);
 });
 
+test("Creator Storefront exact import stores the affiliate candidate without publishing", () => {
+  const source = readFileSync(new URL("../_functions_NOT_FOR_STATIC_UPLOAD/api/worker.js", import.meta.url), "utf8");
+  const creatorStart = source.indexOf("async function upsertCreatorStorefrontEtsyListing");
+  const legacyStart = source.indexOf("async function upsertEtsyListing", creatorStart + 1);
+
+  assert.ok(creatorStart >= 0);
+  assert.ok(legacyStart > creatorStart);
+
+  const creatorUpsert = source.slice(creatorStart, legacyStart);
+
+  assert.match(
+    creatorUpsert,
+    /const creatorAffiliateUrl = requestedReference\.listingId === product\.externalListingId/
+  );
+  assert.match(
+    creatorUpsert,
+    /cleanAffiliateUrl\(requestedReference\.affiliateUrl\)/
+  );
+  assert.match(creatorUpsert, /affiliate_url = CASE WHEN \? <> '' THEN \? ELSE affiliate_url END/);
+  assert.match(creatorUpsert, /affiliate_provider = CASE WHEN \? <> '' THEN \? ELSE affiliate_provider END/);
+  assert.match(creatorUpsert, /affiliate_program = CASE WHEN \? <> '' THEN \? ELSE affiliate_program END/);
+  assert.match(creatorUpsert, /affiliate_storefront = CASE WHEN \? <> '' THEN \? ELSE affiliate_storefront END/);
+  assert.match(creatorUpsert, /ETSY_AFFILIATE_PROVIDER/);
+  assert.match(creatorUpsert, /ETSY_AFFILIATE_PROGRAM/);
+  assert.match(creatorUpsert, /ETSY_AFFILIATE_STOREFRONT/);
+  assert.match(creatorUpsert, /'review', 0/);
+  assert.match(creatorUpsert, /affiliate_review_status = 'draft'/);
+  assert.doesNotMatch(
+    creatorUpsert,
+    /admin_status\s*=\s*'published'|public_visibility\s*=\s*1/
+  );
+});
 test("affiliate URL policy accepts HTTPS tracking URLs and rejects unsafe schemes", () => {
   assert.equal(etsyTestHelpers.cleanAffiliateUrl("https://click.example.net/track?id=approved"), "https://click.example.net/track?id=approved");
   for (const unsafe of ["javascript:alert(1)", "data:text/html,test", "http://example.net/track", "ftp://example.net/file"]) {
