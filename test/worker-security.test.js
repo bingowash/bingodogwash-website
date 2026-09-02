@@ -725,7 +725,7 @@ test("Top Dog Turnstile verification requires successful matching action and hos
   }
 });
 
-test("Bingo Dog Edit publication requires verified affiliate provenance from the configured shop", () => {
+test("Bingo Dog Edit publication requires verified Creator Storefront affiliate provenance", () => {
   const listingUrl = "https://www.etsy.com/uk/listing/987654321/dog-walk-accessory";
   const affiliateUrl = "https://click.linksynergy.com/deeplink?id=FUdPmdlyOp8&mid=54080&murl=https%3A%2F%2Fwww.etsy.com%2Fuk%2Flisting%2F987654321%2Fdog-walk-accessory";
   const verified = {
@@ -747,7 +747,7 @@ test("Bingo Dog Edit publication requires verified affiliate provenance from the
   };
   assert.equal(etsyTestHelpers.bingoEtsyPublicationEligibility(verified).eligible, false);
   assert.equal(etsyTestHelpers.bingoEtsyPublicationEligibility({ ...verified, etsy_feed_provenance: "owned_shop" }).eligible, false);
-  assert.deepEqual(etsyTestHelpers.bingoEtsyPublicationEligibility({ ...verified, etsy_feed_provenance: "owned_shop", bingo_collection: "HE LOVE" }), {
+  assert.deepEqual(etsyTestHelpers.bingoEtsyPublicationEligibility({ ...verified, etsy_feed_provenance: "creator_storefront", bingo_collection: "HE LOVE" }), {
     eligible: true,
     status: "match",
     reason: "VERIFIED MATCH",
@@ -1174,7 +1174,7 @@ test("public Etsy products exclude every non-public state and live marketplace r
     { external_listing_id: "unpublished-1", title: "Unpublished product", admin_status: "unpublished", public_visibility: 0 },
     { external_listing_id: "archived-1", title: "Archived product", admin_status: "archived", public_visibility: 0 },
     { external_listing_id: "approved-private", title: "Approved but private", admin_status: "approved", public_visibility: 0 }
-  ].map((record) => ({ ...record, etsy_feed_provenance: record.external_listing_id === "12345" ? "owned_shop" : "marketplace", bingo_collection: "THE WALK", description: "Reviewed listing", category: "Accessories", price: 1299, currency: "GBP", listing_url: `https://www.etsy.com/uk/listing/${record.external_listing_id}`, primary_image: "", personalisation_available: 0 }));
+  ].map((record) => ({ ...record, etsy_feed_provenance: record.external_listing_id === "12345" ? "creator_storefront" : "marketplace", bingo_collection: "THE WALK", description: "Reviewed listing", category: "Accessories", price: 1299, currency: "GBP", listing_url: `https://www.etsy.com/uk/listing/${record.external_listing_id}`, primary_image: "", personalisation_available: 0 }));
   globalThis.fetch = async () => { throw new Error("the public Etsy feed must not call the live marketplace API"); };
   const db = {
     prepare(sql) {
@@ -1243,7 +1243,7 @@ test("public Etsy catalogue uses bounded stable cursor pagination", async () => 
       affiliate_provider: "rakuten",
       affiliate_program: "etsy_creator_collective_uk",
       affiliate_storefront: "Concordia Mercatura",
-      etsy_feed_provenance: "owned_shop",
+      etsy_feed_provenance: "creator_storefront",
       bingo_collection: ["THE WALK", "THE WASH", "THE WEAR", "THE LOVE"][index % 4]
     };
   });
@@ -1418,7 +1418,7 @@ test("admin Etsy search queries the full database read-only before applying its 
     source: "etsy",
     external_listing_id: "1473570446",
     title: "Vintage RUSH tour concert shirt",
-    etsy_feed_provenance: "owned_shop",
+    etsy_feed_provenance: "creator_storefront",
     bingo_collection: "THE WEAR",
     admin_status: "published",
     public_visibility: 1
@@ -1443,7 +1443,7 @@ test("admin Etsy search queries the full database read-only before applying its 
   assert.match(selectSql, /external_listing_id = \?/);
   assert.match(selectSql, /LOWER\(title\) LIKE \?/);
   assert.ok(selectSql.indexOf("external_listing_id = ?") < selectSql.indexOf("LIMIT 200"));
-  assert.equal(selectValues[0], "owned_shop");
+  assert.equal(selectValues[0], "creator_storefront");
   assert.equal(selectValues[1], "1473570446");
   assert.equal(mutationCalls, 0);
 });
@@ -1455,7 +1455,7 @@ test("selected Etsy actions resolve an external listing ID to the canonical row 
     id: "etsy-db-1473570446",
     source: "etsy",
     external_listing_id: "1473570446",
-    etsy_feed_provenance: "owned_shop",
+    etsy_feed_provenance: "creator_storefront",
     bingo_collection: "THE WEAR",
     title: "Vintage 00s RUSH Vapor Trails 2002 tour concert t shirt"
   };
@@ -1486,7 +1486,7 @@ test("selected Etsy actions resolve an external listing ID to the canonical row 
   }), { ADMIN_API_TOKEN: "admin-token", GIFT_CARD_DB: db });
   assert.equal(response.status, 200);
   assert.match(selects[0].sql, /id IN .* OR external_listing_id IN/);
-  assert.deepEqual(selects[0].values, ["owned_shop", "1473570446", "1473570446"]);
+  assert.deepEqual(selects[0].values, ["creator_storefront", "1473570446", "1473570446"]);
   assert.equal(updates.length, 1);
   assert.ok(updates[0].values.includes("etsy-db-1473570446"));
 });

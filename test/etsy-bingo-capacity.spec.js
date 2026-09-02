@@ -64,7 +64,7 @@ function verifiedEtsyRow(id, collection, overrides = {}) {
     id: `db-${id}`,
     source: "etsy",
     external_listing_id: String(id),
-    etsy_feed_provenance: "owned_shop",
+    etsy_feed_provenance: "creator_storefront",
     bingo_collection: collection,
     title: `Dog product ${id}`,
     category: "Dog Products",
@@ -149,6 +149,7 @@ test("public Bingo Dog Edit serves four canonical groups, caps each at ten, and 
     verifiedEtsyRow(2000, "THE WASH"),
     verifiedEtsyRow(3000, "HE LOVE"),
     verifiedEtsyRow(4000, "THE WEAR", { affiliate_url: "", affiliate_verified_url: "", affiliate_verification_status: "unverified" }),
+    verifiedEtsyRow(4500, "THE WALK", { etsy_feed_provenance: "owned_shop" }),
   ];
   const response = await worker.fetch(new Request("https://bingodogwash.com/api/etsy/products?bingoEdit=1"), {
     ETSY_FEATURE_ENABLED: "true",
@@ -181,7 +182,7 @@ test("an admin hide propagates to the public Bingo Dog Edit without a redeploy",
   assert.equal(data.collections.find((collection) => collection.name === "THE WALK").products.length, 0);
 });
 
-test("admin move and replace actions mutate only owned, verified Etsy curation rows", async () => {
+test("admin move and replace actions mutate only Creator Storefront verified Etsy curation rows", async () => {
   const current = verifiedEtsyRow(6000, "THE WALK");
   const replacement = verifiedEtsyRow(6001, "THE WEAR", { admin_status: "review", public_visibility: 0 });
   const db = memoryEtsyDb([current, replacement]);

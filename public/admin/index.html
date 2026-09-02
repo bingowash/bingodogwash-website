@@ -97,18 +97,15 @@
         <div>
           <span class="eyebrow">Etsy Shop</span>
           <h2>Bingo Dog Edit</h2>
-          <p>Sync only the configured Etsy shop, then curate verified affiliate products for the public Bingo Dog Edit. Etsy&rsquo;s HE LOVE section appears publicly as THE LOVE.</p>
+          <p>Curate verified Etsy Creator Collective products for the public Bingo Dog Edit. Products are admitted by exact Etsy listing, assigned to THE WALK, THE WASH, THE WEAR or THE LOVE, then affiliate links are verified before publication.</p>
         </div>
       </div>
       <div class="dashboard-list" data-admin-etsy-summary></div>
-      <div class="button-row">
-        <button class="btn btn-light" type="button" data-admin-etsy-action="test">Test connection</button>
-        <button class="btn btn-secondary" type="button" data-admin-etsy-action="sync">Sync now</button>
-      </div>
       <form class="admin-filter-bar" data-admin-etsy-search>
         <label for="admin-etsy-search">Find an Etsy product</label>
-        <input id="admin-etsy-search" type="search" name="query" placeholder="Listing ID or product title" autocomplete="off">
-        <button class="btn btn-secondary" type="submit">Search</button>
+        <input id="admin-etsy-search" type="search" name="query" placeholder="Etsy listing URL, listing ID or existing product title" autocomplete="off">
+        <button class="btn btn-secondary" type="button" data-admin-etsy-import>Import exact Etsy listing</button>
+        <button class="btn btn-light" type="submit">Search existing products</button>
         <button class="btn btn-light" type="button" data-admin-etsy-search-clear>Clear</button>
         <span class="small-note" data-admin-etsy-search-status aria-live="polite"></span>
       </form>
