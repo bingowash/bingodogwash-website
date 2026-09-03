@@ -2630,6 +2630,50 @@ async function handleAdminEtsyProductAction(action) {
     }
     return;
   }
+  if (action === "affiliate-approve-selected") {
+    if (!ids.length) {
+      window.alert("Select at least one verified Etsy product to approve.");
+      return;
+    }
+
+    if (!window.confirm("Approve the selected verified Etsy affiliate link(s)? This does not publish the products.")) {
+      return;
+    }
+
+    const originalLabel = actionButton?.textContent || "";
+    let approved = 0;
+    let failed = 0;
+
+    try {
+      if (actionButton) {
+        actionButton.disabled = true;
+        actionButton.textContent = "Approving selected...";
+      }
+
+      for (const id of ids) {
+        try {
+          const result = await adminCoreJson(`${adminEtsyApiBase}/products/affiliate-approve`, {
+            method: "POST",
+            body: JSON.stringify({ id })
+          });
+
+          if (result.affiliateReviewStatus === "approved") approved += 1;
+          else failed += 1;
+        } catch {
+          failed += 1;
+        }
+      }
+
+      window.alert(`${approved} approved / ${failed} not approved`);
+      await loadAdminEtsy();
+    } finally {
+      if (actionButton) {
+        actionButton.disabled = false;
+        actionButton.textContent = originalLabel;
+      }
+    }
+    return;
+  }
   const bulkAllAction = action === "affiliate-generate-verify" || action === "affiliate-approve-verified" || action === "publish-verified";
   if (!ids.length && !bulkAllAction) {
     window.alert("Select at least one Etsy product.");
