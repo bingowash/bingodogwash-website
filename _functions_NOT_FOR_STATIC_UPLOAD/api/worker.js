@@ -219,7 +219,7 @@ export default {
     return requestEnvStorage.run(env || {}, async () => {
       try {
         const url = new URL(request.url);
-        if (request.method === "GET" && url.pathname === "/shop.html") {
+        if ((request.method === "GET" || request.method === "HEAD") && url.pathname === "/shop.html") {
           url.pathname = "/shop";
           return withSecurityHeaders(Response.redirect(url.toString(), 308), request);
         }
