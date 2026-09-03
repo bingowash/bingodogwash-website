@@ -53,9 +53,9 @@ const products = [
   { id: "joint-care", name: "Senior Joint Support", category: "Joint Care", price: 24.99, icon: "JT", supplier: "Dropship partner", commission: "7%", status: "Dropship ready", description: "Monthly joint support supplement for older dogs." }
 ];
 
-// Ask the existing public endpoint for its largest supported result set. The
-// shop renders every live Avasam product it receives; it does not apply a UI cap.
-const avasamFeedUrl = `${shopApiBase}/api/avasam/products?limit=100`;
+// Avasam's catalogue endpoint slows down significantly for large pages.
+// Keep the initial storefront request small enough to load reliably.
+const avasamFeedUrl = `${shopApiBase}/api/avasam/products?limit=30`;
 const avasamFallbackFeedUrl = "api/avasam-products.json";
 const avasamRefreshMs = 15 * 60 * 1000;
 let avasamProducts = [];
