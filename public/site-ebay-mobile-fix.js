@@ -2524,6 +2524,46 @@ async function handleAdminEtsyProductAction(action) {
     }
     return;
   }
+  if (action === "affiliate-verify-selected") {
+    if (!ids.length) {
+      window.alert("Select at least one Etsy product to verify.");
+      return;
+    }
+
+    const originalLabel = actionButton?.textContent || "";
+    let verified = 0;
+    let failed = 0;
+
+    try {
+      if (actionButton) {
+        actionButton.disabled = true;
+        actionButton.textContent = "Verifying selected...";
+      }
+
+      for (const id of ids) {
+        try {
+          const result = await adminCoreJson(`${adminEtsyApiBase}/products/affiliate-verify`, {
+            method: "POST",
+            body: JSON.stringify({ id })
+          });
+
+          if (result.verificationStatus === "match") verified += 1;
+          else failed += 1;
+        } catch {
+          failed += 1;
+        }
+      }
+
+      window.alert(`${verified} verified / ${failed} not verified`);
+      await loadAdminEtsy();
+    } finally {
+      if (actionButton) {
+        actionButton.disabled = false;
+        actionButton.textContent = originalLabel;
+      }
+    }
+    return;
+  }
   const bulkAllAction = action === "affiliate-generate-verify" || action === "affiliate-approve-verified" || action === "publish-verified";
   if (!ids.length && !bulkAllAction) {
     window.alert("Select at least one Etsy product.");
