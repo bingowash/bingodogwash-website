@@ -837,12 +837,12 @@ function bingoAvasamCategory(product) {
     product?.description
   ].filter(Boolean).join(" ").toLowerCase();
 
-  if (/\b(bed|sofa|cot|cushion|mattress)\b/.test(text)) {
-    return "Beds & Comfort";
-  }
-
   if (/\b(carrier|travel|car boot|car seat|crate|pen|playpen|enclosure)\b/.test(text)) {
     return "Carriers & Travel";
+  }
+
+  if (/\b(bed|sofa|cot|cushion|mattress)\b/.test(text)) {
+    return "Beds & Comfort";
   }
 
   if (/\b(groom|brush|comb|dematting|slicker|shampoo|wash|towel)\b/.test(text)) {
