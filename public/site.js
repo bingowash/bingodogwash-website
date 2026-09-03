@@ -199,7 +199,7 @@ function serverRenderedAvasamProducts() {
   try {
     const serialized = (target.textContent || "[]").replace(/<!--[\s\S]*?-->/g, "").trim() || "[]";
     const records = JSON.parse(serialized);
-    return Array.isArray(records) ? records.map(normalizeAvasamProduct).filter((product) => product.name) : [];
+    return Array.isArray(records) ? records.map(normalizeAvasamProduct).filter((product) => product.name).filter(bingoAvasamCatalogueProduct) : [];
   } catch { return []; }
 }
 
@@ -209,7 +209,7 @@ const hasServerRenderedProductDetail = Boolean(document.querySelector("[data-pro
 avasamProducts = groupAvasamProductVariants(
   hydratedAvasamProducts.length
     ? hydratedAvasamProducts
-    : avasamStarterProducts.map(normalizeAvasamProduct).filter((product) => product.name)
+    : avasamStarterProducts.map(normalizeAvasamProduct).filter((product) => product.name).filter(bingoAvasamCatalogueProduct)
 );
 avasamState.loading = false;
 avasamState.live = Boolean(hydratedAvasamProducts.length);
@@ -920,6 +920,71 @@ function stockStatus(raw) {
   return "Live supplier stock";
 }
 
+function bingoAvasamCatalogueProduct(product) {
+  if (!product || !product.name) return false;
+
+  const name = String(product.name || "").toLowerCase();
+  const description = String(product.description || "").toLowerCase();
+
+  // Confirmed non-pet catalogue item.
+  if (
+    name.includes("women girls initial letter necklace") ||
+    name.includes("letters charm necklaces pendants")
+  ) {
+    return false;
+  }
+
+  // Confirmed vidaXL children's plush toys, not dog toys.
+  if (
+    name.includes("vidaxl dog cuddly toy plush") &&
+    (
+      description.includes("suitable for children aged") ||
+      description.includes("age recommendation")
+    )
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+function bingoAvasamCategory(product) {
+  const text = [
+    product?.name,
+    product?.category,
+    product?.description
+  ].filter(Boolean).join(" ").toLowerCase();
+
+  if (/\b(bed|sofa|cot|cushion|mattress)\b/.test(text)) {
+    return "Beds & Comfort";
+  }
+
+  if (/\b(carrier|travel|car boot|car seat|crate|pen|playpen|enclosure)\b/.test(text)) {
+    return "Carriers & Travel";
+  }
+
+  if (/\b(groom|brush|comb|dematting|slicker|shampoo|wash|towel)\b/.test(text)) {
+    return "Grooming & Bathing";
+  }
+
+  if (/\b(collar|leash|lead|harness)\b/.test(text)) {
+    return "Collars, Leads & Harnesses";
+  }
+
+  if (/\b(coat|rainwear|jacket|dog clothes|pet clothes|t-shirt)\b/.test(text)) {
+    return "Clothing & Coats";
+  }
+
+  if (/\b(toy|kong|chew)\b/.test(text)) {
+    return "Toys";
+  }
+
+  if (/\b(feeder|feeding|bowl|water bowl|food bowl)\b/.test(text)) {
+    return "Feeding";
+  }
+
+  return "Other Dog Essentials";
+}
 function normalizeAvasamProduct(raw, index) {
   const variant = Array.isArray(raw.variants) ? raw.variants[0] || {} : {};
   const name = firstValue(raw.name, raw.title, raw.productName, variant.name, `Avasam product ${index + 1}`);
@@ -941,7 +1006,7 @@ function normalizeAvasamProduct(raw, index) {
     publicId: mappedPublicId ? productHandle(mappedPublicId, "") : productHandle(name, ""),
     sku: firstValue(raw.sku, raw.SKU, variant.sku, ""),
     name,
-    category: firstValue(raw.category, raw.categoryName, raw.type, raw.collection, "Avasam Pet Products"),
+    category: bingoAvasamCategory({ name, category: firstValue(raw.category, raw.categoryName, raw.type, raw.collection, ""), description: firstValue(raw.description, raw.shortDescription, raw.summary, "") }),
     price: Number.isFinite(price) ? price : null,
     priceLabel: Number.isFinite(price) ? "" : "Price unavailable",
     icon: "AV",
@@ -958,11 +1023,19 @@ function normalizeAvasamProduct(raw, index) {
 function groupAvasamProductVariants(productList) {
   const groups = new Map();
   for (const product of productList) {
-    const key = String(product.name || "")
+    const normalizedName = String(product.name || "")
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, " ")
       .trim();
-    if (!key) continue;
+    if (!normalizedName) continue;
+
+    // Generic supplier titles can represent materially different products.
+    // Keep those records separate by SKU/ID rather than collapsing them.
+    const separateGenericProduct = new Set(["pet carrier", "pet bed"]).has(normalizedName);
+    const productIdentity = String(product.sku || product.id || "").trim();
+    const key = separateGenericProduct && productIdentity
+      ? `${normalizedName}::${productIdentity}`
+      : normalizedName;
     const current = groups.get(key) || [];
     current.push(product);
     groups.set(key, current);
@@ -1090,7 +1163,7 @@ async function loadAvasamProducts({ silent = false } = {}) {
 
   try {
     const result = await readLiveProductFeed(avasamFeedUrl, normalizeAvasamProduct);
-    avasamProducts = groupAvasamProductVariants(result.products);
+    avasamProducts = groupAvasamProductVariants(result.products.filter(bingoAvasamCatalogueProduct));
     avasamState.error = !avasamProducts.length;
     avasamState.live = Boolean(result.status.live);
     avasamState.liveConfigured = Boolean(result.status.liveConfigured);
