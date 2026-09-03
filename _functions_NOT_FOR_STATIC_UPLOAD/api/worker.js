@@ -312,7 +312,32 @@ async function storefrontAvasamProducts(limit = 30) {
   if (!consumerKey || !secretKey) return [];
   try {
     const accessToken = await requestAvasamAccessToken(consumerKey, secretKey);
-    return prioritizeAvasamDogProducts(await requestAvasamProducts(accessToken, 0, cleanLimit(limit, 30, 100)));
+    const products = await requestAvasamProducts(accessToken, 0, cleanLimit(limit, 30, 100));
+    const catalogueProducts = products.filter((product) => {
+      const name = String(product?.name || product?.title || product?.productName || "").toLowerCase();
+      const description = String(product?.description || product?.shortDescription || product?.summary || "").toLowerCase();
+
+      if (
+        name.includes("women girls initial letter necklace") ||
+        name.includes("letters charm necklaces pendants")
+      ) {
+        return false;
+      }
+
+      if (
+        name.includes("vidaxl dog cuddly toy plush") &&
+        (
+          description.includes("suitable for children aged") ||
+          description.includes("age recommendation")
+        )
+      ) {
+        return false;
+      }
+
+      return true;
+    });
+
+    return prioritizeAvasamDogProducts(catalogueProducts);
   } catch (error) {
     logExternalError("Avasam storefront SSR error", { error });
     return [];
