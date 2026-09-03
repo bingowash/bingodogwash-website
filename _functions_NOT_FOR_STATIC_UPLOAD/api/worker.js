@@ -218,6 +218,12 @@ export default {
   async fetch(request, env) {
     return requestEnvStorage.run(env || {}, async () => {
       try {
+        const url = new URL(request.url);
+        if (request.method === "GET" && url.pathname === "/shop.html") {
+          url.pathname = "/shop";
+          return withSecurityHeaders(Response.redirect(url.toString(), 308), request);
+        }
+
         const response = await handleRequestWithAssets(request, env || {});
         return withSecurityHeaders(response, request);
       } catch (error) {
