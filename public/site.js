@@ -79,6 +79,37 @@ const avasamFeedUrl = `${shopApiBase}/api/avasam/products?limit=30`;
 const avasamFallbackFeedUrl = "api/avasam-products.json";
 const avasamRefreshMs = 15 * 60 * 1000;
 let avasamProducts = [];
+const avasamPageSize = 30;
+let avasamProductRecords = new Map();
+let avasamLoadedPage = 0;
+let avasamHasMoreProducts = true;
+let avasamLoadingMore = false;
+let avasamRequestToken = 0;
+let avasamLoadMoreError = "";
+
+function avasamPageUrl(page) {
+  const url = new URL(avasamFeedUrl, window.location.href);
+  url.searchParams.set("page", String(page));
+  url.searchParams.set("limit", String(avasamPageSize));
+  return url.toString();
+}
+
+function avasamProductRecordKey(product) {
+  return String(product?.id || product?.sku || "").trim();
+}
+
+function addAvasamProductRecords(target, products) {
+  products.forEach((product) => {
+    const key = avasamProductRecordKey(product);
+    if (key) target.set(key, product);
+  });
+}
+
+function rebuildAvasamProducts(records = avasamProductRecords) {
+  return groupAvasamProductVariants(
+    [...records.values()].filter(bingoAvasamCatalogueProduct)
+  );
+}
 const avasamState = {
   loading: true,
   error: false,
@@ -204,6 +235,8 @@ function serverRenderedAvasamProducts() {
 }
 
 const hydratedAvasamProducts = serverRenderedAvasamProducts();
+addAvasamProductRecords(avasamProductRecords, hydratedAvasamProducts);
+avasamHasMoreProducts = hydratedAvasamProducts.length === avasamPageSize;
 const hasServerRenderedShopProducts = Boolean(document.querySelector("[data-products] [data-ssr-product]"));
 const hasServerRenderedProductDetail = Boolean(document.querySelector("[data-product-detail] [data-ssr-product]"));
 avasamProducts = groupAvasamProductVariants(
@@ -1153,41 +1186,144 @@ function decodeEtsyDisplayText(value) {
 async function loadAvasamProducts({ silent = false } = {}) {
   const target = document.querySelector("[data-home-bingo-products], [data-avasam-products], [data-products], [data-cart], [data-product-detail], [data-admin-product-feed], [data-account-orders]");
   if (!target) return;
+  if (silent && avasamLoadingMore) return;
+
+  const requestToken = ++avasamRequestToken;
+  const targetPage = avasamLoadedPage;
+  const refreshedRecords = new Map();
+  let firstResult = null;
+  let lastResult = null;
 
   avasamState.loading = !silent;
   avasamState.error = false;
+
   if (!silent) {
     renderAvasamCategories();
     renderAvasamProducts();
   }
 
   try {
-    const result = await readLiveProductFeed(avasamFeedUrl, normalizeAvasamProduct);
-    avasamProducts = groupAvasamProductVariants(result.products.filter(bingoAvasamCatalogueProduct));
+    for (let page = 0; page <= targetPage; page += 1) {
+      const result = await readLiveProductFeed(
+        avasamPageUrl(page),
+        normalizeAvasamProduct
+      );
+
+      if (requestToken !== avasamRequestToken) return;
+
+      if (!firstResult) firstResult = result;
+      lastResult = result;
+      addAvasamProductRecords(refreshedRecords, result.products);
+    }
+
+    if (requestToken !== avasamRequestToken) return;
+
+    avasamProductRecords = refreshedRecords;
+    avasamProducts = rebuildAvasamProducts(refreshedRecords);
+    avasamHasMoreProducts =
+      Boolean(lastResult && lastResult.products.length === avasamPageSize);
+    avasamLoadMoreError = "";
+
     avasamState.error = !avasamProducts.length;
-    avasamState.live = Boolean(result.status.live);
-    avasamState.liveConfigured = Boolean(result.status.liveConfigured);
-    avasamState.lastRefresh = result.status.refreshedAt || (avasamProducts.length ? new Date().toISOString() : "");
+    avasamState.live = Boolean(firstResult?.status?.live);
+    avasamState.liveConfigured = Boolean(firstResult?.status?.liveConfigured);
+    avasamState.lastRefresh =
+      firstResult?.status?.refreshedAt ||
+      (avasamProducts.length ? new Date().toISOString() : "");
     avasamState.count = avasamProducts.length;
-    avasamState.message = avasamProducts.length ? "" : "Avasam temporarily unavailable";
+    avasamState.message = avasamProducts.length
+      ? ""
+      : "Avasam temporarily unavailable";
   } catch (error) {
+    if (requestToken !== avasamRequestToken) return;
+
     const fallbackProducts = avasamStarterProducts
       .map(normalizeAvasamProduct)
       .filter((product) => product.name);
+
+    avasamProductRecords = new Map();
+    addAvasamProductRecords(avasamProductRecords, fallbackProducts);
     avasamProducts = groupAvasamProductVariants(fallbackProducts);
+    avasamLoadedPage = 0;
+    avasamHasMoreProducts = false;
+    avasamLoadMoreError = "";
+
     avasamState.error = !avasamProducts.length;
     avasamState.live = false;
     avasamState.liveConfigured = Boolean(error.feedStatus?.liveConfigured);
-    avasamState.lastRefresh = avasamProducts.length ? new Date().toISOString() : "";
+    avasamState.lastRefresh =
+      avasamProducts.length ? new Date().toISOString() : "";
     avasamState.count = avasamProducts.length;
     avasamState.message = avasamProducts.length
       ? "Showing the backup Avasam catalogue while the live feed reconnects."
       : error.message || "Avasam temporarily unavailable";
   } finally {
+    if (requestToken !== avasamRequestToken) return;
+
     avasamState.loading = false;
     renderAvasamCategories();
     renderAvasamProducts();
     renderHomeAvasamProducts();
+    renderProducts();
+    renderAdminProducts();
+    renderAccount();
+    renderProductDetail();
+    renderCart();
+  }
+}
+
+async function loadMoreAvasamProducts() {
+  if (avasamLoadingMore || !avasamHasMoreProducts || avasamState.loading) return;
+
+  const requestToken = ++avasamRequestToken;
+  const nextPage = avasamLoadedPage + 1;
+
+  avasamLoadingMore = true;
+  avasamLoadMoreError = "";
+
+  try {
+    const result = await readLiveProductFeed(
+      avasamPageUrl(nextPage),
+      normalizeAvasamProduct
+    );
+
+    if (requestToken !== avasamRequestToken) return;
+
+    const nextRecords = new Map(avasamProductRecords);
+    addAvasamProductRecords(nextRecords, result.products);
+
+    avasamProductRecords = nextRecords;
+    avasamProducts = rebuildAvasamProducts(nextRecords);
+    avasamLoadedPage = nextPage;
+    avasamHasMoreProducts = result.products.length === avasamPageSize;
+
+    avasamState.error = !avasamProducts.length;
+    avasamState.live = Boolean(result.status.live);
+    avasamState.liveConfigured = Boolean(result.status.liveConfigured);
+    avasamState.lastRefresh =
+      result.status.refreshedAt ||
+      (avasamProducts.length ? new Date().toISOString() : "");
+    avasamState.count = avasamProducts.length;
+    avasamState.message = avasamProducts.length
+      ? ""
+      : "Avasam temporarily unavailable";
+  } catch (error) {
+    if (requestToken !== avasamRequestToken) return;
+
+    avasamLoadMoreError =
+      error.message || "Could not load more products. Please try again.";
+  } finally {
+    if (requestToken !== avasamRequestToken) return;
+
+    avasamLoadingMore = false;
+
+    renderAvasamCategories();
+    renderAvasamProducts();
+
+    if (typeof renderHomeAvasamProducts === "function") {
+      renderHomeAvasamProducts();
+    }
+
     renderProducts();
     renderAdminProducts();
     renderAccount();
