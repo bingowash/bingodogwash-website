@@ -1,4 +1,4 @@
-﻿import { AsyncLocalStorage } from "node:async_hooks";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { handleCompetition, processCompetitionStripeEvent } from "./competition.js";
 import { distributePreparedProduct, handleMarketingRequest, isMarketingPath, runMarketingSchedule } from "./marketing.js";
 import { handleTikTokRequest, isTikTokPath } from "./tiktok.js";
@@ -2158,7 +2158,7 @@ async function handlePendingWashBooking(request) {
 
   return corsResponse(request, {
     ok: true,
-    booking: { ...booking, dog_name: booking.dogName, price: "Â£10.00" },
+    booking: { ...booking, dog_name: booking.dogName, price: "£10.00" },
   }, 201);
 }
 
@@ -2193,7 +2193,7 @@ async function handleAdminWashBookings(request, url) {
     preferred_time: row.preferred_time || "",
     amount: row.amount,
     currency: row.currency,
-    price: `Â£${(Number(row.amount || 0) / 100).toFixed(2)}`,
+    price: `£${(Number(row.amount || 0) / 100).toFixed(2)}`,
     status: row.status,
     stripePaymentStatus: row.stripe_payment_status || "",
     createdAt: row.created_at,
@@ -2337,7 +2337,7 @@ async function createGiveawayCheckout(request) {
   stripeBody.set("client_reference_id", `BDW-GIVEAWAY-${input.submissionId}`.slice(0, 200));
   stripeBody.set("line_items[0][price_data][currency]", "gbp");
   stripeBody.set("line_items[0][price_data][product_data][name]", "Bingo Dog Wash Giveaway Entry");
-  stripeBody.set("line_items[0][price_data][product_data][description]", "One entry for the Â£20 One4All Gift Card giveaway.");
+  stripeBody.set("line_items[0][price_data][product_data][description]", "One entry for the £20 One4All Gift Card giveaway.");
   stripeBody.set("line_items[0][price_data][unit_amount]", "200");
   stripeBody.set("line_items[0][quantity]", "1");
   stripeBody.set("metadata[type]", "giveaway");
@@ -2466,7 +2466,7 @@ async function createGiftCardCheckout(request) {
   const deliveryDate = cleanDeliveryDate(input.deliveryDate);
 
   if (!Number.isFinite(amountPounds) || amount < 500 || amount > 20000) {
-    return corsResponse(request, { ok: false, error: "Gift card amount must be between Â£5 and Â£200." }, 400);
+    return corsResponse(request, { ok: false, error: "Gift card amount must be between £5 and £200." }, 400);
   }
 
   if (!Number.isInteger(quantity) || quantity < 1 || quantity > 10) {
@@ -5598,7 +5598,7 @@ async function handleAdminAiDrafts(request) {
       messages: [
         {
           role: "system",
-          content: "You draft UK English product and channel copy for Bingo Dog Wash. Use only supplied facts. Never invent specifications, discounts, shipping terms, guarantees, stock, reviews, health benefits, supplier claims, availability, delivery promises, or prices. Instagram caption URLs are not clickable: never include a URL or say click/tap the link below; end Instagram captions with 'Shop now â€” link in bio ðŸ¾'. Facebook may use the supplied product URL. Return only valid JSON with string fields productDescription, shortDescription, socialCaption, facebookCaption, instagramCaption, tiktokCaption, marketplaceTitle, marketplaceDescription, seoTitle, seoDescription, emailSubject, and emailPreview. Keep SEO title under 60 characters, SEO description under 160, email subject under 70, and TikTok caption under 220."
+          content: "You draft UK English product and channel copy for Bingo Dog Wash. Use only supplied facts. Never invent specifications, discounts, shipping terms, guarantees, stock, reviews, health benefits, supplier claims, availability, delivery promises, or prices. Instagram caption URLs are not clickable: never include a URL or say click/tap the link below; end Instagram captions with 'Shop now — link in bio 🐾'. Facebook may use the supplied product URL. Return only valid JSON with string fields productDescription, shortDescription, socialCaption, facebookCaption, instagramCaption, tiktokCaption, marketplaceTitle, marketplaceDescription, seoTitle, seoDescription, emailSubject, and emailPreview. Keep SEO title under 60 characters, SEO description under 160, email subject under 70, and TikTok caption under 220."
         },
         {
           role: "user",
@@ -6192,4 +6192,3 @@ export const storefrontSsrTestHelpers = {
   publicStorefrontRoute,
   storefrontProductSlug,
 };
-

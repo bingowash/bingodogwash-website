@@ -1,385 +1,385 @@
-﻿{
-    "name":  "public",
-    "main":  "_functions_NOT_FOR_STATIC_UPLOAD/api/worker.js",
-    "compatibility_date":  "2026-07-12",
-    "compatibility_flags":  [
-                                "nodejs_compat"
-                            ],
-    "observability":  {
-                          "enabled":  true,
-                          "head_sampling_rate":  1
-                      },
-    "triggers":  {
-                     "crons":  [
-                                   "*/15 * * * *",
-                                   "15 * * * *",
-                                   "0 2 * * *",
-                                   "30 3 * * *"
-                               ]
-                 },
-    "secrets":  {
-                    "required":  [
-                                     "ADMIN_API_TOKEN",
-                                     "INSTAGRAM_ACCESS_TOKEN",
-                                     "MARKETING_TRACKING_SECRET",
-                                     "META_APP_SECRET",
-                                     "META_PAGE_ACCESS_TOKEN",
-                                     "TIKTOK_CLIENT_KEY",
-                                     "TIKTOK_CLIENT_SECRET",
-                                     "TIKTOK_SANDBOX_CLIENT_KEY",
-                                     "TIKTOK_SANDBOX_CLIENT_SECRET",
-                                     "BREVO_API_KEY",
-                                     "GOOGLE_MERCHANT_CLIENT_ID",
-                                     "GOOGLE_MERCHANT_CLIENT_SECRET"
-                                 ]
-                },
-    "vars":  {
-                 "AI_EMAIL_SENDING_ENABLED":  "true",
-                 "AI_EMAIL_SENDER_NAME":  "Bingo Dog Wash",
-                 "AI_EMAIL_SENDER_EMAIL":  "hello@bingodogwash.com",
-                 "AI_EMAIL_RECIPIENT_SOURCE":  "newsletter_subscribers",
-                 "AI_EMAIL_CAMPAIGN_PROVIDER":  "brevo",
-                 "BREVO_OUTREACH_TEMPLATE_ID":  "1",
-                 "BREVO_OUTREACH_LIST_ID":  "2",
-                 "AI_PROSPECTING_ENABLED":  "false",
-                 "AI_MANUAL_PROSPECTING_ENABLED":  "true",
-                 "AI_PROSPECTING_MAX_COST_GBP":  "1.00",
-                 "AI_PROSPECTING_MAX_PROSPECTS":  "20",
-                 "AI_PROSPECTING_SEARCH_LOCATIONS":  "Maidstone,Kent,London,South East England,United Kingdom",
-                 "AI_PROSPECTING_MAX_SEARCHES":  "20",
-                 "AI_PROSPECTING_MAX_GOOGLE_RESULTS":  "20",
-                 "AI_PROSPECTING_RESULTS_PER_SEARCH":  "10",
-                 "AI_PROSPECTING_SEARCH_RADIUS_METRES":  "25000",
-                 "AI_PROSPECTING_MIN_SCORE":  "55",
-                 "AI_PROSPECTING_AI_ESTIMATED_COST_GBP":  "0.01",
-                 "ETSY_FEATURE_ENABLED":  "true",
-                 "ETSY_SYNC_ENABLED":  "true",
-                 "MARKETING_AI_MODEL":  "@cf/meta/llama-3.1-8b-instruct-fp8-fast",
-                 "META_INSTAGRAM_USER_ID":  "27879594505014566",
-                 "META_INSTAGRAM_USERNAME":  "bingo_dogwash",
-                 "META_PAGE_ID":  "1264938680034651",
-                 "META_PAGE_IDS":  "1264938680034651",
-                 "META_REDIRECT_URI":  "https://admin.bingodogwash.com/api/admin/marketing/oauth/callback",
-                 "META_APP_ID":  "896943866344102",
-                 "TIKTOK_REDIRECT_URI":  "https://bingodogwash.com/api/tiktok/callback",
-                 "TIKTOK_OAUTH_ENVIRONMENT":  "sandbox",
-                 "TIKTOK_DIRECT_POST_ENABLED":  "true",
-                 "GOOGLE_MERCHANT_ACCOUNT_ID":  "5838153095",
-                 "GOOGLE_MERCHANT_DATA_SOURCE":  "10705932259",
-                 "GOOGLE_MERCHANT_REDIRECT_URI":  "https://admin.bingodogwash.com/api/google/merchant/oauth/callback"
-             },
-    "ai":  {
-               "binding":  "AI"
-           },
-    "routes":  [
-                   {
-                       "pattern":  "bingodogwash.com/*",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "www.bingodogwash.com/*",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "admin.bingodogwash.com/*",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "admin.bingodogwash.com/api/google/merchant/oauth/start",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "admin.bingodogwash.com/api/google/merchant/oauth/callback*",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "bingodogwash.com/api/competitions*",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "www.bingodogwash.com/api/competitions*",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "admin.bingodogwash.com/api/competitions*",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "bingodogwash.com/api/admin/competitions*",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "admin.bingodogwash.com/api/admin/competitions*",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "bingodogwash.com/api/gift-cards*",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "bingodogwash.com/api/admin/gift-cards*",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "bingodogwash.com/api/ebay-account-deletion*",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "bingodogwash.com/api/ebay/products*",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "bingodogwash.com/api/etsy*",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "bingodogwash.com/api/feed-status*",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "bingodogwash.com/api/professionals*",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "bingodogwash.com/api/admin/professionals*",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "bingodogwash.com/api/admin/pages*",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "bingodogwash.com/api/newsletter",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "bingodogwash.com/api/admin/newsletter",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "admin.bingodogwash.com/api/admin/newsletter",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "bingodogwash.com/api/admin/etsy*",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "bingodogwash.com/api/avasam/*",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "bingodogwash.com/api/checkout",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "bingodogwash.com/api/giveaway/checkout",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "bingodogwash.com/api/giveaway/admin-feed",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "bingodogwash.com/api/admin/giveaway-entries",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "bingodogwash.com/api/bookings/pending",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "bingodogwash.com/api/bookings/checkout",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "bingodogwash.com/api/admin/bookings",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "bingodogwash.com/api/stripe-webhook",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "bingodogwash.com/api/admin/feed",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "bingodogwash.com/api/admin/marketing*",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "admin.bingodogwash.com/api/admin/marketing*",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "bingodogwash.com/api/admin/distribution-channels*",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "admin.bingodogwash.com/api/admin/distribution-channels*",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "bingodogwash.com/api/admin/prospecting*",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "admin.bingodogwash.com/api/admin/prospecting*",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "bingodogwash.com/api/admin/stripe*",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "admin.bingodogwash.com/api/admin/stripe*",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "bingodogwash.com/api/admin/ai-drafts",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "admin.bingodogwash.com/api/admin/ai-drafts",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "bingodogwash.com/api/admin/ai-distribution",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "admin.bingodogwash.com/api/admin/ai-distribution",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "bingodogwash.com/api/admin/catalogue",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "admin.bingodogwash.com/api/admin/catalogue",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "bingodogwash.com/api/marketing/track*",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "bingodogwash.com/api/tiktok*",
-                       "zone_name":  "bingodogwash.com"
-                   },
-                   {
-                       "pattern":  "admin.bingodogwash.com/api/tiktok*",
-                       "zone_name":  "bingodogwash.com"
-                   }
-               ],
-    "assets":  {
-                   "directory":  "./public",
-                   "binding":  "ASSETS",
-                   "run_worker_first":  true
-               },
-    "d1_databases":  [
-                         {
-                             "binding":  "GIFT_CARD_DB",
-                             "database_name":  "bingo-gift-cards",
-                             "database_id":  "89a7dff7-4161-4250-b085-10a7f3d69b18",
-                             "migrations_dir":  "./migrations"
-                         },
-                         {
-                             "binding":  "AVASAM_CATALOGUE_DB",
-                             "database_name":  "bingo-avasam-catalogue",
-                             "database_id":  "2e509f9b-9f1b-47e5-9f44-81d5214b2e03",
-                             "migrations_dir":  "./migrations/avasam-catalogue"
-                         }
-                     ],
-    "r2_buckets":  [
-                       {
-                           "binding":  "COMPETITION_PHOTOS",
-                           "bucket_name":  "bingo-competition-photos"
-                       },
-                       {
-                           "bucket_name":  "bingo-competition-photos",
-                           "binding":  "bingo_competition_photos",
-                           "remote":  true
-                       }
-                   ],
-    "send_email":  [
-                       {
-                           "name":  "EMAIL"
-                       }
-                   ],
-    "env":  {
-                "staging":  {
-                                "name":  "public-staging",
-                                "secrets":  {
-                                                "required":  [
-                                                                 "ADMIN_API_TOKEN"
-                                                             ]
-                                            },
-                                "observability":  {
-                                                      "enabled":  true,
-                                                      "head_sampling_rate":  1
-                                                  },
-                                "vars":  {
-                                             "AI_EMAIL_SENDING_ENABLED":  "false",
-                                             "AI_EMAIL_CAMPAIGN_PROVIDER":  "brevo",
-                                             "AI_PROSPECTING_ENABLED":  "false",
-                                             "AI_MANUAL_PROSPECTING_ENABLED":  "true",
-                                             "AI_PROSPECTING_MAX_COST_GBP":  "0.25",
-                                             "AI_PROSPECTING_MAX_PROSPECTS":  "5",
-                                             "AI_PROSPECTING_SEARCH_LOCATIONS":  "Maidstone,Kent,London,South East England,United Kingdom",
-                                             "AI_PROSPECTING_MAX_SEARCHES":  "8",
-                                             "AI_PROSPECTING_MAX_GOOGLE_RESULTS":  "5",
-                                             "AI_PROSPECTING_RESULTS_PER_SEARCH":  "5",
-                                             "AI_PROSPECTING_SEARCH_RADIUS_METRES":  "25000",
-                                             "AI_PROSPECTING_MIN_SCORE":  "55",
-                                             "AI_PROSPECTING_AI_ESTIMATED_COST_GBP":  "0.01",
-                                             "ETSY_FEATURE_ENABLED":  "false",
-                                             "ETSY_SYNC_ENABLED":  "false",
-                                             "MARKETING_AI_MODEL":  "@cf/meta/llama-3.1-8b-instruct-fp8-fast",
-                                             "META_INSTAGRAM_USER_ID":  "",
-                                             "META_INSTAGRAM_USERNAME":  "",
-                                             "META_PAGE_ID":  "",
-                                             "META_PAGE_IDS":  "",
-                                             "META_REDIRECT_URI":  "https://staging.bingodogwash.com/api/admin/marketing/oauth/callback",
-                                             "META_APP_ID":  "",
-                                             "TIKTOK_REDIRECT_URI":  "https://staging.bingodogwash.com/api/tiktok/callback",
-                                             "TIKTOK_OAUTH_ENVIRONMENT":  "sandbox",
-                                             "TIKTOK_DIRECT_POST_ENABLED":  "false"
-                                         },
-                                "ai":  {
-                                           "binding":  "AI"
-                                       },
-                                "routes":  [
-                                               {
-                                                   "pattern":  "staging.bingodogwash.com/*",
-                                                   "zone_name":  "bingodogwash.com"
-                                               }
-                                           ],
-                                "assets":  {
-                                               "directory":  "./public",
-                                               "binding":  "ASSETS",
-                                               "run_worker_first":  true
-                                           },
-                                "d1_databases":  [
-                                                     {
-                                                         "binding":  "GIFT_CARD_DB",
-                                                         "database_name":  "bingo-gift-cards-staging",
-                                                         "database_id":  "0ab03fe9-608e-413f-9e90-db40ad40f92a",
-                                                         "migrations_dir":  "./migrations"
-                                                     }
-                                                 ],
-                                "r2_buckets":  [
-                                                   {
-                                                       "binding":  "COMPETITION_PHOTOS",
-                                                       "bucket_name":  "bingo-competition-photos-staging"
-                                                   }
-                                               ],
-                                "send_email":  [
-                                                   {
-                                                       "name":  "EMAIL"
-                                                   }
-                                               ]
-                            }
-            }
+{
+	"name": "public",
+	"main": "_functions_NOT_FOR_STATIC_UPLOAD/api/worker.js",
+	"compatibility_date": "2026-07-12",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"observability": {
+		"enabled": true,
+		"head_sampling_rate": 1
+	},
+	"triggers": {
+		"crons": [
+			"*/15 * * * *",
+			"15 * * * *",
+			"0 2 * * *",
+			"30 3 * * *"
+		]
+	},
+	"secrets": {
+		"required": [
+			"ADMIN_API_TOKEN",
+			"INSTAGRAM_ACCESS_TOKEN",
+			"MARKETING_TRACKING_SECRET",
+			"META_APP_SECRET",
+			"META_PAGE_ACCESS_TOKEN",
+			"TIKTOK_CLIENT_KEY",
+			"TIKTOK_CLIENT_SECRET",
+			"TIKTOK_SANDBOX_CLIENT_KEY",
+			"TIKTOK_SANDBOX_CLIENT_SECRET",
+			"BREVO_API_KEY",
+			"GOOGLE_MERCHANT_CLIENT_ID",
+			"GOOGLE_MERCHANT_CLIENT_SECRET"
+		]
+	},
+	"vars": {
+		"AI_EMAIL_SENDING_ENABLED": "true",
+		"AI_EMAIL_SENDER_NAME": "Bingo Dog Wash",
+		"AI_EMAIL_SENDER_EMAIL": "hello@bingodogwash.com",
+		"AI_EMAIL_RECIPIENT_SOURCE": "newsletter_subscribers",
+		"AI_EMAIL_CAMPAIGN_PROVIDER": "brevo",
+		"BREVO_OUTREACH_TEMPLATE_ID": "1",
+		"BREVO_OUTREACH_LIST_ID": "2",
+		"AI_PROSPECTING_ENABLED": "false",
+		"AI_MANUAL_PROSPECTING_ENABLED": "true",
+		"AI_PROSPECTING_MAX_COST_GBP": "1.00",
+		"AI_PROSPECTING_MAX_PROSPECTS": "20",
+		"AI_PROSPECTING_SEARCH_LOCATIONS": "Maidstone,Kent,London,South East England,United Kingdom",
+		"AI_PROSPECTING_MAX_SEARCHES": "20",
+		"AI_PROSPECTING_MAX_GOOGLE_RESULTS": "20",
+		"AI_PROSPECTING_RESULTS_PER_SEARCH": "10",
+		"AI_PROSPECTING_SEARCH_RADIUS_METRES": "25000",
+		"AI_PROSPECTING_MIN_SCORE": "55",
+		"AI_PROSPECTING_AI_ESTIMATED_COST_GBP": "0.01",
+		"ETSY_FEATURE_ENABLED": "true",
+		"ETSY_SYNC_ENABLED": "true",
+		"MARKETING_AI_MODEL": "@cf/meta/llama-3.1-8b-instruct-fp8-fast",
+		"META_INSTAGRAM_USER_ID": "27879594505014566",
+		"META_INSTAGRAM_USERNAME": "bingo_dogwash",
+		"META_PAGE_ID": "1264938680034651",
+		"META_PAGE_IDS": "1264938680034651",
+		"META_REDIRECT_URI": "https://admin.bingodogwash.com/api/admin/marketing/oauth/callback",
+		"META_APP_ID": "896943866344102",
+		"TIKTOK_REDIRECT_URI": "https://bingodogwash.com/api/tiktok/callback",
+		"TIKTOK_OAUTH_ENVIRONMENT": "sandbox",
+		"TIKTOK_DIRECT_POST_ENABLED": "true",
+		"GOOGLE_MERCHANT_ACCOUNT_ID": "5838153095",
+		"GOOGLE_MERCHANT_DATA_SOURCE": "10705932259",
+		"GOOGLE_MERCHANT_REDIRECT_URI": "https://admin.bingodogwash.com/api/google/merchant/oauth/callback"
+	},
+	"ai": {
+		"binding": "AI"
+	},
+	"routes": [
+		{
+			"pattern": "bingodogwash.com/*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "www.bingodogwash.com/*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "admin.bingodogwash.com/*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "admin.bingodogwash.com/api/google/merchant/oauth/start",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "admin.bingodogwash.com/api/google/merchant/oauth/callback*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/competitions*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "www.bingodogwash.com/api/competitions*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "admin.bingodogwash.com/api/competitions*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/admin/competitions*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "admin.bingodogwash.com/api/admin/competitions*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/gift-cards*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/admin/gift-cards*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/ebay-account-deletion*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/ebay/products*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/etsy*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/feed-status*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/professionals*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/admin/professionals*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/admin/pages*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/newsletter",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/admin/newsletter",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "admin.bingodogwash.com/api/admin/newsletter",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/admin/etsy*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/avasam/*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/checkout",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/giveaway/checkout",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/giveaway/admin-feed",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/admin/giveaway-entries",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/bookings/pending",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/bookings/checkout",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/admin/bookings",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/stripe-webhook",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/admin/feed",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/admin/marketing*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "admin.bingodogwash.com/api/admin/marketing*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/admin/distribution-channels*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "admin.bingodogwash.com/api/admin/distribution-channels*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/admin/prospecting*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "admin.bingodogwash.com/api/admin/prospecting*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/admin/stripe*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "admin.bingodogwash.com/api/admin/stripe*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/admin/ai-drafts",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "admin.bingodogwash.com/api/admin/ai-drafts",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/admin/ai-distribution",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "admin.bingodogwash.com/api/admin/ai-distribution",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/admin/catalogue",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "admin.bingodogwash.com/api/admin/catalogue",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/marketing/track*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "bingodogwash.com/api/tiktok*",
+			"zone_name": "bingodogwash.com"
+		},
+		{
+			"pattern": "admin.bingodogwash.com/api/tiktok*",
+			"zone_name": "bingodogwash.com"
+		}
+	],
+	"assets": {
+		"directory": "./public",
+		"binding": "ASSETS",
+		"run_worker_first": true
+	},
+	"d1_databases": [
+		{
+			"binding": "GIFT_CARD_DB",
+			"database_name": "bingo-gift-cards",
+			"database_id": "89a7dff7-4161-4250-b085-10a7f3d69b18",
+			"migrations_dir": "./migrations"
+		},
+        {
+            "binding": "AVASAM_CATALOGUE_DB",
+            "database_name": "bingo-avasam-catalogue",
+            "database_id": "2e509f9b-9f1b-47e5-9f44-81d5214b2e03",
+            "migrations_dir": "./migrations/avasam-catalogue"
+        }
+	],
+	"r2_buckets": [
+		{
+			"binding": "COMPETITION_PHOTOS",
+			"bucket_name": "bingo-competition-photos"
+		},
+		{
+			"bucket_name": "bingo-competition-photos",
+			"binding": "bingo_competition_photos",
+			"remote": true
+		}
+	],
+	"send_email": [
+		{
+			"name": "EMAIL"
+		}
+	],
+	"env": {
+		"staging": {
+			"name": "public-staging",
+			"secrets": {
+				"required": [
+					"ADMIN_API_TOKEN"
+				]
+			},
+			"observability": {
+				"enabled": true,
+				"head_sampling_rate": 1
+			},
+			"vars": {
+				"AI_EMAIL_SENDING_ENABLED": "false",
+				"AI_EMAIL_CAMPAIGN_PROVIDER": "brevo",
+				"AI_PROSPECTING_ENABLED": "false",
+				"AI_MANUAL_PROSPECTING_ENABLED": "true",
+				"AI_PROSPECTING_MAX_COST_GBP": "0.25",
+				"AI_PROSPECTING_MAX_PROSPECTS": "5",
+				"AI_PROSPECTING_SEARCH_LOCATIONS": "Maidstone,Kent,London,South East England,United Kingdom",
+				"AI_PROSPECTING_MAX_SEARCHES": "8",
+				"AI_PROSPECTING_MAX_GOOGLE_RESULTS": "5",
+				"AI_PROSPECTING_RESULTS_PER_SEARCH": "5",
+				"AI_PROSPECTING_SEARCH_RADIUS_METRES": "25000",
+				"AI_PROSPECTING_MIN_SCORE": "55",
+				"AI_PROSPECTING_AI_ESTIMATED_COST_GBP": "0.01",
+				"ETSY_FEATURE_ENABLED": "false",
+				"ETSY_SYNC_ENABLED": "false",
+				"MARKETING_AI_MODEL": "@cf/meta/llama-3.1-8b-instruct-fp8-fast",
+				"META_INSTAGRAM_USER_ID": "",
+				"META_INSTAGRAM_USERNAME": "",
+				"META_PAGE_ID": "",
+				"META_PAGE_IDS": "",
+				"META_REDIRECT_URI": "https://staging.bingodogwash.com/api/admin/marketing/oauth/callback",
+				"META_APP_ID": "",
+				"TIKTOK_REDIRECT_URI": "https://staging.bingodogwash.com/api/tiktok/callback",
+				"TIKTOK_OAUTH_ENVIRONMENT": "sandbox",
+				"TIKTOK_DIRECT_POST_ENABLED": "false"
+			},
+			"ai": {
+				"binding": "AI"
+			},
+			"routes": [
+				{
+					"pattern": "staging.bingodogwash.com/*",
+					"zone_name": "bingodogwash.com"
+				}
+			],
+			"assets": {
+				"directory": "./public",
+				"binding": "ASSETS",
+				"run_worker_first": true
+			},
+			"d1_databases": [
+				{
+					"binding": "GIFT_CARD_DB",
+					"database_name": "bingo-gift-cards-staging",
+					"database_id": "0ab03fe9-608e-413f-9e90-db40ad40f92a",
+					"migrations_dir": "./migrations"
+				}
+			],
+			"r2_buckets": [
+				{
+					"binding": "COMPETITION_PHOTOS",
+					"bucket_name": "bingo-competition-photos-staging"
+				}
+			],
+			"send_email": [
+				{
+					"name": "EMAIL"
+				}
+			]
+		}
+	}
 }
