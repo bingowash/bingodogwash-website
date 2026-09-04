@@ -1,4 +1,4 @@
-import { AsyncLocalStorage } from "node:async_hooks";
+﻿import { AsyncLocalStorage } from "node:async_hooks";
 import { handleCompetition, processCompetitionStripeEvent } from "./competition.js";
 import { distributePreparedProduct, handleMarketingRequest, isMarketingPath, runMarketingSchedule } from "./marketing.js";
 import { handleTikTokRequest, isTikTokPath } from "./tiktok.js";
@@ -312,6 +312,70 @@ function prioritizeAvasamDogProducts(products) {
     .map(({ product }) => product);
 }
 
+async function storefrontCachedAvasamProducts(limit = 30) {
+  const database = requestEnvStorage.getStore()?.AVASAM_CATALOGUE_DB;
+  if (!database?.prepare) return [];
+
+  try {
+    const safeLimit = cleanLimit(limit, 30, 100);
+
+    const result = await database.prepare(`
+      SELECT
+        sku,
+        public_id,
+        name,
+        price_pence,
+        supplier,
+        status,
+        availability,
+        image,
+        description,
+        last_seen_at,
+        active
+      FROM avasam_catalogue_cache
+      WHERE active = 1
+        AND supplier = ?
+      ORDER BY last_seen_at DESC
+      LIMIT ?
+    `).bind("Avasam", safeLimit).all();
+
+    return (result?.results || [])
+      .map((row) => {
+        const sku = String(row?.sku || "").trim().toUpperCase();
+        const pricePence = Number(row?.price_pence);
+        const status = `${row?.status || ""} ${row?.availability || ""}`.trim();
+
+        if (
+          !/^S\d+$/.test(sku) ||
+          !Number.isInteger(pricePence) ||
+          pricePence <= 0 ||
+          /out of stock|unavailable/i.test(status)
+        ) {
+          return null;
+        }
+
+        const image = String(row?.image || "").trim();
+
+        return {
+          id: `avasam-${sku}`,
+          public_id: String(row?.public_id || `avasam-${sku}`).trim(),
+          sku,
+          name: String(row?.name || "").trim(),
+          price: pricePence / 100,
+          supplier: String(row?.supplier || "Avasam").trim(),
+          status,
+          availability: String(row?.availability || "").trim(),
+          image,
+          imageUrl: image,
+          description: String(row?.description || "").trim()
+        };
+      })
+      .filter(Boolean);
+  } catch (error) {
+    console.error("Avasam storefront D1 cache read failed", error);
+    return [];
+  }
+}
 async function storefrontAvasamProducts(limit = 30) {
   const consumerKey = envText("AVASAM_CONSUMER_KEY");
   const secretKey = envText("AVASAM_SECRET_KEY");
@@ -413,14 +477,14 @@ function injectStorefrontProducts(html, route, products, requestedId = "") {
 
 async function renderStorefrontHtml(url, route, assetResponse) {
   if (!assetResponse.ok || !String(assetResponse.headers.get("Content-Type") || "").includes("text/html")) return assetResponse;
-  const products = await storefrontAvasamProducts();
+  const products = await storefrontCachedAvasamProducts();
   if (!products.length) return assetResponse;
   const html = injectStorefrontProducts(await assetResponse.text(), route, products, url.searchParams.get("id") || "");
   const headers = new Headers(assetResponse.headers);
   headers.delete("Content-Length");
   headers.delete("ETag");
   headers.set("Cache-Control", "public, max-age=0, must-revalidate");
-  headers.set("X-Bingo-Catalogue-Source", "avasam-live");
+  headers.set("X-Bingo-Catalogue-Source", "avasam-d1-cache");
   return new Response(html, { status: assetResponse.status, statusText: assetResponse.statusText, headers });
 }
 
@@ -2094,7 +2158,7 @@ async function handlePendingWashBooking(request) {
 
   return corsResponse(request, {
     ok: true,
-    booking: { ...booking, dog_name: booking.dogName, price: "£10.00" },
+    booking: { ...booking, dog_name: booking.dogName, price: "Â£10.00" },
   }, 201);
 }
 
@@ -2129,7 +2193,7 @@ async function handleAdminWashBookings(request, url) {
     preferred_time: row.preferred_time || "",
     amount: row.amount,
     currency: row.currency,
-    price: `£${(Number(row.amount || 0) / 100).toFixed(2)}`,
+    price: `Â£${(Number(row.amount || 0) / 100).toFixed(2)}`,
     status: row.status,
     stripePaymentStatus: row.stripe_payment_status || "",
     createdAt: row.created_at,
@@ -2273,7 +2337,7 @@ async function createGiveawayCheckout(request) {
   stripeBody.set("client_reference_id", `BDW-GIVEAWAY-${input.submissionId}`.slice(0, 200));
   stripeBody.set("line_items[0][price_data][currency]", "gbp");
   stripeBody.set("line_items[0][price_data][product_data][name]", "Bingo Dog Wash Giveaway Entry");
-  stripeBody.set("line_items[0][price_data][product_data][description]", "One entry for the £20 One4All Gift Card giveaway.");
+  stripeBody.set("line_items[0][price_data][product_data][description]", "One entry for the Â£20 One4All Gift Card giveaway.");
   stripeBody.set("line_items[0][price_data][unit_amount]", "200");
   stripeBody.set("line_items[0][quantity]", "1");
   stripeBody.set("metadata[type]", "giveaway");
@@ -2402,7 +2466,7 @@ async function createGiftCardCheckout(request) {
   const deliveryDate = cleanDeliveryDate(input.deliveryDate);
 
   if (!Number.isFinite(amountPounds) || amount < 500 || amount > 20000) {
-    return corsResponse(request, { ok: false, error: "Gift card amount must be between £5 and £200." }, 400);
+    return corsResponse(request, { ok: false, error: "Gift card amount must be between Â£5 and Â£200." }, 400);
   }
 
   if (!Number.isInteger(quantity) || quantity < 1 || quantity > 10) {
@@ -5534,7 +5598,7 @@ async function handleAdminAiDrafts(request) {
       messages: [
         {
           role: "system",
-          content: "You draft UK English product and channel copy for Bingo Dog Wash. Use only supplied facts. Never invent specifications, discounts, shipping terms, guarantees, stock, reviews, health benefits, supplier claims, availability, delivery promises, or prices. Instagram caption URLs are not clickable: never include a URL or say click/tap the link below; end Instagram captions with 'Shop now — link in bio 🐾'. Facebook may use the supplied product URL. Return only valid JSON with string fields productDescription, shortDescription, socialCaption, facebookCaption, instagramCaption, tiktokCaption, marketplaceTitle, marketplaceDescription, seoTitle, seoDescription, emailSubject, and emailPreview. Keep SEO title under 60 characters, SEO description under 160, email subject under 70, and TikTok caption under 220."
+          content: "You draft UK English product and channel copy for Bingo Dog Wash. Use only supplied facts. Never invent specifications, discounts, shipping terms, guarantees, stock, reviews, health benefits, supplier claims, availability, delivery promises, or prices. Instagram caption URLs are not clickable: never include a URL or say click/tap the link below; end Instagram captions with 'Shop now â€” link in bio ðŸ¾'. Facebook may use the supplied product URL. Return only valid JSON with string fields productDescription, shortDescription, socialCaption, facebookCaption, instagramCaption, tiktokCaption, marketplaceTitle, marketplaceDescription, seoTitle, seoDescription, emailSubject, and emailPreview. Keep SEO title under 60 characters, SEO description under 160, email subject under 70, and TikTok caption under 220."
         },
         {
           role: "user",
@@ -6128,3 +6192,4 @@ export const storefrontSsrTestHelpers = {
   publicStorefrontRoute,
   storefrontProductSlug,
 };
+
