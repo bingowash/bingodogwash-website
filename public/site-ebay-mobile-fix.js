@@ -904,14 +904,17 @@ function normalizeAvasamProduct(raw, index) {
   const variant = Array.isArray(raw.variants) ? raw.variants[0] || {} : {};
   const name = firstValue(raw.name, raw.title, raw.productName, variant.name, `Avasam product ${index + 1}`);
   const price = Number(firstValue(raw.price, raw.retailPrice, raw.salePrice, raw.sellPrice, raw.rrp, variant.price));
-  const sourceId = productHandle(firstValue(raw.id, raw.sku, raw.productId, variant.sku, name), `product-${index + 1}`);
+  const rawSourceId = String(firstValue(raw.sku, raw.SKU, variant.sku, raw.id, raw.productId, name) || "").trim();
+  const sourceId = /^avasam-/i.test(rawSourceId)
+    ? `avasam-${rawSourceId.slice(7)}`
+    : `avasam-${rawSourceId}`;
   const listingUrl = firstValue(
     raw.externalUrl, raw.productUrl, raw.product_url, raw.listingUrl,
     raw.webUrl, raw.checkoutUrl, raw.url, raw.link, raw.href,
     variant.productUrl, variant.url
   );
   return {
-    id: sourceId.startsWith("avasam-") ? sourceId : `avasam-${sourceId}`,
+    id: sourceId,
     sku: firstValue(raw.sku, raw.SKU, variant.sku, ""),
     name,
     category: bingoAvasamCategory({ name, category: firstValue(raw.category, raw.categoryName, raw.type, raw.collection, ""), description: firstValue(raw.description, raw.shortDescription, raw.summary, "") }),

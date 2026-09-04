@@ -1022,7 +1022,10 @@ function normalizeAvasamProduct(raw, index) {
   const variant = Array.isArray(raw.variants) ? raw.variants[0] || {} : {};
   const name = firstValue(raw.name, raw.title, raw.productName, variant.name, `Avasam product ${index + 1}`);
   const price = Number(firstValue(raw.price, raw.retailPrice, raw.salePrice, raw.sellPrice, raw.rrp, variant.price));
-  const sourceId = productHandle(firstValue(raw.id, raw.sku, raw.productId, variant.sku, name), `product-${index + 1}`);
+  const rawSourceId = String(firstValue(raw.sku, raw.SKU, variant.sku, raw.id, raw.productId, name) || "").trim();
+  const sourceId = /^avasam-/i.test(rawSourceId)
+    ? `avasam-${rawSourceId.slice(7)}`
+    : `avasam-${rawSourceId}`;
   const mappedPublicId = firstValue(
     raw.bingoPublicSlug, raw.bingo_public_slug, raw.publicSlug, raw.public_slug,
     raw.bingoPublicId, raw.bingo_public_id, raw.publicId, raw.public_id,
@@ -1035,7 +1038,7 @@ function normalizeAvasamProduct(raw, index) {
     variant.productUrl, variant.url
   );
   return {
-    id: sourceId.startsWith("avasam-") ? sourceId : `avasam-${sourceId}`,
+    id: sourceId,
     publicId: mappedPublicId ? productHandle(mappedPublicId, "") : productHandle(name, ""),
     sku: firstValue(raw.sku, raw.SKU, variant.sku, ""),
     name,
